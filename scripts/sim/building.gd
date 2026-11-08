@@ -13,6 +13,11 @@ var beds: Array = []        # colonist ids (or -1) per bed
 var farm_stage: String = "empty"   # empty | growing | ripe
 var farm_growth: float = 0.0       # 0..1
 var reserved_by: int = -1          # colonist currently working it (farms)
+var placed_at: float = -1.0        # sim clock (minutes)
+var completed_at: float = -1.0
+var placed_by: String = ""         # colonist name ("" = there from the start)
+var work_by: Dictionary = {}       # colonist name -> minutes of building work put in
+var harvests: int = 0              # farms: times harvested
 
 
 func def() -> Dictionary:

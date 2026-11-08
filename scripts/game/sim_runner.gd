@@ -13,6 +13,7 @@ var sim: Sim
 var log: DecisionLog
 var brain_id: String = "laya"        # which brain runs the colony
 var laya: LayaClient                 # set when brain_id == "laya"
+var history: Array = []              # hourly snapshots {clock, stock, pop}, newest last (3 days kept)
 var speed_index: int = 1
 var minutes_per_second: float = 12.0
 var lag_paused: bool = false     # true while waiting on a slow brain (sim slows rather than skips)
@@ -38,6 +39,10 @@ func start(p_seed: int, brain_override: String = "") -> void:
 	_max_lag = float(content.cfg("decision.max_lag_minutes", 15))
 	log = DecisionLog.new()
 	log.attach(sim, "game")
+	sim.events.hour_passed.connect(func(_d: int, _h: int) -> void:
+		history.append({"clock": sim.clock, "stock": sim.stock.duplicate(), "pop": sim.alive_count()})
+		if history.size() > 72:
+			history.pop_front())
 	started.emit(sim)
 
 
@@ -50,6 +55,15 @@ func prewarm(days: float) -> void:
 	for i in int(days * 1440.0):
 		sim.tick(1.0)
 	sim.default_brain_id = keep
+
+
+## The snapshot from about `hours` ago (or the oldest one), {} if none yet.
+func snapshot_hours_ago(hours: float) -> Dictionary:
+	var want := sim.clock - hours * 60.0
+	for snap in history:
+		if float(snap["clock"]) >= want:
+			return snap
+	return {} if history.is_empty() else history[0]
 
 
 func speed() -> int:

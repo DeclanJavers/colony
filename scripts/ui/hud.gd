@@ -17,6 +17,7 @@ var _speed_buttons: Array[Button] = []
 var _feed := RichTextLabel.new()
 var _feed_lines: PackedStringArray = []
 var inspector := Inspector.new()
+var _tooltip := Label.new()
 var _root: Control
 
 
@@ -46,6 +47,12 @@ func _ready() -> void:
 	_brain.add_theme_font_size_override("font_size", 13)
 	_brain.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(_brain)
+	var colony_btn := Button.new()
+	colony_btn.text = "Colony"
+	colony_btn.focus_mode = Control.FOCUS_NONE
+	colony_btn.tooltip_text = "Colony overview: people, stock trends, next tier, buildings (C)"
+	colony_btn.pressed.connect(func() -> void: view.select_target("colony"))
+	hb.add_child(colony_btn)
 	var labels := ["Pause", "1x", "3x", "10x"]
 	for i in labels.size():
 		var b := Button.new()
@@ -87,6 +94,14 @@ func _ready() -> void:
 	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(help)
 
+	# --- hover tooltip (follows the mouse)
+	_tooltip.add_theme_font_size_override("font_size", 13)
+	_tooltip.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	_tooltip.add_theme_constant_override("outline_size", 5)
+	_tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tooltip.visible = false
+	root.add_child(_tooltip)
+
 	# --- inspector + chat (right side), set up in bind() once the chat service exists
 	root.add_child(inspector)
 
@@ -111,7 +126,8 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 			_log("Started a %s." % b.def().get("label", b.type)))
 	ev.tier_unlocked.connect(func(t: int) -> void: _log("[color=#80d8ff]Tier %d unlocked![/color]" % t))
 	runner.speed_changed.connect(func(_s: int) -> void: _refresh_speed())
-	view.colonist_clicked.connect(func(c: Colonist) -> void: inspector.show_colonist(c))
+	view.target_selected.connect(func(t: Variant) -> void: inspector.show_target(t))
+	view.hovered.connect(_on_hover)
 	chat.memory_saved.connect(func(c: Colonist, text: String) -> void:
 		_log("[color=#80d8ff]%s will remember: %s[/color]" % [c.name, text]))
 	_refresh_speed()
@@ -123,6 +139,13 @@ func _log(text: String) -> void:
 	while _feed_lines.size() > FEED_LINES:
 		_feed_lines.remove_at(0)
 	_feed.text = "\n".join(_feed_lines)
+
+
+func _on_hover(t: Variant, pos: Vector2) -> void:
+	var text := WorldView.describe_short(t)
+	_tooltip.visible = text != ""
+	_tooltip.text = text
+	_tooltip.position = pos + Vector2(16, 14)
 
 
 func _refresh_speed() -> void:
@@ -167,6 +190,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				runner.set_speed_index(2)
 			KEY_3:
 				runner.set_speed_index(3)
+			KEY_C:
+				view.select_target("colony")
+			KEY_ESCAPE:
+				view.select_target(null)
 
 
 func _panel_style() -> StyleBoxFlat:

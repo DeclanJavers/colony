@@ -7,6 +7,7 @@ extends Node3D
 ##   --shot path.png     save a screenshot after --shot-delay seconds, then quit (for automated checks)
 ##   --time H            jump to hour H of the current day before showing (e.g. 21 for night)
 ##   --zoom S            camera ortho size
+##   --inspect what     open the inspector on: colony | building:<type> | node:<type> | tile
 ##   --say "text"        with --select: say this to the selected colonist, then save the chat as a memory
 ##   --brain B           laya (default, from data/config.json) or utility (hand-made baseline)
 
@@ -49,6 +50,7 @@ func _ready() -> void:
 	add_child(chat)
 	add_child(hud)
 	hud.bind(runner, view, chat)
+	hud.inspector.focus_requested.connect(func(p: Vector3) -> void: cam.focus(p))
 	if args.has("select"):
 		var first: Colonist = runner.sim.colonists.values()[0]
 		view.select(first)
@@ -56,8 +58,34 @@ func _ready() -> void:
 			chat.reply_received.connect(func(c: Colonist, _r: String) -> void: chat.save_memory(c), CONNECT_ONE_SHOT)
 			chat.send(first, String(args["say"]))
 
+	if args.has("inspect"):
+		_inspect_for_test(String(args["inspect"]))
+
 	if args.has("shot"):
 		_take_shot(String(args["shot"]), float(args.get("shot-delay", "2.0")))
+
+
+## Test hook: select something by kind so screenshots can show each inspector page.
+func _inspect_for_test(what: String) -> void:
+	var sim := runner.sim
+	var t: Variant = null
+	if what == "colony":
+		t = "colony"
+	elif what.begins_with("building:"):
+		for b: Building in sim.buildings.values():
+			if b.type == what.substr(9):
+				t = b
+	elif what.begins_with("node:"):
+		for n: ResNode in sim.nodes.values():
+			if n.type == what.substr(5):
+				t = n
+				break
+	elif what == "tile":
+		t = sim.map.center + Vector2i(3, 3)
+	view.select_target(t)
+	var pos: Variant = view.target_position(t)
+	if pos != null:
+		cam.focus(pos)
 
 
 func _take_shot(path: String, delay: float) -> void:

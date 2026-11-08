@@ -49,6 +49,7 @@ func tick(dt: float) -> int:
 					carrying = float(f.get("yield", 20)) * sim.colony_mult("food_yield")
 					farm.farm_stage = "empty"
 					farm.farm_growth = 0.0
+					farm.harvests += 1
 					if not go_to(sim.storage_access(c.cell)):
 						return fail("no path to storage")
 					phase = "carrying"

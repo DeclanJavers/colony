@@ -1,8 +1,13 @@
 class_name Inspector
 extends PanelContainer
-## Right-hand side panel for the selected colonist: who they are, their needs, family and
-## friends, what their brain weighed for the last choice, their memories (highlighting the ones
-## Laya currently reads), and a chat box to talk to them as the Watcher.
+## Right-hand side panel for whatever is selected.
+## Colonists: who they are, needs, family and friends, what their brain weighed for the last
+## choice, memories (highlighting the ones Laya reads), and a chat box to talk to them.
+## Everything else (buildings, sites, farms, resources, graves, ground, the colony overview) gets
+## a page from InspectText. Names on every page are links: clicking one inspects it and moves
+## the camera there.
+
+signal focus_requested(world_pos: Vector3)
 
 const WIDTH := 430.0
 const REFRESH_S := 0.25
@@ -11,7 +16,9 @@ const NEED_COLORS := {"good": Color(0.45, 0.8, 0.45), "mid": Color(0.95, 0.8, 0.
 var runner: SimRunner
 var view: WorldView
 var chat: WatcherChat
-var colonist: Colonist
+var colonist: Colonist            # set when a living colonist is inspected
+var target: Variant = null        # whatever is inspected (Colonist, Building, ResNode, Vector2i, "colony")
+var _colonist_only: Array[Control] = []
 
 var _title := RichTextLabel.new()
 var _info := RichTextLabel.new()
@@ -85,6 +92,8 @@ func _ready() -> void:
 	scroll.add_child(body)
 
 	_rich(_info, 14)
+	_info.meta_underlined = true
+	_info.meta_clicked.connect(_on_link)
 	body.add_child(_info)
 
 	_needs.columns = 3
@@ -111,7 +120,8 @@ func _ready() -> void:
 	_state.visible = false
 	body.add_child(_state)
 
-	col.add_child(HSeparator.new())
+	var sep := HSeparator.new()
+	col.add_child(sep)
 	_chat_title.add_theme_font_size_override("font_size", 15)
 	col.add_child(_chat_title)
 	_rich(_chat_log, 14)
@@ -134,6 +144,90 @@ func _ready() -> void:
 	_send.focus_mode = Control.FOCUS_NONE
 	_send.pressed.connect(_on_send)
 	row.add_child(_send)
+	_colonist_only.assign([_needs, _why_title, _why, _memories, _state_btn, sep, _chat_title, _chat_log, _chat_status, row])
+
+
+## Inspect anything (see WorldView.target_selected for the kinds). null closes the panel.
+func show_target(t: Variant) -> void:
+	if t is Colonist and (t as Colonist).alive():
+		target = t
+		_set_colonist_mode(true)
+		show_colonist(t)
+		return
+	if colonist != null:
+		chat.save_memory(colonist)
+	colonist = null
+	target = t
+	visible = t != null
+	_entry.release_focus()
+	if t == null:
+		return
+	_set_colonist_mode(false)
+	_refresh_generic()
+
+
+func _set_colonist_mode(on: bool) -> void:
+	for ctl in _colonist_only:
+		ctl.visible = on
+	_state.visible = on and _state_btn.button_pressed
+
+
+func _on_link(meta: Variant) -> void:
+	var t: Variant = resolve_link(runner.sim, String(meta))
+	if t == null:
+		return
+	view.select_target(t)
+	var pos: Variant = view.target_position(t)
+	if pos != null:
+		focus_requested.emit(pos)
+
+
+static func resolve_link(sim: Sim, meta: String) -> Variant:
+	if meta == "colony":
+		return "colony"
+	var parts := meta.split(":", true, 1)
+	if parts.size() != 2:
+		return null
+	match parts[0]:
+		"c":
+			return sim.find_colonist(int(parts[1]))
+		"b":
+			return sim.buildings.get(int(parts[1]))
+		"n":
+			return sim.nodes.get(int(parts[1]))
+		"t":
+			var xy := parts[1].split(",")
+			return Vector2i(int(xy[0]), int(xy[1]))
+	return null
+
+
+func _refresh_generic() -> void:
+	var sim := runner.sim
+	var t: Variant = target
+	if t is Colonist:   # a dead colonist = their grave
+		_title.text = "[b]Grave of %s[/b]" % (t as Colonist).name
+		_info.text = InspectText.grave(sim, t)
+	elif t is Building:
+		var b := t as Building
+		if not sim.buildings.has(b.id):
+			show_target(null)
+			return
+		_title.text = "[b]%s[/b]" % InspectText.label_of(b)
+		_info.text = InspectText.building(sim, b)
+	elif t is ResNode:
+		var n := t as ResNode
+		if not sim.nodes.has(n.id):
+			_title.text = "[b]%s[/b]  [color=#aaaaaa]used up[/color]" % String(n.type).replace("_", " ").capitalize()
+			_info.text = "Nothing left here."
+			return
+		_title.text = "[b]%s[/b]" % String(n.type).replace("_", " ").capitalize()
+		_info.text = InspectText.node(sim, n)
+	elif t is Vector2i:
+		_title.text = "[b]Ground[/b]  [color=#aaaaaa](%d, %d)[/color]" % [t.x, t.y]
+		_info.text = InspectText.tile(sim, t)
+	elif t is String and t == "colony":
+		_title.text = "[b]The colony[/b]"
+		_info.text = InspectText.colony(sim, runner)
 
 
 func show_colonist(c: Colonist) -> void:
@@ -160,12 +254,15 @@ func _on_send() -> void:
 
 
 func _process(delta: float) -> void:
-	if not visible or colonist == null:
+	if not visible or target == null:
 		return
 	_t += delta
 	if _t >= REFRESH_S:
 		_t = 0.0
-		_refresh()
+		if colonist != null:
+			_refresh()
+		else:
+			_refresh_generic()
 
 
 func _input(event: InputEvent) -> void:
@@ -190,6 +287,9 @@ func _refresh() -> void:
 		lines.append("[color=#ff8a80]Died of %s.[/color]" % c.cause_of_death)
 	else:
 		lines.append("Doing: [b]%s[/b]" % view.short_action(c))
+		var tgt: Variant = InspectText.action_target(c.action)
+		if tgt != null:
+			lines.append("Working on: %s" % InspectText.link(tgt))
 	var brain := sim.brain_for(c)
 	var model := ""
 	if not c.last_decision.is_empty():
@@ -245,17 +345,18 @@ func _family_lines(c: Colonist) -> PackedStringArray:
 	if c.partner_id >= 0:
 		var p := sim.find_colonist(c.partner_id)
 		if p != null:
-			fam.append("partner %s" % p.name)
+			fam.append("partner %s" % InspectText.link(p))
 	for pid in c.parent_ids:
 		var p := sim.find_colonist(int(pid))
 		if p != null:
-			fam.append("parent %s%s" % [p.name, "" if p.alive() else " (dead)"])
+			fam.append("parent %s" % InspectText.link(p))
 	for o: Colonist in sim.colonists.values():
 		if o.parent_ids.has(c.id):
-			fam.append("child %s" % o.name)
+			fam.append("child %s" % InspectText.link(o))
 	if not fam.is_empty():
 		out.append("Family: %s" % ", ".join(fam))
-	out.append("Home: %s" % ("has a bed" if c.home_id >= 0 else "no bed yet"))
+	var home := sim.buildings.get(c.home_id) as Building
+	out.append("Home: %s" % (InspectText.link(home) if home != null else "no bed yet"))
 	if c.pregnant_until > 0.0:
 		out.append("[color=#f8bbd0]Expecting a child[/color]")
 	# Closest relationships (affection -100..100).
@@ -265,7 +366,7 @@ func _family_lines(c: Colonist) -> PackedStringArray:
 	for oid in ids.slice(0, 4):
 		var o := sim.find_colonist(int(oid))
 		if o != null and o.alive():
-			rel.append("%s %+d" % [o.name, int(c.affection[oid])])
+			rel.append("%s %+d" % [InspectText.link(o), int(c.affection[oid])])
 	if not rel.is_empty():
 		out.append("Feelings: %s" % ", ".join(rel))
 	return out

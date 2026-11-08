@@ -301,6 +301,20 @@ func _pick_name() -> String:
 	return "%s %d" % [base, _used_names[base]]
 
 
+## What's on a map cell, for inspecting (null if nothing).
+func building_at_cell(cell: Vector2i) -> Building:
+	if map.building_at.has(cell):
+		return buildings.get(map.building_at[cell])
+	for b: Building in buildings.values():   # walkable buildings (farms) aren't in building_at
+		if b.cells().has(cell):
+			return b
+	return null
+
+
+func node_at_cell(cell: Vector2i) -> ResNode:
+	return nodes.get(map.node_at.get(cell, -1)) as ResNode
+
+
 ## Living or dead colonist by id (null if unknown).
 func find_colonist(cid: int) -> Colonist:
 	return _find_colonist_any(cid)
@@ -861,6 +875,8 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	b.work_needed = float(d.get("work", 60))
 	for i in int(d.get("provides", {}).get("beds", 0)):
 		b.beds.append(-1)
+	b.placed_at = clock
+	b.placed_by = by.name if by != null else ""
 	buildings[b.id] = b
 	if not d.get("walkable", false):
 		for cell in b.cells():
@@ -875,6 +891,7 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 func complete_building(b: Building, by: Colonist, quiet: bool = false) -> void:
 	b.complete = true
 	b.work_done = b.work_needed
+	b.completed_at = clock
 	var label: String = b.def().get("label", b.type)
 	if not quiet:
 		for c: Colonist in colonists.values():

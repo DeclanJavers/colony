@@ -5,6 +5,10 @@ extends Node3D
 ## (made by tools/blender/make_models.py); a missing model falls back to a labelled box.
 
 signal colonist_clicked(c: Colonist)
+## Anything clicked: Colonist (alive, or dead = their grave), Building, ResNode, Vector2i tile,
+## "colony", or null (deselect).
+signal target_selected(target: Variant)
+signal hovered(target: Variant, screen_pos: Vector2)
 
 const MODEL_DIR := "res://assets/models/"
 const GRASS := Color(0.36, 0.55, 0.26)
@@ -13,7 +17,9 @@ const FORD := Color(0.36, 0.56, 0.70)
 
 var sim: Sim
 var camera: Camera3D
-var selected: Colonist = null
+var selected: Colonist = null          # selected living colonist (for the ring + follow)
+var selected_target: Variant = null    # whatever is inspected
+var _hover_t := 0.0
 
 var _models: Dictionary = {}       # type -> PackedScene (or null)
 var _nodes: Dictionary = {}        # ResNode id -> Node3D
@@ -259,7 +265,7 @@ func _on_colonist_died(c: Colonist, _cause: String) -> void:
 		(e["root"] as Node3D).queue_free()
 		_colonists.erase(c.id)
 	if selected == c:
-		select(null)
+		select_target(c)   # keep inspecting: the page becomes their grave
 	_add_grave(c)
 
 
@@ -325,11 +331,8 @@ func _process(delta: float) -> void:
 	var night := 1.0 if sim.is_night() else 0.0
 	for l in _fire_lights:
 		l.light_energy = lerpf(l.light_energy, 0.4 + 2.2 * night, follow)
-	if selected != null:
-		var se: Dictionary = _colonists.get(selected.id, {})
-		if not se.is_empty():
-			_select_ring.visible = true
-			_select_ring.position = (se["root"] as Node3D).position + Vector3(0, 0.03, 0)
+	if selected_target != null:
+		_place_ring()
 
 
 func _critical(c: Colonist) -> bool:
@@ -339,9 +342,45 @@ func _critical(c: Colonist) -> bool:
 ## ---- Picking ----------------------------------------------------------------
 
 func select(c: Colonist) -> void:
-	selected = c
-	_select_ring.visible = c != null
-	colonist_clicked.emit(c)
+	select_target(c)
+
+
+func select_target(t: Variant) -> void:
+	selected_target = t
+	selected = t as Colonist if (t is Colonist and (t as Colonist).alive()) else null
+	_place_ring()
+	colonist_clicked.emit(selected)
+	target_selected.emit(t)
+
+
+## World position of an inspectable target (for the camera), or null.
+func target_position(t: Variant) -> Variant:
+	if t is Colonist:
+		var c := t as Colonist
+		var e: Dictionary = _colonists.get(c.id, {})
+		return (e["root"] as Node3D).position if not e.is_empty() else to_world(c.pos)
+	if t is Building:
+		return to_world((t as Building).center())
+	if t is ResNode:
+		return to_world(Vector2((t as ResNode).cell))
+	if t is Vector2i:
+		return to_world(Vector2(t))
+	return null
+
+
+func _place_ring() -> void:
+	var t: Variant = selected_target
+	var pos: Variant = target_position(t)
+	_select_ring.visible = pos != null and not (t is String)
+	if pos == null:
+		return
+	var s := 1.0
+	if t is Building:
+		s = maxf((t as Building).size.x, (t as Building).size.y) * 1.15
+	elif t is Vector2i:
+		s = 0.8
+	_select_ring.scale = Vector3(s, 1, s)
+	_select_ring.position = (pos as Vector3) + Vector3(0, 0.03, 0)
 
 
 func pick_colonist(screen_pos: Vector2, radius_px: float = 28.0) -> Colonist:
@@ -359,6 +398,45 @@ func pick_colonist(screen_pos: Vector2, radius_px: float = 28.0) -> Colonist:
 	return best
 
 
+## Whatever is under the mouse: a colonist first, then grave, building, resource, else the ground tile.
+func pick(screen_pos: Vector2) -> Variant:
+	var c := pick_colonist(screen_pos)
+	if c != null:
+		return c
+	var from := camera.project_ray_origin(screen_pos)
+	var dir := camera.project_ray_normal(screen_pos)
+	if absf(dir.y) < 0.0001:
+		return null
+	var hit := from + dir * (-from.y / dir.y)
+	var cell := Vector2i(roundi(hit.x), roundi(hit.z))
+	if not sim.map.in_bounds(cell):
+		return null
+	for g in sim.graveyard:
+		if (g as Colonist).pos.distance_to(Vector2(hit.x, hit.z)) < 0.45:
+			return g
+	var b := sim.building_at_cell(cell)
+	if b != null:
+		return b
+	var n := sim.node_at_cell(cell)
+	if n != null:
+		return n
+	return cell
+
+
+static func describe_short(t: Variant) -> String:
+	if t is Colonist:
+		var c := t as Colonist
+		return c.name if c.alive() else "Grave of %s" % c.name
+	if t is Building:
+		return InspectText.label_of(t)
+	if t is ResNode:
+		var n := t as ResNode
+		return "%s (%d %s left)" % [String(n.type).replace("_", " ").capitalize(), int(n.amount), n.def().get("resource", "")]
+	return ""
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		select(pick_colonist(event.position))
+		select_target(pick(event.position))
+	elif event is InputEventMouseMotion:
+		hovered.emit(pick(event.position), event.position)

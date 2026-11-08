@@ -54,6 +54,7 @@ func tick(dt: float) -> int:
 				phase = "working"
 		"working":
 			site.work_done += dt * work_rate("building") * sim.colony_mult("build_speed")
+			site.work_by[c.name] = float(site.work_by.get(c.name, 0.0)) + dt
 			c.add_skill_xp("building", dt)
 			worked += dt
 			if site.work_done >= site.work_needed:
