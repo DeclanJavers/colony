@@ -72,12 +72,17 @@ func fail(reason: String) -> int:
 	return FAILED
 
 
-func go_to(cell: Vector2i) -> bool:
+func go_to(cell: Vector2i, own_spot: bool = true) -> bool:
 	## Plan a path to cell. False if unreachable.
-	goal_cell = cell
+	## own_spot: if someone else is already standing there or heading there, take the nearest
+	## free walkable cell next to it instead, so colonists don't stand inside each other.
 	if cell.x < 0:
+		goal_cell = cell
 		return false
 	sim.ensure_walkable(c)
+	if own_spot:
+		cell = sim.free_spot_near(cell, c)
+	goal_cell = cell
 	if c.cell == cell:
 		path.clear()
 		return true

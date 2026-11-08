@@ -301,6 +301,44 @@ func _pick_name() -> String:
 	return "%s %d" % [base, _used_names[base]]
 
 
+## Cells other colonists are standing on (when not moving) or heading to.
+func claimed_cells(except: Colonist) -> Dictionary:
+	var out := {}
+	for o: Colonist in colonists.values():
+		if o == except:
+			continue
+		if o.action != null and o.action.goal_cell.x >= 0:
+			out[o.action.goal_cell] = true
+		if o.action == null or o.action.path.is_empty():
+			out[o.cell] = true
+	return out
+
+
+## `cell` if nobody else has claimed it, else the nearest free walkable cell around it that the
+## colonist can reach (rings 1-2). Falls back to `cell` when everything nearby is taken.
+func free_spot_near(cell: Vector2i, c: Colonist) -> Vector2i:
+	var taken := claimed_cells(c)
+	if not taken.has(cell):
+		return cell
+	for ring in [1, 2]:
+		var best := Vector2i(-1, -1)
+		var best_d := INF
+		for dy in range(-ring, ring + 1):
+			for dx in range(-ring, ring + 1):
+				if maxi(absi(dx), absi(dy)) != ring:
+					continue
+				var n := cell + Vector2i(dx, dy)
+				if taken.has(n) or not map.is_walkable(n):
+					continue
+				var d := Vector2(n - c.cell).length_squared()
+				if d < best_d and (n == c.cell or not map.find_path(c.cell, n).is_empty()):
+					best_d = d
+					best = n
+		if best.x >= 0:
+			return best
+	return cell
+
+
 ## What's on a map cell, for inspecting (null if nothing).
 func building_at_cell(cell: Vector2i) -> Building:
 	if map.building_at.has(cell):

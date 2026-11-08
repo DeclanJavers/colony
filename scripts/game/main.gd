@@ -7,7 +7,7 @@ extends Node3D
 ##   --shot path.png     save a screenshot after --shot-delay seconds, then quit (for automated checks)
 ##   --time H            jump to hour H of the current day before showing (e.g. 21 for night)
 ##   --zoom S            camera ortho size
-##   --inspect what     open the inspector on: colony | building:<type> | node:<type> | tile
+##   --inspect what     open the inspector on: colony | building:<type> | node:<type> | colonist:<name> | tile
 ##   --say "text"        with --select: say this to the selected colonist, then save the chat as a memory
 ##   --brain B           laya (default, from data/config.json) or utility (hand-made baseline)
 
@@ -82,6 +82,10 @@ func _inspect_for_test(what: String) -> void:
 			if n.type == what.substr(5):
 				t = n
 				break
+	elif what.begins_with("colonist:"):
+		for c: Colonist in sim.colonists.values():
+			if c.name == what.substr(9):
+				t = c
 	elif what == "tile":
 		t = sim.map.center + Vector2i(3, 3)
 	view.select_target(t)

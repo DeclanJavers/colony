@@ -30,6 +30,8 @@ var _fire_lights: Array[OmniLight3D] = []
 var _hover: Variant = null              # thing under the mouse
 var _intent := MeshInstance3D.new()     # dotted line from the selected colonist to their target
 var _node_t := 0.0
+var _nudge: Dictionary = {}             # colonist id -> small visual offset so nobody overlaps
+const PERSONAL_SPACE := 0.45            # tiles
 const NAME_ZOOM := 20.0                 # names show when zoomed in closer than this (camera size)
 const RES_COLORS := {"wood": Color(0.80, 0.62, 0.40), "stone": Color(0.78, 0.80, 0.84),
 	"food": Color(0.92, 0.45, 0.45), "water": Color(0.45, 0.70, 0.98)}
@@ -325,6 +327,7 @@ func _process(delta: float) -> void:
 	if sim == null:
 		return
 	var follow := clampf(delta * 12.0, 0.0, 1.0)
+	_update_nudges()
 	for cid in _colonists:
 		var c := sim.colonists.get(cid) as Colonist
 		if c == null:
@@ -332,7 +335,7 @@ func _process(delta: float) -> void:
 		var e: Dictionary = _colonists[cid]
 		var root: Node3D = e["root"]
 		var model: Node3D = e["model"]
-		var target := to_world(c.pos)
+		var target: Vector3 = to_world(c.pos) + (_nudge.get(cid, Vector3.ZERO) as Vector3)
 		var move := target - root.position
 		var before := root.position
 		root.position = root.position.lerp(target, follow)
@@ -342,8 +345,19 @@ func _process(delta: float) -> void:
 			avatar.update_for(c, (root.position - before).length() / maxf(delta, 0.0001))
 		# Sleeping at home = inside the house: hide the body, keep the label.
 		model.visible = not (sleeping and c.action.get("where") == "at home")
+		var face: Variant = null
 		if move.length() > 0.01 and not sleeping:
-			model.rotation.y = lerp_angle(model.rotation.y, atan2(move.x, move.z), follow)
+			face = move
+		elif not sleeping and c.action != null and c.action.phase != "walking":
+			# Working, eating, talking...: turn to face what they're working on.
+			var tp: Variant = target_position(InspectText.action_target(c.action))
+			if tp != null:
+				var to: Vector3 = (tp as Vector3) - root.position
+				to.y = 0.0
+				if to.length() > 0.15:
+					face = to
+		if face != null:
+			model.rotation.y = lerp_angle(model.rotation.y, atan2((face as Vector3).x, (face as Vector3).z), clampf(delta * 8.0, 0.0, 1.0))
 		# Tip the model over to sleep unless it has a real lie-down animation.
 		var tip := sleeping and not (avatar != null and avatar.lies_down())
 		model.rotation.x = lerpf(model.rotation.x, -PI / 2.0 if tip else 0.0, follow)
@@ -463,6 +477,36 @@ func _update_intent_line() -> void:
 		im.surface_add_vertex(from + d * (float(i) / n))
 		im.surface_add_vertex(from + d * (float(i + 1) / n))
 	im.surface_end()
+
+
+## Visual personal space: colonists standing closer than PERSONAL_SPACE get gently pushed apart
+## (rendering only; the sim already gives everyone their own tile where it can).
+func _update_nudges() -> void:
+	var ids := _colonists.keys()
+	var pos := {}
+	for cid in ids:
+		var c := sim.colonists.get(cid) as Colonist
+		if c != null:
+			pos[cid] = c.pos
+	var out := {}
+	for i in ids.size():
+		var a = ids[i]
+		if not pos.has(a):
+			continue
+		for j in range(i + 1, ids.size()):
+			var b = ids[j]
+			if not pos.has(b):
+				continue
+			var d: Vector2 = pos[a] - pos[b]
+			var dist := d.length()
+			if dist >= PERSONAL_SPACE:
+				continue
+			# Same spot: push apart along a stable direction from their ids.
+			var dir := d / dist if dist > 0.001 else Vector2.from_angle(_hash01(int(a) * 31 + int(b)) * TAU)
+			var push := (PERSONAL_SPACE - dist) * 0.5
+			out[a] = out.get(a, Vector3.ZERO) + Vector3(dir.x, 0, dir.y) * push
+			out[b] = out.get(b, Vector3.ZERO) - Vector3(dir.x, 0, dir.y) * push
+	_nudge = out
 
 
 ## Trees and rocks shrink as they're used up.
