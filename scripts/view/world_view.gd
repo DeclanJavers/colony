@@ -199,7 +199,8 @@ func _add_building(b: Building) -> void:
 	add_child(root)
 	var model := _model(b.type)
 	root.add_child(model)
-	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null, "pct": null}
+	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null, "pct": null,
+		"window": model.find_child("window", true, false), "lit": false, "smoke": null}
 	if b.provides("farm") != null:
 		var crops := _model("farm_crops")
 		crops.visible = false
@@ -225,6 +226,8 @@ func _add_building(b: Building) -> void:
 		root.add_child(pct)
 		entry["pct"] = pct
 	_buildings[b.id] = entry
+	if b.complete:
+		_add_smoke(b, entry)
 	_update_building(b)
 
 
@@ -238,6 +241,7 @@ func _on_building_completed(b: Building) -> void:
 	if e["pct"] != null:
 		(e["pct"] as Node3D).queue_free()
 		e["pct"] = null
+	_add_smoke(b, e)
 	_update_building(b)
 
 
@@ -385,6 +389,7 @@ func _process(delta: float) -> void:
 	if _node_t > 0.5:
 		_node_t = 0.0
 		_update_nodes()
+		_update_windows()
 
 
 func _critical(c: Colonist) -> bool:
@@ -531,6 +536,76 @@ func _update_nudges() -> void:
 			out[a] = out.get(a, Vector3.ZERO) + Vector3(dir.x, 0, dir.y) * push
 			out[b] = out.get(b, Vector3.ZERO) - Vector3(dir.x, 0, dir.y) * push
 	_nudge = out
+
+
+const CHIMNEYS := {"kitchen": Vector3(-0.55, 1.95, -0.45), "workshop": Vector3(0.55, 1.95, -0.45)}
+
+
+## A thin wisp of smoke from chimneys: quiet signs of life.
+func _add_smoke(b: Building, e: Dictionary) -> void:
+	if not CHIMNEYS.has(b.type) or e.get("smoke") != null:
+		return
+	var p := CPUParticles3D.new()
+	p.position = CHIMNEYS[b.type]
+	p.amount = 7
+	p.lifetime = 4.5
+	p.preprocess = 4.0
+	p.direction = Vector3(0.15, 1, 0)
+	p.spread = 12.0
+	p.gravity = Vector3(0.05, 0.12, 0)
+	p.initial_velocity_min = 0.18
+	p.initial_velocity_max = 0.3
+	var m := SphereMesh.new()
+	m.radius = 0.09
+	m.height = 0.18
+	m.radial_segments = 6
+	m.rings = 3
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.85, 0.88, 0.45)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	m.material = mat
+	p.mesh = m
+	var curve := Curve.new()
+	curve.add_point(Vector2(0, 0.4))
+	curve.add_point(Vector2(1, 1.8))
+	p.scale_amount_curve = curve
+	var grad := Gradient.new()
+	grad.set_color(0, Color(1, 1, 1, 0.55))
+	grad.set_color(1, Color(1, 1, 1, 0.0))
+	p.color_ramp = grad
+	(e["root"] as Node3D).add_child(p)
+	e["smoke"] = p
+
+
+## Houses glow warm in the evening and at night while someone is home.
+func _update_windows() -> void:
+	var h := sim.time_of_day()
+	var evening := h >= 18.5 or h < 6.0
+	var home := {}
+	if evening:
+		for c: Colonist in sim.colonists.values():
+			if c.action != null and c.action.phase == "sleeping" and c.home_id >= 0:
+				home[c.home_id] = true
+	for bid in _buildings:
+		var e: Dictionary = _buildings[bid]
+		var w := e.get("window") as MeshInstance3D
+		if w == null:
+			continue
+		var lit := evening and home.has(bid)
+		if lit == bool(e["lit"]):
+			continue
+		e["lit"] = lit
+		if lit:
+			var m := StandardMaterial3D.new()
+			m.albedo_color = Color(1.0, 0.78, 0.4)
+			m.emission_enabled = true
+			m.emission = Color(1.0, 0.7, 0.3)
+			m.emission_energy_multiplier = 2.2
+			w.material_override = m
+		else:
+			w.material_override = null
 
 
 ## Trees and rocks shrink as they're used up.
