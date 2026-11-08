@@ -50,6 +50,14 @@ func _ready() -> void:
 	talks = ConversationLLM.new(runner.sim, String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
 	talks.name = "ConversationLLM"
 	add_child(talks)
+	talks.is_watched = func(conv: Dictionary) -> bool:
+		for c in [conv["a"], conv["b"]]:
+			if view.selected == c:
+				return true
+			var p: Variant = view.target_position(c)
+			if p != null and Vector2((p as Vector3).x - cam.position.x, (p as Vector3).z - cam.position.z).length() < cam.camera.size * 0.9:
+				return true
+		return false
 	chat = WatcherChat.new(runner.sim, String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
 	chat.name = "WatcherChat"
 	add_child(chat)
@@ -71,6 +79,9 @@ func _ready() -> void:
 			view.select_target(people[0])
 			cam.focus(view.target_position(people[0]), true)
 			runner.sim.converse(people[0], people[1], String(args["talk"]) if args["talk"] != "1" else "chat")
+
+	if args.has("settings"):
+		hud._settings.visible = true
 
 	if args.has("inspect"):
 		_inspect_for_test(String(args["inspect"]))

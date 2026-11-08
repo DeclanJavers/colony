@@ -53,8 +53,8 @@ func _u(c: Colonist, need: String) -> float:
 	return pow(1.0 - float(c.needs.get(need, 100.0)) / 100.0, 2.0)
 
 
-## How short the colony is of `res` *as this colonist believes it*. Unknown stock counts as
-## half-way scarce (they're unsure, so a bit cautious).
+## How short the colony is of `res` *as this colonist believes it*. Unknown stock counts as only
+## mildly short: not knowing is a reason to go and look, not to over-gather blindly.
 func _scarcity(sim: Sim, c: Colonist, res: String) -> float:
 	# Target = a base buffer + what the priciest still-buildable unlocked building needs.
 	var target := float(RESOURCE_TARGETS.get(res, 50.0))
@@ -63,7 +63,7 @@ func _scarcity(sim: Sim, c: Colonist, res: String) -> float:
 		var d: Dictionary = sim.content.buildings[t]
 		if int(d.get("tier", 0)) <= sim.unlocked_tier and sim.count_of(t) < int(d.get("max_count", 999)) and _build_score(t, sim) > 0.3:
 			extra = maxf(extra, float(d.get("cost", {}).get(res, 0.0)))
-	var believed := c.knowledge.recall(res, sim.clock) if c.knowledge.knows(res, sim.clock) else (target + extra) * 0.5
+	var believed := c.knowledge.recall(res, sim.clock) if c.knowledge.knows(res, sim.clock) else (target + extra) * 0.8
 	return clampf(1.0 - believed / (target + extra), 0.0, 1.0)
 
 
@@ -123,7 +123,7 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			s -= _recently(c, sim, ["share_news", "ask_help"], 8.0)
 		"check_stores":
 			# Worth a look when what they know is old or missing.
-			s = 1.1 * c.knowledge.uncertainty(sim.clock) - 0.4
+			s = 1.3 * c.knowledge.uncertainty(sim.clock) - 0.35
 	# Requests: doing what someone asked, weighted by how much they trust them and how recent it
 	# is. Urgent needs still win (they score up to ~3), so a parched colonist drinks first.
 	for r in sim.active_requests(c):

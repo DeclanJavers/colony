@@ -366,7 +366,8 @@ func _process(delta: float) -> void:
 		var s := 1.0 if c.is_adult() else 0.65
 		model.scale = Vector3(s, s, s)
 		var over: Overhead = e["over"]
-		var show_name: bool = camera.size < NAME_ZOOM or c == selected or InspectText.same(c, _hover)
+		var names_mode := String(GameSettings.get_value("names"))
+		var show_name: bool = names_mode == "always" or (names_mode == "auto" and (camera.size < NAME_ZOOM or c == selected or InspectText.same(c, _hover)))
 		over.position.y = 0.75 if sleeping else (1.3 * s + 0.12)
 		over.update_for(c, show_name, delta)
 		_update_carry(c, e["carry"])
@@ -446,7 +447,7 @@ func _on_conversation(conv: Dictionary) -> void:
 	var lines: Array = conv.get("lines", [])
 	var a: Colonist = conv["a"]
 	var b: Colonist = conv["b"]
-	if lines.is_empty() or not (camera.size < NAME_ZOOM * 1.3 or selected == a or selected == b):
+	if lines.is_empty() or not bool(GameSettings.get_value("bubbles")) or not (camera.size < NAME_ZOOM * 1.3 or selected == a or selected == b):
 		return
 	var by_name := {a.name: a, b.name: b}
 	var delay := 0.0

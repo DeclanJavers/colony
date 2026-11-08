@@ -13,6 +13,7 @@ const MAX_QUEUE := 4          # beyond this (high speed / busy), the oldest wait
 var print_talks := OS.get_cmdline_user_args().has("--print-talks")
 
 var sim: Sim
+var is_watched: Callable          # (conv) -> bool, set by the game: is this talk on screen?
 var base_url := "http://127.0.0.1:8765"
 var queue: Array = []
 var busy := false
@@ -33,6 +34,10 @@ func _ready() -> void:
 	add_child(_req)
 	_req.request_completed.connect(_on_done)
 	sim.conversation_handler = func(conv: Dictionary) -> bool:
+		var mode := String(GameSettings.get_value("talk_mode"))
+		if mode == "quick" or (mode == "near" and is_watched.is_valid() and not bool(is_watched.call(conv))):
+			fallbacks += 1
+			return false   # the sim does its quick fact exchange
 		queue.append(conv)
 		while queue.size() > MAX_QUEUE:
 			_fallback(queue.pop_front())

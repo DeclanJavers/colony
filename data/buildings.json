@@ -63,7 +63,7 @@
       2,
       2
     ],
-    "max_count": 12,
+    "max_count": 24,
     "walkable": true,
     "description": "grows 25 food every few days if planted and harvested",
     "provides": {

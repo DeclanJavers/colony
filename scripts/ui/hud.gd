@@ -19,6 +19,7 @@ var _feed_lines: PackedStringArray = []
 var inspector := Inspector.new()
 var cam: IsoCamera                 # set by main, for follow / Tab
 var _tooltip := Label.new()
+var _settings := PanelContainer.new()
 var _root: Control
 
 
@@ -48,6 +49,12 @@ func _ready() -> void:
 	_brain.add_theme_font_size_override("font_size", 13)
 	_brain.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(_brain)
+	var settings_btn := Button.new()
+	settings_btn.text = "Settings"
+	settings_btn.focus_mode = Control.FOCUS_NONE
+	settings_btn.pressed.connect(func() -> void:
+		_settings.visible = not _settings.visible)
+	hb.add_child(settings_btn)
 	var colony_btn := Button.new()
 	colony_btn.text = "Colony"
 	colony_btn.focus_mode = Control.FOCUS_NONE
@@ -103,6 +110,9 @@ func _ready() -> void:
 	_tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tooltip.visible = false
 	root.add_child(_tooltip)
+
+	# --- settings (small panel under the top bar)
+	_build_settings(root)
 
 	# --- inspector + chat (right side), set up in bind() once the chat service exists
 	root.add_child(inspector)
@@ -176,6 +186,44 @@ func _cycle_colonist(dir: int) -> void:
 			cam.follow_node = view.colonist_root(c)
 		else:
 			cam.focus(view.target_position(c))
+
+
+func _build_settings(root: Control) -> void:
+	_settings.add_theme_stylebox_override("panel", _panel_style())
+	_settings.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_settings.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_settings.position = Vector2(-470, 52)
+	_settings.visible = false
+	root.add_child(_settings)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 8)
+	_settings.add_child(grid)
+	_add_choice(grid, "Conversations", "talk_mode", [["all", "Chat model writes all"], ["near", "Only ones on screen"], ["quick", "Quick (no chat model)"]])
+	_add_choice(grid, "Names", "names", [["auto", "When zoomed in"], ["always", "Always"], ["never", "Never"]])
+	var lbl := Label.new()
+	lbl.text = "Speech bubbles"
+	grid.add_child(lbl)
+	var cb := CheckButton.new()
+	cb.button_pressed = bool(GameSettings.get_value("bubbles"))
+	cb.focus_mode = Control.FOCUS_NONE
+	cb.toggled.connect(func(on: bool) -> void: GameSettings.set_value("bubbles", on))
+	grid.add_child(cb)
+
+
+func _add_choice(grid: GridContainer, title: String, key: String, opts: Array) -> void:
+	var lbl := Label.new()
+	lbl.text = title
+	grid.add_child(lbl)
+	var ob := OptionButton.new()
+	ob.focus_mode = Control.FOCUS_NONE
+	for i in opts.size():
+		ob.add_item(opts[i][1], i)
+		if opts[i][0] == GameSettings.get_value(key):
+			ob.select(i)
+	ob.item_selected.connect(func(i: int) -> void: GameSettings.set_value(key, opts[i][0]))
+	grid.add_child(ob)
 
 
 func _on_hover(t: Variant, pos: Vector2) -> void:
