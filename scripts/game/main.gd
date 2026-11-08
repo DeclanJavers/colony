@@ -8,6 +8,7 @@ extends Node3D
 ##   --time H            jump to hour H of the current day before showing (e.g. 21 for night)
 ##   --zoom S            camera ortho size
 ##   --inspect what     open the inspector on: colony | building:<type> | node:<type> | colonist:<name> | tile
+##   --talk [intent]    the first two colonists start a conversation (chat | news | ask) right away
 ##   --say "text"        with --select: say this to the selected colonist, then save the chat as a memory
 ##   --brain B           laya (default, from data/config.json) or utility (hand-made baseline)
 
@@ -63,6 +64,13 @@ func _ready() -> void:
 		if args.has("say"):
 			chat.reply_received.connect(func(c: Colonist, _r: String) -> void: chat.save_memory(c), CONNECT_ONE_SHOT)
 			chat.send(first, String(args["say"]))
+
+	if args.has("talk"):   # test hook: the first two colonists start a conversation now
+		var people := runner.sim.colonists.values()
+		if people.size() >= 2:
+			view.select_target(people[0])
+			cam.focus(view.target_position(people[0]), true)
+			runner.sim.converse(people[0], people[1], String(args["talk"]) if args["talk"] != "1" else "chat")
 
 	if args.has("inspect"):
 		_inspect_for_test(String(args["inspect"]))

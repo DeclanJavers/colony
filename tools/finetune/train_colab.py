@@ -26,6 +26,7 @@ OUT = os.environ.get("OUT", "laya_colony_v1")
 EPOCHS = int(os.environ.get("EPOCHS", "2"))
 MAX_TRAIN = int(os.environ.get("MAX_TRAIN", "24000"))
 MAX_EVAL = int(os.environ.get("MAX_EVAL", "1500"))
+BASE = os.environ.get("BASE", "convaiinnovations/laya")   # or a Drive checkpoint dir, e.g. continue from v1
 WORK = "/content/work"
 
 assert torch.cuda.is_available(), "No GPU: Runtime > Change runtime type > GPU"
@@ -53,7 +54,7 @@ def unpack(name: str, limit: int) -> str:
 train_path = unpack("train", MAX_TRAIN)
 eval_path = unpack("eval", MAX_EVAL)
 
-base = resolve_checkpoint_dir("convaiinnovations/laya")
+base = resolve_checkpoint_dir(BASE)
 print("base checkpoint:", base)
 
 # A bigger GPU takes bigger micro-batches; the effective batch stays 64.

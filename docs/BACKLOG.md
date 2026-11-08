@@ -37,6 +37,23 @@ It keeps the colony alive but is capped at the baseline's quality and ignores th
 - More data: more seeds and longer runs, aiming at the full ~38k+ rows plus the new request and outcome rows.
 - Keep held-out seeds. Report agreement plus colony outcomes (survival, tier speed, births) against both v1 and the baseline.
 
+## Knowledge and communication
+
+**Done (2026-11-08):**
+- Beliefs and perception, plus the "check the stores" action.
+- Trust-weighted hearsay and natural misremembering.
+- Chat-model conversations with grounded fact and request extraction.
+- "Share news" and "ask for help" actions; requests from colonists and from the Watcher.
+- Laya v2 trained on all of it.
+
+**Next:**
+- **Exaggeration and lies:** the hook is `Knowledge.tell(..., distort)`. Give colonists motives first: competition, self-interest, blame, rivalries.
+- **Wider beliefs:** extend them beyond stock to ripe farms, unfinished sites, who's hungry, and where resources are.
+- **Settings:**
+  - When the chat model writes conversations: all, near the camera only, or never.
+  - Whether action availability should use beliefs instead of truth. Today the options offered still leak which sources physically exist.
+- **Outcome-based training,** so Laya can learn when trusting news pays off.
+
 ## Readability: seeing what's going on
 
 Guiding rule (from the user): keep it simple, easy to read and good-looking. Show detail on demand

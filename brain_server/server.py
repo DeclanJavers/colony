@@ -198,7 +198,8 @@ def remember(req: RememberRequest) -> dict:
         {"role": "user", "content": (
             f"{name} just had this conversation with the Watcher:\n{convo}\n\n"
             f"Write ONE short sentence (at most 15 words) in first person, as {name}, of what matters most "
-            "to remember from it, especially any request or advice about what to do. "
+            "to remember from it, especially any request or advice about what to do. Only what was actually "
+            "said: never invent a request. "
             "Example: The Watcher asked me to fetch water because the colony is running low. "
             "Only the sentence.")},
     ]
@@ -218,6 +219,10 @@ def remember(req: RememberRequest) -> dict:
                   max_tokens=30, temperature=0.0,
                   schema={"type": "object", "properties": {"request": {"enum": ASKABLE + ["none"]}}, "required": ["request"]})
         request = json.loads(out).get("request", "none")
+        # Only if the Watcher's own words ask for that job (small models over-extract).
+        said = [{"who": "Watcher", "text": m["content"]} for m in req.transcript if m["role"] == "user"]
+        if request != "none" and not _asked_in_words("Watcher", request, said):
+            request = "none"
     except Exception:
         pass
     return {"memory": mem, "request": request}

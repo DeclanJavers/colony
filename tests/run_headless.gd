@@ -63,6 +63,21 @@ func _initialize() -> void:
 		sim.events.decision_made.connect(func(c: Colonist, _ctx: Dictionary, d: Dictionary, began: bool) -> void:
 			print("    %s -> %s %s" % [c.name, d["action"], "" if began else "(FAILED)"]))
 
+	# --watcher-requests H: every H sim hours, a random colonist hears "the Watcher" ask for a job,
+	# like a player chatting would. Used for training data so the brain learns to weigh requests.
+	var wr := float(args.get("watcher-requests", "0"))
+	if wr > 0.0:
+		var jobs := ["gather_food", "fetch_water", "gather_wood", "gather_stone", "farm", "build", "check_stores"]
+		var rr := RandomNumberGenerator.new()
+		rr.seed = seed_v * 31 + 7
+		sim.events.hour_passed.connect(func(_d: int, h: int) -> void:
+			if h % int(wr) != 0 or sim.colonists.is_empty():
+				return
+			var people := sim.colonists.values()
+			var who: Colonist = people[rr.randi() % people.size()]
+			if who.is_adult():
+				sim.add_request(who, "the Watcher", jobs[rr.randi() % jobs.size()], 0.8))
+
 	founders = sim.alive_count()
 	end_clock = sim.clock + days * 1440.0
 	t0 = Time.get_ticks_msec()

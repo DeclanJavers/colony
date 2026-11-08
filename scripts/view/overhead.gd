@@ -40,7 +40,7 @@ func _ready() -> void:
 	bubble.fixed_size = true
 	bubble.no_depth_test = true
 	bubble.render_priority = 3
-	bubble.pixel_size = 0.00085
+	bubble.pixel_size = 0.001
 	bubble.font_size = 28
 	bubble.outline_size = 9
 	bubble.outline_modulate = Color(0.08, 0.09, 0.12, 0.9)
