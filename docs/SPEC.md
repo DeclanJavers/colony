@@ -31,13 +31,13 @@ Proposed location: `~/Desktop/Code/colony/`
 ┌──────────────────────── Godot 4.6 ────────────────────────┐      ┌──── brain_server (Python) ────┐
 │                                                           │      │                               │
 │  Registry (autoload)  ← data/*.json  (all content)        │      │  POST /decide  → Laya         │
-│  Sim (pure data, fixed tick, seeded, headless-capable)    │ HTTP │  POST /chat    → LM Studio    │
-│    ├ World / Map / Stockpile / Buildings                  │◄────►│  POST /remember→ LM Studio    │
+│  Sim (pure data, fixed tick, seeded, headless-capable)    │ HTTP │  POST /chat    → LFM3 (llama) │
+│    ├ World / Map / Stockpile / Buildings                  │◄────►│  POST /remember→ LFM3 (llama) │
 │    ├ Colonists (needs, traits, skills, memory, relations) │      │  GET  /health                 │
 │    └ ActionRunner  (walk → work → apply effects)          │      │  (localhost only)             │
 │  Brain interface  ← LayaBrain | UtilityBrain | Scripted   │      └───────────────────────────────┘
 │  StateDescriber   (colonist → ≤300-token text)            │                    │
-│  EventBus (signals) → Views, UI, DecisionLog, upgrades    │          LM Studio :1234 (LFM3-1.7B)
+│  EventBus (signals) → Views, UI, DecisionLog, upgrades    │          llama.cpp :8766 (LFM3-1.7B Q4_0)
 │  Views (3D, read-only on the sim)  /  UI (inspector, chat)│
 └───────────────────────────────────────────────────────────┘
 ```
@@ -89,7 +89,10 @@ outcome is added later: need levels N in-game hours afterwards, and whether the 
 died within one day. The LLM, or simple rules, can later label each decision good or bad to
 build the fine-tuning set. The colonist's personal seed is stored too, so runs can be replayed.
 
-## 4. Chat (LFM3-1.7B via LM Studio)
+## 4. Chat (LFM3-1.7B Q4_0 via llama.cpp)
+
+> Changed during setup: LM Studio's bundled engines (and released mlx-lm) don't support the
+> `lfm3` architecture yet, so the GGUF runs on Homebrew `llama-server` (~80 tokens/s on the M3 Pro).
 
 - The system prompt comes from a snapshot of the colonist: name, traits, needs, current
   action and why (the top Laya probabilities), memories, and relationships. Replies are short

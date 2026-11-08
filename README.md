@@ -1,0 +1,50 @@
+# Colony
+
+An ant-farm colony sim where every colonist is an AI agent. **Laya** picks what each colonist
+does, and **LFM3-1.7B** (a local LLM) lets you talk to any of them. Full design: [docs/SPEC.md](docs/SPEC.md).
+
+## Run it
+
+```bash
+# 1. AI services: Laya brain server (:8765) + LFM3 via llama.cpp (:8766)
+brain_server/run.sh
+
+# 2. Headless fast-forward (no window), using the hand-made baseline brain
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path . -s res://tests/run_headless.gd -- --days 30 --seed 1234
+
+# 3. Replay logged colonist states through Laya and compare with the baseline
+brain_server/.venv/bin/python tests/smoke_brain.py logs/decisions/<run>.jsonl 30 --chat
+```
+
+Requirements: Godot 4.6, `uv` (Python 3.12 venv in `brain_server/.venv`), `brew install llama.cpp`,
+LFM3 GGUF at `~/.lmstudio/models/LiquidAI/LFM3-1.7B-GGUF/LFM3-1.7B-QAD-Q4_0.gguf`.
+
+## How it's put together
+
+| Folder | What lives there |
+|---|---|
+| `data/` | **All content.** Buildings, tiers, actions, needs, traits, nodes, names and tuning, as JSON. |
+| `scripts/sim/` | Simulation core as plain data on a fixed tick (`Sim`, `WorldMap`, `Colonist`, `Building`, `ResNode`, `SimEvents`). No rendering. |
+| `scripts/sim/actions/types/` | One file per action **type** (consume, gather, farm, build, sleep, rest, socialize, have_child). Found automatically. |
+| `scripts/brain/` | `Brain` interface, `UtilityBrain` baseline, `StateDescriber` (colonist → text for Laya). |
+| `scripts/log/` | `DecisionLog` writes every decision and its outcome to `logs/decisions/*.jsonl` for fine-tuning. |
+| `brain_server/` | Python FastAPI server: `/decide` (Laya), `/chat` + `/remember` (LFM3), `/health`. |
+| `tests/` | Headless runner and brain smoke test. |
+
+## Extending it
+
+- **New building:** add an entry to `data/buildings.json` (tier, cost, work, footprint, `provides`).
+  The `provides` keys the sim understands: `storage`, `beds`, `sleep_quality`, `rest_spot`,
+  `water_source`, `farm{...}`, `colony{build_speed|food_yield|social_gain}`.
+- **New action from an existing type:** add an entry to `data/actions.json`, e.g. another `gather`
+  with different `sources`.
+- **New kind of behaviour:** add `scripts/sim/actions/types/<type>.gd` extending `ActionBase`
+  (`available` / `begin` / `tick` / `end`), then reference `"type": "<type>"` in actions.json.
+- **New need or trait:** add it to `data/needs.json` / `data/traits.json`. Trait `mods` keys like
+  `<need>_decay`, `work_speed`, `move_speed` and `carry` apply automatically.
+- **New brain:** extend `Brain`, implement `decide(ctx, sim, done)`, and call `sim.register_brain()`.
+  Brains are set per colonist (`colonist.brain_id`), so you can A/B test them in one colony.
+- **Listen to anything:** connect to signals on `sim.events` (births, deaths, decisions, buildings, ...).
+- **Change what Laya reads:** edit `StateDescriber` and bump its `VERSION` so logs stay comparable.
+- **Swap the decision model:** set `LAYA_MODEL` / `LAYA_SUBFOLDER` before `brain_server/run.sh`
+  (for example, a fine-tuned checkpoint).
