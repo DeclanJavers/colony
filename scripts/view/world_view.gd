@@ -57,6 +57,14 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	sim.events.colonist_died.connect(_on_colonist_died)
 	sim.events.delivered.connect(_on_delivered)
 	sim.events.conversation_finished.connect(_on_conversation)
+	# Little moments: parents celebrate a birth, whoever finishes a building cheers.
+	sim.events.colonist_born.connect(func(c: Colonist) -> void:
+		for pid in c.parent_ids:
+			_emote(sim.colonists.get(int(pid)), "celebrate"))
+	sim.events.building_completed.connect(func(b: Building) -> void:
+		for c: Colonist in sim.colonists.values():
+			if c.action != null and InspectText.same(InspectText.action_target(c.action), b):
+				_emote(c, "celebrate"))
 	_intent.mesh = ImmediateMesh.new()
 	var im := _flat_mat(Color(1, 1, 1, 0.75), true)
 	im.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -444,6 +452,15 @@ func _update_carry(c: Colonist, carry: MeshInstance3D) -> void:
 			carry.mesh = m
 			carry.rotation = Vector3.ZERO
 	carry.material_override = _flat_mat(RES_COLORS.get(res, Color.WHITE))
+
+
+func _emote(c: Colonist, clip: String) -> void:
+	if c == null:
+		return
+	var e: Dictionary = _colonists.get(c.id, {})
+	var avatar := e.get("model") as ColonistAvatar if not e.is_empty() else null
+	if avatar != null:
+		avatar.emote(clip)
 
 
 ## Play a conversation as speech bubbles, one line at a time, when it's worth showing: zoomed in,

@@ -25,6 +25,7 @@ static var _loops_set := false
 var model: Node3D
 var anim: AnimationPlayer
 var current := ""
+var _emote_until := 0.0            # real time (s) until which an emote overrides the normal clip
 var _hand: BoneAttachment3D        # right hand: holds the tool for the current job
 var _skel: Skeleton3D
 var _kid_head := -1.0              # head scale currently applied (children get a bigger head)
@@ -109,9 +110,20 @@ func play(name: String, speed := 1.0) -> void:
 
 
 ## Pick and play the clip for this frame. speed_mps = how fast the colonist is moving on screen.
+## Play a one-off reaction (e.g. "celebrate") for a few seconds, then go back to normal.
+func emote(clip: String, seconds: float = 2.5) -> void:
+	if not has_clip(clip):
+		return
+	_emote_until = Time.get_ticks_msec() / 1000.0 + seconds
+	current = ""
+	play(clip)
+
+
 func update_for(c: Colonist, speed_mps: float) -> void:
 	_update_tool(c)
 	_update_head(c)
+	if Time.get_ticks_msec() / 1000.0 < _emote_until and speed_mps < 0.05:
+		return
 	var a := c.action
 	if speed_mps > 0.05:
 		var carrying := a != null and a.phase == "carrying"
