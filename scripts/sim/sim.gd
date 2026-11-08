@@ -24,7 +24,7 @@ var default_brain_id: String = "utility"
 var describer: StateDescriber = StateDescriber.new()
 var action_types: Dictionary = {}       # type name -> Script
 
-var stats := {"births": 0, "deaths": {}, "decisions": 0, "failed_decisions": 0}
+var stats := {"births": 0, "deaths": {}, "decisions": 0, "failed_decisions": 0, "requests_made": 0, "requests_followed": 0}
 
 var _next_id: int = 1
 var _next_request_id: int = 1
@@ -375,12 +375,23 @@ func add_request(c: Colonist, from_name: String, action_id: String, trust_v: flo
 		return
 	c.requests = c.requests.filter(func(r) -> bool: return r["action"] != action_id and clock - float(r["t"]) < REQUEST_TTL)
 	c.requests.append({"from": from_name, "action": action_id, "label": def.get("label", action_id), "t": clock, "trust": trust_v})
+	stats["requests_made"] = int(stats.get("requests_made", 0)) + 1
 	if c.requests.size() > 3:
 		c.requests.pop_front()
 	add_memory(c, "%s asked me to %s." % [from_name, def.get("label", action_id)], 3.0 + 4.0 * trust_v)
 
 
 const REQUEST_TTL := 24.0 * 60.0
+
+
+## Starting a job someone asked for fulfils that request (so it stops nagging them).
+func _fulfil_requests(c: Colonist, action_id: String) -> void:
+	for r in active_requests(c):
+		if r["action"] == action_id:
+			c.requests.erase(r)
+			stats["requests_followed"] = int(stats.get("requests_followed", 0)) + 1
+			add_memory(c, "I did what %s asked: %s." % [r["from"], r["label"]], 2.5)
+			return
 const GATHER_FOR := {"food": "gather_food", "water": "fetch_water", "wood": "gather_wood", "stone": "gather_stone"}
 const SHORT_BELOW := {"food": 40.0, "water": 20.0, "wood": 25.0, "stone": 25.0}
 
@@ -802,6 +813,7 @@ func _on_decision(decision: Dictionary, cid: int, ctx: Dictionary) -> void:
 		c.hesitate_until = clock + minf(wait, 120.0)
 	else:
 		c.fail_streak = 0
+		_fulfil_requests(c, String(decision.get("action", "")))
 	c.last_decision = {"ctx": ctx, "decision": decision, "began": began, "t": clock}
 	var act_id := String(decision.get("action", ""))
 	var lbl := act_id

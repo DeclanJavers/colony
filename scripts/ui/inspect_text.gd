@@ -311,7 +311,9 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 			L.append("%s %s" % [gray("D%d %02d:00" % [int(t / 1440.0), int(fmod(t, 1440.0) / 60.0)]), e["text"]])
 
 	L.append("\n[b]Brain[/b]")
-	var s := "%d decisions, %d couldn't be carried out" % [int(sim.stats.get("decisions", 0)), int(sim.stats.get("failed_decisions", 0))]
+	var s := "%d decisions, %d couldn't be carried out. Requests: %d made, %d followed" % [
+		int(sim.stats.get("decisions", 0)), int(sim.stats.get("failed_decisions", 0)),
+		int(sim.stats.get("requests_made", 0)), int(sim.stats.get("requests_followed", 0))]
 	if runner.laya != null:
 		s += ". " + runner.laya.status()
 	var talks := runner.get_tree().root.find_child("ConversationLLM", true, false) as ConversationLLM
