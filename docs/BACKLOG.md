@@ -71,10 +71,9 @@ Guiding rule (from the user): keep it simple, easy to read and good-looking. Sho
 - Camera: `Tab` cycles colonists, `F` or double-click follows, and the camera glides instead of snapping.
 - Recent choices on the colonist page.
 - Slightly brighter nights.
+- Tools in hand while working; trend lines (people, food, water, wood, stone) on the Colony page.
 
 **Maybe later (only if they stay clean):**
-- Tools in hand while working (the Kimodo clips are in, so hand poses can now be matched).
-- Small sparklines on the Colony page (hourly history already exists).
 - A single optional overlay toggle (e.g. colour colonists by their most urgent need).
 - Lit windows at night in occupied houses.
 

@@ -31,6 +31,8 @@ var _memories := RichTextLabel.new()
 var _recent := RichTextLabel.new()
 var _beliefs := RichTextLabel.new()
 var _convos := RichTextLabel.new()
+var _charts := VBoxContainer.new()   # colony page: trends over the last 3 days
+var _sparks: Dictionary = {}
 var _state_btn := Button.new()
 var _state := RichTextLabel.new()
 var _chat_title := Label.new()
@@ -94,6 +96,14 @@ func _ready() -> void:
 	body.add_theme_constant_override("separation", 8)
 	scroll.add_child(body)
 
+	_charts.add_theme_constant_override("separation", 2)
+	_charts.visible = false
+	body.add_child(_charts)
+	for spec in [["people", Color(0.95, 0.85, 0.55)], ["food", Color(0.92, 0.45, 0.45)], ["water", Color(0.45, 0.70, 0.98)],
+			["wood", Color(0.80, 0.62, 0.40)], ["stone", Color(0.78, 0.80, 0.84)]]:
+		var sp := Sparkline.new(spec[0], spec[1])
+		_charts.add_child(sp)
+		_sparks[spec[0]] = sp
 	_rich(_info, 14)
 	_info.meta_underlined = true
 	_info.meta_clicked.connect(_on_link)
@@ -175,9 +185,21 @@ func show_target(t: Variant) -> void:
 	_refresh_generic()
 
 
+func _update_charts() -> void:
+	var series := {"people": PackedFloat32Array(), "food": PackedFloat32Array(), "water": PackedFloat32Array(),
+		"wood": PackedFloat32Array(), "stone": PackedFloat32Array()}
+	for snap in runner.history:
+		series["people"].append(float(snap["pop"]))
+		for k in ["food", "water", "wood", "stone"]:
+			series[k].append(float(snap["stock"].get(k, 0)))
+	for k in series:
+		(_sparks[k] as Sparkline).set_values(series[k])
+
+
 func _set_colonist_mode(on: bool) -> void:
 	for ctl in _colonist_only:
 		ctl.visible = on
+	_charts.visible = target is String and target == "colony"
 	_state.visible = on and _state_btn.button_pressed
 
 
@@ -240,8 +262,9 @@ func _refresh_generic() -> void:
 		_title.text = "[b]Ground[/b]  [color=#aaaaaa](%d, %d)[/color]" % [t.x, t.y]
 		_info.text = InspectText.tile(sim, t)
 	elif t is String and t == "colony":
-		_title.text = "[b]The colony[/b]"
+		_title.text = "[b]The colony[/b]  [color=#aaaaaa]last 3 days[/color]"
 		_info.text = InspectText.colony(sim, runner)
+		_update_charts()
 
 
 func show_colonist(c: Colonist) -> void:
