@@ -25,7 +25,10 @@ func tick(dt: float) -> int:
 	match phase:
 		"walking":
 			if walk(dt):
-				if not sim.take_from_source(source, params["resource"], float(params.get("use", 1))):
+				var ok := sim.take_from_source(source, params["resource"], float(params.get("use", 1)))
+				if source.get("kind") == "stockpile":
+					sim.observe_stock(c)   # at the stores: they see what's (still) there
+				if not ok:
 					return fail("source ran out")
 				phase = "using"
 				timer = float(params.get("minutes", 10))

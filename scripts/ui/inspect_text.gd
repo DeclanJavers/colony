@@ -306,6 +306,9 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 	var s := "%d decisions, %d couldn't be carried out" % [int(sim.stats.get("decisions", 0)), int(sim.stats.get("failed_decisions", 0))]
 	if runner.laya != null:
 		s += ". " + runner.laya.status()
+	var talks := runner.get_tree().root.find_child("ConversationLLM", true, false) as ConversationLLM
+	if talks != null:
+		s += ". " + talks.status()
 	else:
 		s += ". Brain: %s" % runner.brain_id
 	L.append(s)

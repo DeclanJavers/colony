@@ -17,6 +17,7 @@ var cam := IsoCamera.new()
 var day_night := DayNight.new()
 var hud := Hud.new()
 var chat: WatcherChat
+var talks: ConversationLLM
 
 
 func _ready() -> void:
@@ -45,6 +46,9 @@ func _ready() -> void:
 		cam.camera.size = cam._size_target
 	add_child(view)
 	view.bind(runner.sim, cam.camera)
+	talks = ConversationLLM.new(runner.sim, String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
+	talks.name = "ConversationLLM"
+	add_child(talks)
 	chat = WatcherChat.new(runner.sim, String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
 	chat.name = "WatcherChat"
 	add_child(chat)

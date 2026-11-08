@@ -179,5 +179,46 @@
       "minutes": 30,
       "energy_per_hour": 4.0
     }
+  },
+  {
+    "id": "check_stores",
+    "type": "check",
+    "label": "check the stores",
+    "description": "walk to the stores and see how much food, water, wood and stone there is",
+    "params": {
+      "minutes": 5
+    },
+    "for": [
+      "adult",
+      "child"
+    ]
+  },
+  {
+    "id": "share_news",
+    "type": "inform",
+    "label": "share news",
+    "description": "go tell someone what you saw in the stores",
+    "params": {
+      "intent": "news",
+      "minutes": 10
+    },
+    "for": [
+      "adult",
+      "child"
+    ]
+  },
+  {
+    "id": "ask_help",
+    "type": "inform",
+    "label": "ask for help",
+    "description": "ask someone to help gather what the colony is short of",
+    "params": {
+      "intent": "ask",
+      "minutes": 10
+    },
+    "for": [
+      "adult",
+      "child"
+    ]
   }
 ]

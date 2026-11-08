@@ -58,6 +58,8 @@ func setup(p_seed: int) -> void:
 	for i in int(start.get("colonists", 5)):
 		var cell := map.nearest_walkable(map.center + Vector2i(rng.randi_range(-3, 3), rng.randi_range(-3, 3)))
 		spawn_colonist(cell, rng.randf_range(float(ages[0]), float(ages[1])), [])
+	for c: Colonist in colonists.values():
+		observe_stock(c)   # the founders packed the stores themselves
 	_update_tier(true)
 	_assign_beds()
 
@@ -145,6 +147,8 @@ func tick(dt: float = 1.0) -> void:
 		colonists.erase(c.id)
 		graveyard.append(c)
 	_world_tick(dt)
+	if int(clock) % PERCEIVE_EVERY == 0:
+		_perceive()
 	if hour() != _last_hour:
 		_last_hour = hour()
 		_on_hour()
@@ -251,6 +255,7 @@ func need_word(c: Colonist, need_id: String) -> String:
 func spawn_colonist(cell: Vector2i, age_days: float, parents: Array) -> Colonist:
 	var c := Colonist.new()
 	c.id = _new_id()
+	c.knowledge = Knowledge.new(c.id)
 	c.name = _pick_name()
 	c.age_minutes = age_days * 1440.0
 	var ls: Array = content.cfg("lifespan_days", [25.0, 40.0])
@@ -299,6 +304,154 @@ func _pick_name() -> String:
 	var base: String = pool[rng.randi() % pool.size()]
 	_used_names[base] = int(_used_names.get(base, 1)) + 1
 	return "%s %d" % [base, _used_names[base]]
+
+
+## ---- Knowledge: what colonists see, hear and are asked -----------------------------
+
+const PERCEIVE_EVERY := 15   # sim minutes between "looking around"
+const SIGHT := 3.0           # tiles: close enough to a storage pile to see what's in it
+
+
+## The colonist sees the shared stores right now.
+func observe_stock(c: Colonist) -> void:
+	for k in Knowledge.STOCK_KEYS:
+		c.knowledge.observe(k, float(stock.get(k, 0.0)), clock)
+
+
+func _perceive() -> void:
+	var stores: Array[Building] = []
+	for b: Building in buildings.values():
+		if b.complete and float(b.provides("storage", 0)) > 0.0:
+			stores.append(b)
+	for c: Colonist in colonists.values():
+		for b in stores:
+			if c.pos.distance_to(b.center()) <= SIGHT + b.size.x * 0.5:
+				observe_stock(c)
+				break
+
+
+## How much `c` believes what `from` tells them (0..1): liking someone makes them more believable.
+func trust(c: Colonist, from: Colonist) -> float:
+	if from == null:
+		return 0.5
+	var t := 0.35 + float(c.affection.get(from.id, 0.0)) / 120.0
+	if c.partner_id == from.id or c.parent_ids.has(from.id):
+		t += 0.25
+	return clampf(t, 0.1, 1.0)
+
+
+## Someone asked `c` to do an action. Kept as a dated request (and a memory) that brains read.
+func add_request(c: Colonist, from_name: String, action_id: String, trust_v: float) -> void:
+	var def: Dictionary = content.actions_by_id.get(action_id, {})
+	if def.is_empty():
+		return
+	c.requests = c.requests.filter(func(r) -> bool: return r["action"] != action_id and clock - float(r["t"]) < REQUEST_TTL)
+	c.requests.append({"from": from_name, "action": action_id, "label": def.get("label", action_id), "t": clock, "trust": trust_v})
+	if c.requests.size() > 3:
+		c.requests.pop_front()
+	add_memory(c, "%s asked me to %s." % [from_name, def.get("label", action_id)], 3.0 + 4.0 * trust_v)
+
+
+const REQUEST_TTL := 24.0 * 60.0
+const GATHER_FOR := {"food": "gather_food", "water": "fetch_water", "wood": "gather_wood", "stone": "gather_stone"}
+const SHORT_BELOW := {"food": 40.0, "water": 20.0, "wood": 25.0, "stone": 25.0}
+
+## Optional: called with each conversation dict. Return true to take it over (e.g. the game asks
+## the chat model to write the dialogue) and later call apply_conversation(conv, result).
+## Unset (headless, training) = a quick symbolic exchange of facts happens immediately.
+var conversation_handler: Callable
+var _conv_id := 0
+
+
+## What `c` believes the colony is shortest of, or "" if nothing looks short to them.
+func believed_shortage(c: Colonist) -> String:
+	var worst := ""
+	var worst_ratio := 1.0
+	for k in Knowledge.STOCK_KEYS:
+		if not c.knowledge.knows(k, clock):
+			continue
+		var ratio := c.knowledge.recall(k, clock) / float(SHORT_BELOW[k])
+		if ratio < worst_ratio:
+			worst_ratio = ratio
+			worst = k
+	return worst
+
+
+## Two colonists talk. intent: "chat" (socializing), "news" (came to share news), "ask" (came to
+## ask for help with `topic`, an action id).
+func converse(a: Colonist, b: Colonist, intent: String, topic: String = "") -> void:
+	_conv_id += 1
+	var conv := {"id": _conv_id, "t": clock, "a": a, "b": b, "intent": intent, "topic": topic}
+	events.conversation_started.emit(conv)
+	if conversation_handler.is_valid() and bool(conversation_handler.call(conv)):
+		return
+	apply_conversation(conv, symbolic_conversation(conv))
+
+
+## The no-LLM version: each says what they know (as they remember it), plus the ask if any.
+func symbolic_conversation(conv: Dictionary) -> Dictionary:
+	var a: Colonist = conv["a"]
+	var b: Colonist = conv["b"]
+	var facts := []
+	var lines := []
+	for pair in [[a, b], [b, a]]:
+		var sp: Colonist = pair[0]
+		var heard: Colonist = pair[1]
+		for k in Knowledge.STOCK_KEYS:
+			if sp.knowledge.knows(k, clock):
+				facts.append({"from": sp.name, "to": heard.name, "key": k, "value": sp.knowledge.tell(k, clock),
+					"t_source": float(sp.knowledge.facts[k]["t"])})
+	var requests := []
+	if conv["intent"] == "ask" and conv["topic"] != "":
+		requests.append({"from": a.name, "to": b.name, "action": conv["topic"]})
+		lines.append({"who": a.name, "text": "Could you %s?" % content.actions_by_id.get(conv["topic"], {}).get("label", conv["topic"])})
+	elif conv["intent"] == "news":
+		var short := believed_shortage(a)
+		lines.append({"who": a.name, "text": ("We're running low on %s." % short) if short != "" else "I just checked the stores."})
+	return {"lines": lines, "facts": facts, "requests": requests, "llm": false}
+
+
+## Apply what was said: listeners update beliefs (by trust), take on requests, remember notable news.
+func apply_conversation(conv: Dictionary, result: Dictionary) -> void:
+	var a: Colonist = conv["a"]
+	var b: Colonist = conv["b"]
+	var by_name := {a.name: a, b.name: b}
+	var learned := []
+	for f in result.get("facts", []):
+		var sp: Colonist = by_name.get(f.get("from", ""))
+		var li: Colonist = by_name.get(f.get("to", ""))
+		if sp == null or li == null or sp == li or not li.alive() or not Knowledge.STOCK_KEYS.has(f.get("key", "")):
+			continue
+		var v := float(f.get("value", -1))
+		if v < 0.0:
+			continue
+		var changed := li.knowledge.hear(f["key"], v, float(f.get("t_source", clock)), sp.name, trust(li, sp), clock)
+		if changed:
+			learned.append({"who": li.name, "key": f["key"], "value": v, "from": sp.name})
+			add_memory(li, "%s told me the stores have about %d %s." % [sp.name, int(v), f["key"]], 2.5)
+	for r in result.get("requests", []):
+		var sp: Colonist = by_name.get(r.get("from", ""))
+		var li: Colonist = by_name.get(r.get("to", ""))
+		if sp != null and li != null and sp != li and li.alive():
+			add_request(li, sp.name, String(r.get("action", "")), trust(li, sp))
+	conv["lines"] = result.get("lines", [])
+	conv["facts"] = result.get("facts", [])
+	conv["requests"] = result.get("requests", [])
+	conv["learned"] = learned
+	conv["llm"] = result.get("llm", false)
+	for c in [a, b]:
+		c.conversations.append({"t": conv["t"], "with": (b if c == a else a).name, "intent": conv["intent"],
+			"lines": conv["lines"], "learned": learned.filter(func(x) -> bool: return x["who"] == c.name)})
+		if c.conversations.size() > 5:
+			c.conversations.pop_front()
+	events.conversation_finished.emit(conv)
+
+
+## Cells other colonists are standing on (when not moving) or heading to.
+
+
+func active_requests(c: Colonist) -> Array:
+	return c.requests.filter(func(r) -> bool: return clock - float(r["t"]) < REQUEST_TTL)
 
 
 ## Cells other colonists are standing on (when not moving) or heading to.
@@ -549,7 +702,7 @@ func build_context(c: Colonist) -> Dictionary:
 	for def in available_actions(c):
 		opts.append({"id": def["id"], "label": def["label"], "description": def["description"]})
 		has_build = has_build or def["type"] == "build"
-		has_social = has_social or def["type"] == "socialize"
+		has_social = has_social or def["type"] in ["socialize", "inform"]
 	var bopts := []
 	if has_build:
 		for t in build_options():
@@ -675,8 +828,10 @@ func deposit(res: String, amount: float, by: Colonist = null) -> float:
 	var put := minf(amount, maxf(0.0, storage_capacity() - stock_total()))
 	stock[res] = float(stock.get(res, 0.0)) + put
 	events.stock_changed.emit(stock)
-	if by != null and put > 0.0:
-		events.delivered.emit(by, res, put)
+	if by != null:
+		observe_stock(by)   # standing at the pile, they see what's there
+		if put > 0.0:
+			events.delivered.emit(by, res, put)
 	return put
 
 

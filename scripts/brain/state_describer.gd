@@ -4,7 +4,7 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v1"
+const VERSION := "v2"   # v2: stock is what the colonist believes (seen/heard, with age); requests
 const MAX_MEMORIES := 3
 
 
@@ -21,10 +21,11 @@ func describe(sim: Sim, c: Colonist) -> String:
 		need_words.append(sim.need_word(c, need_id))
 	parts.append("%s is %s." % [c.name, _join_and(need_words)])
 
+	# Not the true stock: what this colonist believes, and how they know it.
 	var st: PackedStringArray = []
-	for r in sim.stock:
-		st.append("%d %s" % [int(sim.stock[r]), r])
-	parts.append("Shared stock: %s (storage %d of %d)." % [", ".join(st), int(sim.stock_total()), int(sim.storage_capacity())])
+	for k in Knowledge.STOCK_KEYS:
+		st.append(c.knowledge.phrase(k, sim.clock))
+	parts.append("%s thinks the stores hold: %s." % [c.name, ", ".join(st)])
 
 	var built := {}
 	var sites: PackedStringArray = []
@@ -53,6 +54,13 @@ func describe(sim: Sim, c: Colonist) -> String:
 	parts.append("Has a home bed." if c.home_id >= 0 else "Has no bed.")
 	if c.pregnant_until > 0.0:
 		parts.append("Expecting a child.")
+
+	var reqs := sim.active_requests(c)
+	if not reqs.is_empty():
+		var rq: PackedStringArray = []
+		for r in reqs.slice(maxi(0, reqs.size() - 2)):
+			rq.append("%s asked %s to %s (%dh ago)" % [r["from"], c.name, r["label"], int((sim.clock - float(r["t"])) / 60.0)])
+		parts.append("Requests: %s." % "; ".join(rq))
 
 	var mems := c.top_memories(sim.clock, MAX_MEMORIES)
 	if not mems.is_empty():

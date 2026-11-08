@@ -39,7 +39,7 @@ func _repath() -> void:
 func describe() -> String:
 	if other == null:
 		return "socialize"
-	return "%s with %s" % ["chatting" if phase == "talking" else "looking for", other.name]
+	return ("chatting with %s" if phase == "talking" else "looking for %s") % other.name
 
 
 func tick(dt: float) -> int:
@@ -51,6 +51,7 @@ func tick(dt: float) -> int:
 			if c.pos.distance_to(other.pos) <= 1.6:
 				phase = "talking"
 				timer = float(params.get("minutes", 40))
+				sim.converse(c, other, "chat")
 				return RUNNING
 			if walked > GIVE_UP_AFTER:
 				return fail("could not reach %s" % other.name)

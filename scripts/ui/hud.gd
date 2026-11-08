@@ -126,6 +126,14 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 	ev.building_placed.connect(func(b: Building) -> void:
 		if not b.complete:
 			_log("Started a %s." % InspectText.link(b)))
+	ev.conversation_finished.connect(func(conv: Dictionary) -> void:
+		var a: Colonist = conv["a"]
+		var b: Colonist = conv["b"]
+		if conv["intent"] == "ask" and conv["topic"] != "":
+			var lbl: String = runner.sim.content.actions_by_id.get(conv["topic"], {}).get("label", conv["topic"])
+			_log("[color=#c9b6e4]%s asked %s to %s.[/color]" % [InspectText.link(a), InspectText.link(b), lbl])
+		elif conv["intent"] == "news":
+			_log("[color=#c9b6e4]%s told %s the news.[/color]" % [InspectText.link(a), InspectText.link(b)]))
 	ev.tier_unlocked.connect(func(t: int) -> void: _log("[color=#80d8ff]Tier %d unlocked![/color]" % t))
 	runner.speed_changed.connect(func(_s: int) -> void: _refresh_speed())
 	view.target_selected.connect(func(t: Variant) -> void: inspector.show_target(t))
@@ -136,8 +144,19 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 	_log("The colony begins with %d settlers." % runner.sim.alive_count())
 
 
+var _last_log := ""
+var _last_log_n := 1
+
+
 func _log(text: String) -> void:
-	_feed_lines.append("[color=#aaaaaa]D%d %02d:00[/color] %s" % [runner.sim.day(), runner.sim.hour(), text])
+	var stamp := "[color=#aaaaaa]D%d %02d:00[/color] " % [runner.sim.day(), runner.sim.hour()]
+	if text == _last_log and not _feed_lines.is_empty():
+		_last_log_n += 1   # same event again: one line with a count instead of a wall of repeats
+		_feed_lines[-1] = "%s%s [color=#aaaaaa]x%d[/color]" % [stamp, text, _last_log_n]
+	else:
+		_last_log = text
+		_last_log_n = 1
+		_feed_lines.append(stamp + text)
 	while _feed_lines.size() > FEED_LINES:
 		_feed_lines.remove_at(0)
 	_feed.text = "\n".join(_feed_lines)

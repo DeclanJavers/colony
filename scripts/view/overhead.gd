@@ -12,6 +12,8 @@ static var _tex: Dictionary = {}
 
 var badge := Sprite3D.new()
 var name_label := Label3D.new()
+var bubble := Label3D.new()      # what they're saying right now (conversations)
+var _bubble_tw: Tween
 var _key := ""
 var _t := 0.0
 
@@ -34,6 +36,33 @@ func _ready() -> void:
 	name_label.outline_modulate = Color(0, 0, 0, 0.75)
 	name_label.position.y = -0.0
 	add_child(name_label)
+	bubble.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	bubble.fixed_size = true
+	bubble.no_depth_test = true
+	bubble.render_priority = 3
+	bubble.pixel_size = 0.00085
+	bubble.font_size = 28
+	bubble.outline_size = 9
+	bubble.outline_modulate = Color(0.08, 0.09, 0.12, 0.9)
+	bubble.modulate = Color(1, 0.97, 0.88, 0.0)
+	bubble.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bubble.width = 520
+	bubble.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	bubble.visible = false
+	add_child(bubble)
+
+
+## Show a line of speech for `seconds`, fading in and out.
+func say(text: String, seconds: float) -> void:
+	bubble.text = "\u201c%s\u201d" % text
+	bubble.visible = true
+	if _bubble_tw != null:
+		_bubble_tw.kill()
+	_bubble_tw = create_tween()
+	_bubble_tw.tween_property(bubble, "modulate:a", 1.0, 0.25)
+	_bubble_tw.tween_interval(maxf(0.5, seconds - 0.5))
+	_bubble_tw.tween_property(bubble, "modulate:a", 0.0, 0.25)
+	_bubble_tw.tween_callback(func() -> void: bubble.visible = false)
 
 
 static func icon(key: String) -> Texture2D:
@@ -69,3 +98,4 @@ func update_for(c: Colonist, show_name: bool, delta: float) -> void:
 	# Badge sits above the name when both show.
 	name_label.position.y = 0.0
 	badge.position.y = 0.42 if show_name else 0.0
+	bubble.position.y = badge.position.y + 0.42

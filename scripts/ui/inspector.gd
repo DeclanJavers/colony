@@ -29,6 +29,8 @@ var _why := VBoxContainer.new()
 var _why_key := ""
 var _memories := RichTextLabel.new()
 var _recent := RichTextLabel.new()
+var _beliefs := RichTextLabel.new()
+var _convos := RichTextLabel.new()
 var _state_btn := Button.new()
 var _state := RichTextLabel.new()
 var _chat_title := Label.new()
@@ -106,8 +108,12 @@ func _ready() -> void:
 	_why.add_theme_constant_override("separation", 1)
 	body.add_child(_why)
 
+	_rich(_beliefs, 13)
+	body.add_child(_beliefs)
 	_rich(_recent, 13)
 	body.add_child(_recent)
+	_rich(_convos, 13)
+	body.add_child(_convos)
 	_rich(_memories, 13)
 	body.add_child(_memories)
 
@@ -147,7 +153,7 @@ func _ready() -> void:
 	_send.focus_mode = Control.FOCUS_NONE
 	_send.pressed.connect(_on_send)
 	row.add_child(_send)
-	_colonist_only.assign([_needs, _why_title, _why, _recent, _memories, _state_btn, sep, _chat_title, _chat_log, _chat_status, row])
+	_colonist_only.assign([_needs, _why_title, _why, _beliefs, _recent, _convos, _memories, _state_btn, sep, _chat_title, _chat_log, _chat_status, row])
 
 
 ## Inspect anything (see WorldView.target_selected for the kinds). null closes the panel.
@@ -316,7 +322,9 @@ func _refresh() -> void:
 		word.text = sim.need_word(c, need_id)
 
 	_render_why(c)
+	_render_beliefs(c)
 	_render_recent(c)
+	_render_convos(c)
 	_render_memories(c)
 	if _state.visible:
 		_state.text = String(c.last_decision["ctx"]["state_text"]) if not c.last_decision.is_empty() else "(no decision yet)"
@@ -447,6 +455,47 @@ func _add_prob_rows(opts: Array, probs: Dictionary, chosen: String, limit: int) 
 		row.add_child(bar)
 		row.add_child(pct)
 		_why.add_child(row)
+
+
+## What they believe about the stores vs what's really there, and what they've been asked to do.
+func _render_beliefs(c: Colonist) -> void:
+	var sim := runner.sim
+	var lines: PackedStringArray = ["[b]What %s believes[/b]  [color=#aaaaaa](actual in grey)[/color]" % c.name]
+	for k in Knowledge.STOCK_KEYS:
+		lines.append("%s  [color=#aaaaaa]· %d[/color]" % [c.knowledge.phrase(k, sim.clock), int(sim.stock.get(k, 0))])
+	for r in sim.active_requests(c):
+		lines.append("[color=#c9b6e4]%s asked them to %s (%dh ago)[/color]" % [r["from"], r["label"], int((sim.clock - float(r["t"])) / 60.0)])
+	_beliefs.text = "\n".join(lines)
+
+
+func _render_convos(c: Colonist) -> void:
+	if c.conversations.is_empty():
+		_convos.text = ""
+		return
+	var lines: PackedStringArray = ["[b]Recent conversations[/b]"]
+	var items := c.conversations.duplicate()
+	items.reverse()
+	for conv in items.slice(0, 2):
+		var other := _find_by_name(String(conv["with"]))
+		var who := InspectText.link(other) if other != null else String(conv["with"])
+		lines.append("[color=#aaaaaa]with[/color] %s [color=#aaaaaa]%s ago[/color]" % [who, _ago(float(conv["t"]))])
+		for l in conv["lines"]:
+			lines.append("  [color=#ffe082]%s:[/color] %s" % [l["who"], l["text"]])
+		for x in conv.get("learned", []):
+			lines.append("  [color=#9be29b]learned: %s ~%d (from %s)[/color]" % [x["key"], int(x["value"]), x["from"]])
+	_convos.text = "\n".join(lines)
+
+
+func _find_by_name(n: String) -> Colonist:
+	for o in runner.sim.colonists.values() + runner.sim.graveyard:
+		if (o as Colonist).name == n:
+			return o
+	return null
+
+
+func _ago(t: float) -> String:
+	var m := runner.sim.clock - t
+	return "%d min" % int(m) if m < 60.0 else "%d h" % int(m / 60.0)
 
 
 func _render_recent(c: Colonist) -> void:

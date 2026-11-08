@@ -14,6 +14,9 @@ var zero_minutes: Dictionary = {}   # need_id -> minutes spent at 0
 var skills: Dictionary = {}         # skill_id -> level (0 = novice)
 var memories: Array = []            # [{t, text, importance}]
 var recent: Array = []              # last few decisions, newest last: {t, action, label, p, began, brain}
+var knowledge: Knowledge            # what they believe about the colony (see knowledge.gd)
+var requests: Array = []            # things others asked them to do: {from, action, label, t, trust}
+var conversations: Array = []       # recent talks: {t, with, lines:[{who, text}], intent}
 var affection: Dictionary = {}      # other colonist id -> -100..100
 var partner_id: int = -1
 var parent_ids: Array = []

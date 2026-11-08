@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 import httpx
+import json
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -105,12 +106,14 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def llm(messages: list[dict], max_tokens: int = 300, temperature: float = 0.6,
-        stop: list[str] | None = None) -> str:
+        stop: list[str] | None = None, schema: dict | None = None) -> str:
     body = {"model": LLM_MODEL, "messages": messages, "max_tokens": max_tokens,
             "temperature": temperature, "top_k": 50, "repeat_penalty": 1.1,
             "chat_template_kwargs": {"enable_thinking": False}}
     if stop:
         body["stop"] = stop
+    if schema:
+        body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
     r = httpx.post(LLM_URL, json=body, timeout=120.0)
     r.raise_for_status()
     text = r.json()["choices"][0]["message"]["content"] or ""
@@ -206,7 +209,191 @@ def remember(req: RememberRequest) -> dict:
             mem = " ".join(words[:25]).rstrip(",;") + "..."
     except Exception as e:
         return {"memory": "", "error": repr(e)}
-    return {"memory": mem}
+    # Did the Watcher ask for a specific job? Becomes a request the colonist's brain weighs.
+    request = "none"
+    try:
+        out = llm([{"role": "system", "content": "You classify requests into JSON."},
+                   {"role": "user", "content": f"Conversation:\n{convo}\n\nDid the Watcher ask {name} to do one of "
+                    f"these jobs: {', '.join(ASKABLE)}? Answer with the job, or none."}],
+                  max_tokens=30, temperature=0.0,
+                  schema={"type": "object", "properties": {"request": {"enum": ASKABLE + ["none"]}}, "required": ["request"]})
+        request = json.loads(out).get("request", "none")
+    except Exception:
+        pass
+    return {"memory": mem, "request": request}
+
+
+# ---------------------------------------------------------------------------- colonists talking
+
+RES = ["food", "water", "wood", "stone"]
+ASKABLE = ["gather_food", "fetch_water", "gather_wood", "gather_stone", "farm", "build", "check_stores"]
+LEVEL_VALUE = {"none": 0, "low": 0.25, "some": 0.7, "plenty": 1.6}   # x a typical amount per resource
+TYPICAL = {"food": 60, "water": 30, "wood": 40, "stone": 40}
+LINE_RE = re.compile(r"^\s*\**\s*([A-Z][\w ]{0,20}?)\s*\**\s*:\s*(.+)$")
+
+
+class ConverseRequest(BaseModel):
+    a: dict[str, Any]
+    b: dict[str, Any]
+    intent: str = "chat"          # chat | news | ask
+    topic: str = ""               # ask: what A wants B to do (label)
+    topic_id: str = ""            # ask: the action id behind the label
+    relation: str = ""            # how A sees B
+
+
+def _speaker_block(c: dict) -> str:
+    knows = "; ".join(c.get("beliefs", [])) or "nothing about the stores"
+    mems = "; ".join(c.get("memories", [])[:3])
+    return (f"{c['name']} ({', '.join(c.get('traits', []))}). Feels: {', '.join(c.get('need_words', []))}. "
+            f"Doing: {c.get('action', 'idle')}. Believes the stores hold: {knows}. "
+            f"Recent memories: {mems or 'none'}.")
+
+
+def converse_dialogue(req: ConverseRequest) -> list[dict]:
+    a, b = req.a["name"], req.b["name"]
+    goal = {"chat": f"They are just chatting. They may mention what they know about the colony's stores if it's on their mind.",
+            "news": f"{a} came over to tell {b} what {a} saw in the stores.",
+            "ask": f"{a} came over to ask {b} to {req.topic}, because {a} thinks the colony needs it."}[req.intent if req.intent in ("chat", "news", "ask") else "chat"]
+    sys = ("You write short, natural conversations between two villagers in a small colony where everyone "
+           "shares food, water, wood and stone. Each person only knows what is listed for them; they may be "
+           "vague or a bit wrong about amounts. Write 4 to 6 lines, alternating speakers, each line as "
+           "'Name: words', under 20 words each, in the first person ('I', 'we'). Only spoken words: no narration, "
+           "no actions, no stage directions, and don't invent buildings or events that aren't mentioned.")
+    user = (f"{_speaker_block(req.a)}\n{_speaker_block(req.b)}\n{a} sees {b} as {req.relation or 'a neighbour'}.\n"
+            f"{goal}\nWrite the conversation, starting with {a}.")
+    text = llm([{"role": "system", "content": sys}, {"role": "user", "content": user}], max_tokens=220, temperature=0.8)
+    lines = []
+    for raw in text.replace("**", "").splitlines():
+        m = LINE_RE.match(raw)
+        if not m:
+            continue
+        who, said = m.group(1).strip(), m.group(2).strip().strip('"')
+        if who not in (a, b):
+            continue
+        said = re.sub(r"\*[^*]{1,80}\*", "", said).strip()
+        if said:
+            lines.append({"who": who, "text": said})
+    return lines[:6]
+
+
+EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "told": {"type": "array", "items": {"type": "object", "properties": {
+            "from": {"type": "string"},
+            "resource": {"enum": RES},
+            "amount": {"type": ["integer", "null"]},
+            "level": {"enum": ["none", "low", "some", "plenty", "unclear"]},
+        }, "required": ["from", "resource", "amount", "level"]}},
+        "requests": {"type": "array", "items": {"type": "object", "properties": {
+            "from": {"type": "string"},
+            "action": {"enum": ASKABLE},
+        }, "required": ["from", "action"]}},
+    },
+    "required": ["told", "requests"],
+}
+
+
+def converse_extract(req: ConverseRequest, lines: list[dict]) -> dict:
+    a, b = req.a["name"], req.b["name"]
+    convo = "\n".join(f"{l['who']}: {l['text']}" for l in lines)
+    user = (f"Conversation between {a} and {b}:\n{convo}\n\n"
+            "List every statement where one of them tells the other how much food, water, wood or stone "
+            "the colony's stores have (amount as a number if they said one, and a level), and every time one "
+            f"asks the other to do a job ({', '.join(ASKABLE)}). 'from' is the speaker's name. "
+            "Only include things actually said. Empty lists if none.")
+    out = llm([{"role": "system", "content": "You extract facts from dialogue into JSON."},
+               {"role": "user", "content": user}], max_tokens=300, temperature=0.0, schema=EXTRACT_SCHEMA)
+    return json.loads(out)
+
+
+NUM_WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve "
+                                         "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+NUM_WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+                  "ninety": 90, "hundred": 100, "a hundred": 100})
+
+
+ASK_CUES = re.compile(r"\b(could you|can you|would you|will you|please|help me|help us|we need you|you should|"
+                      r"why don't you|let's|go and|need someone)\b", re.I)
+JOB_WORDS = {
+    "gather_food": r"berr|food|pick|fruit", "fetch_water": r"water|bucket|well|river",
+    "gather_wood": r"wood|chop|log|tree|timber", "gather_stone": r"stone|rock|mine|quarry",
+    "farm": r"farm|plant|harvest|crop|field|sow", "build": r"build|construct|house|finish the",
+    "check_stores": r"check|count|look at the stores|see what",
+}
+
+
+def _asked_in_words(name: str, action: str, lines: list[dict]) -> bool:
+    for l in lines:
+        if l["who"] == name and ASK_CUES.search(l["text"]) and re.search(JOB_WORDS[action], l["text"], re.I):
+            return True
+    return False
+
+
+def _belief_values(c: dict) -> dict:
+    """{'food': 12, ...} from belief phrases like 'food ~12 (seen 3h ago)'; unknown ones are left out."""
+    out = {}
+    for b in c.get("beliefs", []):
+        m = re.match(r"(\w+) ~(\d+)", b)
+        if m and m.group(1) in RES:
+            out[m.group(1)] = int(m.group(2))
+    return out
+
+
+def _numbers_said(name: str, lines: list[dict]) -> set:
+    nums = set()
+    for l in lines:
+        if l["who"] != name:
+            continue
+        t = l["text"].lower()
+        nums.update(int(x) for x in re.findall(r"\d+", t))
+        for w, v in NUM_WORDS.items():
+            if re.search(rf"\b{w}\b", t):
+                nums.add(v)
+    return nums
+
+
+@app.post("/converse")
+def converse(req: ConverseRequest) -> dict:
+    t = time.time()
+    try:
+        lines = converse_dialogue(req)
+        if not lines:
+            return {"lines": [], "facts": [], "requests": [], "error": "no dialogue"}
+        ex = converse_extract(req, lines)
+    except Exception as e:
+        return {"lines": [], "facts": [], "requests": [], "error": repr(e)}
+    names = {req.a["name"]: req.b["name"], req.b["name"]: req.a["name"]}
+    beliefs = {req.a["name"]: _belief_values(req.a), req.b["name"]: _belief_values(req.b)}
+    said = {n: _numbers_said(n, lines) for n in names}
+    facts = []
+    for f in ex.get("told", []):
+        sp, res = f.get("from"), f.get("resource")
+        if sp not in names or res not in RES:
+            continue
+        known = beliefs[sp].get(res)
+        if known is None:
+            continue          # they have no idea about it, so they can't have told it (extraction slip)
+        amt = f.get("amount")
+        if amt is not None and int(amt) not in said[sp]:
+            amt = known       # number not actually in their words: they meant what they believe
+        if amt is None:
+            lvl = f.get("level", "unclear")
+            if lvl not in LEVEL_VALUE:
+                continue
+            amt = round(LEVEL_VALUE[lvl] * TYPICAL[res])
+        facts.append({"from": sp, "to": names[sp], "key": res, "value": max(0, int(amt))})
+    # Requests must really be in the words: the speaker asks ("could you", "please", ...) and names
+    # the job. Small models over-extract, so this keeps only grounded ones (one per speaker).
+    reqs, asked = [], set()
+    for r in ex.get("requests", []):
+        sp, act = r.get("from"), r.get("action")
+        if sp in names and act in ASKABLE and sp not in asked and _asked_in_words(sp, act, lines):
+            reqs.append({"from": sp, "to": names[sp], "action": act})
+            asked.add(sp)
+    if req.intent == "ask" and req.topic_id and req.a["name"] not in asked:
+        reqs.append({"from": req.a["name"], "to": req.b["name"], "action": req.topic_id})   # why they came
+    return {"lines": lines, "facts": facts, "requests": reqs, "llm": True, "latency_ms": (time.time() - t) * 1000.0}
 
 
 # ---------------------------------------------------------------------------- health

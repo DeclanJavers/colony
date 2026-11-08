@@ -7,7 +7,7 @@ const RESOURCE_TARGETS := {"food": 80.0, "water": 40.0, "wood": 60.0, "stone": 5
 const KIND_OF := {
 	"gather_wood": "gather", "gather_stone": "gather", "gather_food": "gather", "fetch_water": "gather",
 	"farm": "work", "build": "build", "socialize": "socialize", "have_child": "socialize",
-	"rest": "rest", "sleep": "rest",
+	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize",
 }
 
 var temperature: float = 0.12
@@ -53,7 +53,9 @@ func _u(c: Colonist, need: String) -> float:
 	return pow(1.0 - float(c.needs.get(need, 100.0)) / 100.0, 2.0)
 
 
-func _scarcity(sim: Sim, res: String) -> float:
+## How short the colony is of `res` *as this colonist believes it*. Unknown stock counts as
+## half-way scarce (they're unsure, so a bit cautious).
+func _scarcity(sim: Sim, c: Colonist, res: String) -> float:
 	# Target = a base buffer + what the priciest still-buildable unlocked building needs.
 	var target := float(RESOURCE_TARGETS.get(res, 50.0))
 	var extra := 0.0
@@ -61,7 +63,8 @@ func _scarcity(sim: Sim, res: String) -> float:
 		var d: Dictionary = sim.content.buildings[t]
 		if int(d.get("tier", 0)) <= sim.unlocked_tier and sim.count_of(t) < int(d.get("max_count", 999)) and _build_score(t, sim) > 0.3:
 			extra = maxf(extra, float(d.get("cost", {}).get(res, 0.0)))
-	return clampf(1.0 - float(sim.stock.get(res, 0.0)) / (target + extra), 0.0, 1.0)
+	var believed := c.knowledge.recall(res, sim.clock) if c.knowledge.knows(res, sim.clock) else (target + extra) * 0.5
+	return clampf(1.0 - believed / (target + extra), 0.0, 1.0)
 
 
 func _best_build(sim: Sim) -> float:
@@ -85,13 +88,13 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			if float(c.needs["energy"]) > 85.0:
 				s -= 1.0
 		"gather_wood":
-			s = 0.35 + 0.8 * _scarcity(sim, "wood")
+			s = 0.35 + 0.8 * _scarcity(sim, c, "wood")
 		"gather_stone":
-			s = 0.3 + 0.8 * _scarcity(sim, "stone")
+			s = 0.3 + 0.8 * _scarcity(sim, c, "stone")
 		"gather_food":
-			s = 0.35 + 0.9 * _scarcity(sim, "food")
+			s = 0.35 + 0.9 * _scarcity(sim, c, "food")
 		"fetch_water":
-			s = 0.3 + 0.8 * _scarcity(sim, "water")
+			s = 0.3 + 0.8 * _scarcity(sim, c, "water")
 		"farm":
 			s = 1.0
 		"build":
@@ -103,6 +106,30 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			s = 1.1
 		"rest":
 			s = 0.1 + 0.5 * _u(c, "energy")
+		"share_news":
+			# Worth telling others when they've freshly seen the colony running short of something.
+			var short := sim.believed_shortage(c)
+			s = 0.75 if short != "" and c.knowledge.facts[short]["src"] == "seen" else 0.05
+			s -= _recently(c, sim, ["share_news", "ask_help"], 8.0)
+		"ask_help":
+			# Children and worn-out adults ask others; healthy adults mostly just do it themselves.
+			var short2 := sim.believed_shortage(c)
+			if short2 == "":
+				s = 0.0
+			elif not c.is_adult():
+				s = 1.0
+			else:
+				s = 0.75 if float(c.needs["energy"]) < 40.0 else 0.15
+			s -= _recently(c, sim, ["share_news", "ask_help"], 8.0)
+		"check_stores":
+			# Worth a look when what they know is old or missing.
+			s = 1.1 * c.knowledge.uncertainty(sim.clock) - 0.4
+	# Requests: doing what someone asked, weighted by how much they trust them and how recent it
+	# is. Urgent needs still win (they score up to ~3), so a parched colonist drinks first.
+	for r in sim.active_requests(c):
+		if r["action"] == aid:
+			var fresh := 1.0 - clampf((sim.clock - float(r["t"])) / Sim.REQUEST_TTL, 0.0, 1.0)
+			s += 0.9 * float(r["trust"]) * fresh
 	# Trait biases (data/traits.json "utility")
 	var kind: String = KIND_OF.get(aid, "need")
 	for t in c.traits:
@@ -111,6 +138,14 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 		if kind in ["gather", "build"]:
 			s += float(bias.get("work", 0.0))
 	return s
+
+
+## 0.7 if they did one of `ids` in the last `hours` (so they don't nag), else 0.
+func _recently(c: Colonist, sim: Sim, ids: Array, hours: float) -> float:
+	for r in c.recent:
+		if ids.has(r["action"]) and sim.clock - float(r["t"]) < hours * 60.0:
+			return 0.7
+	return 0.0
 
 
 func _build_score(bid: String, sim: Sim) -> float:

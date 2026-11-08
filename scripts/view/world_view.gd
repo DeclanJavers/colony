@@ -56,6 +56,7 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	sim.events.colonist_born.connect(_add_colonist)
 	sim.events.colonist_died.connect(_on_colonist_died)
 	sim.events.delivered.connect(_on_delivered)
+	sim.events.conversation_finished.connect(_on_conversation)
 	_intent.mesh = ImmediateMesh.new()
 	var im := _flat_mat(Color(1, 1, 1, 0.75), true)
 	im.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -437,6 +438,28 @@ func _update_carry(c: Colonist, carry: MeshInstance3D) -> void:
 			carry.mesh = m
 			carry.rotation = Vector3.ZERO
 	carry.material_override = _flat_mat(RES_COLORS.get(res, Color.WHITE))
+
+
+## Play a conversation as speech bubbles, one line at a time, when it's worth showing: zoomed in,
+## or one of the speakers is selected.
+func _on_conversation(conv: Dictionary) -> void:
+	var lines: Array = conv.get("lines", [])
+	var a: Colonist = conv["a"]
+	var b: Colonist = conv["b"]
+	if lines.is_empty() or not (camera.size < NAME_ZOOM * 1.3 or selected == a or selected == b):
+		return
+	var by_name := {a.name: a, b.name: b}
+	var delay := 0.0
+	for line in lines:
+		var who: Colonist = by_name.get(line["who"])
+		if who == null:
+			continue
+		var secs := clampf(1.2 + String(line["text"]).length() * 0.045, 2.0, 5.0)
+		get_tree().create_timer(delay).timeout.connect(func() -> void:
+			var e: Dictionary = _colonists.get(who.id, {})
+			if not e.is_empty():
+				(e["over"] as Overhead).say(line["text"], secs))
+		delay += secs
 
 
 ## A soft "+6 wood" that rises and fades where goods reach storage.

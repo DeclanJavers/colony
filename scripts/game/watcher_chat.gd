@@ -85,6 +85,9 @@ func save_memory(c: Colonist) -> void:
 			return
 		sim.add_memory(c, text, MEMORY_IMPORTANCE)
 		c.memories[-1]["source"] = "watcher"
+		var req := String(data.get("request", "none"))
+		if req != "none" and sim.content.actions_by_id.has(req):
+			sim.add_request(c, "the Watcher", req, 0.8)   # the voice they hear is fairly persuasive
 		memory_saved.emit(c, text))
 
 
