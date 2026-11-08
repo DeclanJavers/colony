@@ -1,7 +1,7 @@
 # Colony
 
 An ant-farm colony sim where every colonist is an AI agent. **Laya** picks what each colonist
-does, and **LFM3-1.7B** (a local LLM) lets you talk to any of them. Full design: [docs/SPEC.md](docs/SPEC.md).
+does, and **LFM3-1.7B** (a local LLM) lets you talk to any of them. Full design: [docs/SPEC.md](docs/SPEC.md). What's next: [docs/BACKLOG.md](docs/BACKLOG.md).
 
 ## Run it
 
@@ -63,7 +63,7 @@ At the bottom you can talk to the colonist as **the Watcher**. Chat runs through
 When you leave a conversation, or every 6 messages, it's compressed into a one-sentence memory
 (`/remember`, importance 7), and memories are part of the text Laya reads.
 Laya v1 was trained only on the baseline, so it doesn't act on your requests yet: that needs
-training data where Watcher requests matter. To test chat from the command line, use
+training data where Watcher requests matter (see the v2 plan in docs/BACKLOG.md). To test chat from the command line, use
 `-- --select --say "your message"`.
 
 ## Fine-tuning Laya
