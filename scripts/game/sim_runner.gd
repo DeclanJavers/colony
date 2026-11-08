@@ -14,7 +14,8 @@ var log: DecisionLog
 var brain_id: String = "laya"        # which brain runs the colony
 var laya: LayaClient                 # set when brain_id == "laya"
 var loaded := false                  # true when this run continued from a save
-var history: Array = []              # hourly snapshots {clock, stock, pop}, newest last (3 days kept)
+var history: Array = []
+var chronicle: Array = []            # everything the event feed showed: {t, text (BBCode with links)}              # hourly snapshots {clock, stock, pop}, newest last (3 days kept)
 var speed_index: int = 1
 var minutes_per_second: float = 12.0
 var lag_paused: bool = false     # true while waiting on a slow brain (sim slows rather than skips)
@@ -43,6 +44,7 @@ func start(p_seed: int, brain_override: String = "", saved: Dictionary = {}) -> 
 		SaveGame.apply(sim, saved)
 		loaded = true
 		history = saved.get("history", []).duplicate(true)
+		chronicle = saved.get("chronicle", []).duplicate(true)
 	minutes_per_second = 1440.0 / float(content.cfg("real_seconds_per_day", 120.0))
 	_max_lag = float(content.cfg("decision.max_lag_minutes", 15))
 	log = DecisionLog.new()
@@ -75,7 +77,7 @@ func snapshot_hours_ago(hours: float) -> Dictionary:
 
 
 func save_game() -> Error:
-	return SaveGame.save(sim, history)
+	return SaveGame.save(sim, history, SaveGame.PATH, chronicle)
 
 
 ## Reload the scene and continue from the save (a clean restart of view, HUD and brains).

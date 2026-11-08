@@ -12,12 +12,12 @@ const FORMAT := 1
 static var pending: Dictionary = {}   # set before reloading the scene; main.gd starts from it
 
 
-static func save(sim: Sim, history: Array, path: String = PATH) -> Error:
+static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array = []) -> Error:
 	var data := {
 		"format": FORMAT, "seed": sim.seed_value, "clock": sim.clock, "stock": sim.stock.duplicate(),
 		"tier": sim.unlocked_tier, "stats": sim.stats.duplicate(true), "next_id": sim._next_id,
 		"next_request_id": sim._next_request_id, "used_names": sim._used_names.duplicate(),
-		"conv_id": sim._conv_id, "rng_state": sim.rng.state, "history": history.duplicate(true),
+		"conv_id": sim._conv_id, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
 		"nodes": [], "buildings": [], "colonists": [], "graveyard": [],
 	}
 	for n: ResNode in sim.nodes.values():

@@ -167,9 +167,18 @@ func _log(text: String) -> void:
 		_last_log = text
 		_last_log_n = 1
 		_feed_lines.append(stamp + text)
+		runner.chronicle.append({"t": runner.sim.clock, "text": text})
+		if runner.chronicle.size() > 300:
+			runner.chronicle.pop_front()
 	while _feed_lines.size() > FEED_LINES:
 		_feed_lines.remove_at(0)
-	_feed.text = "\n".join(_feed_lines)
+	# Older lines fade so the newest stands out.
+	var shown: PackedStringArray = []
+	for i in _feed_lines.size():
+		var age := _feed_lines.size() - 1 - i
+		var alpha := clampf(1.0 - 0.09 * age, 0.4, 1.0)
+		shown.append("[color=#ffffff%02x]%s[/color]" % [int(alpha * 255), _feed_lines[i]])
+	_feed.text = "\n".join(shown)
 
 
 ## Tab / Shift+Tab: inspect the next colonist and move the camera to them.

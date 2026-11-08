@@ -302,6 +302,14 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 			gp.append(link(g))
 		L.append(gray("Graves: ") + ", ".join(gp))
 
+	if not runner.chronicle.is_empty():
+		L.append("\n[b]History[/b] %s" % gray("(newest first)"))
+		var items := runner.chronicle.duplicate()
+		items.reverse()
+		for e in items.slice(0, 15):
+			var t := float(e["t"])
+			L.append("%s %s" % [gray("D%d %02d:00" % [int(t / 1440.0), int(fmod(t, 1440.0) / 60.0)]), e["text"]])
+
 	L.append("\n[b]Brain[/b]")
 	var s := "%d decisions, %d couldn't be carried out" % [int(sim.stats.get("decisions", 0)), int(sim.stats.get("failed_decisions", 0))]
 	if runner.laya != null:
