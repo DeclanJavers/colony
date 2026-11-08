@@ -158,7 +158,9 @@ func _build_score(bid: String, sim: Sim) -> float:
 		"well":
 			s += 0.8 if sim.count_of("well") == 0 else -0.3
 		"farm_plot":
-			s += 0.7 if sim.count_of("farm_plot") < 1 + sim.alive_count() / 4 else -0.2
+			# Enough fields for the people there are: another one isn't needed (and costs wood
+			# that houses need). The teacher's judgement, not a game rule.
+			s += 0.7 if sim.count_of("farm_plot") < 1 + sim.alive_count() / 4 else -1.0
 		"house":
 			s += 0.9 if sim.free_beds() <= 1 else -0.6
 		"stockpile", "storehouse":

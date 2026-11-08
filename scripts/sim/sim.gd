@@ -21,6 +21,10 @@ var unlocked_tier: int = 0
 
 var brains: Dictionary = {}             # brain id -> Brain
 var default_brain_id: String = "utility"
+## Optional teacher: a second brain (e.g. "utility") that also scores every decision another brain
+## makes. Its answer is logged next to the real one (ctx["teacher"]), so training can relabel the
+## states the learner actually reaches (learning from its own mistakes). It never acts.
+var teacher_id: String = ""
 var describer: StateDescriber = StateDescriber.new()
 var action_types: Dictionary = {}       # type name -> Script
 
@@ -782,6 +786,8 @@ func _request_decision(c: Colonist) -> void:
 	c.thinking_since = clock
 	c.pending_request_id = int(ctx["request_id"])
 	events.decision_requested.emit(c, ctx)
+	if teacher_id != "" and teacher_id != brain.id and brains.has(teacher_id):
+		(brains[teacher_id] as Brain).decide(ctx, self, func(d: Dictionary) -> void: ctx["teacher"] = d)
 	brain.decide(ctx, self, _on_decision.bind(c.id, ctx))
 
 

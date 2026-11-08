@@ -39,6 +39,7 @@ func start(p_seed: int, brain_override: String = "", saved: Dictionary = {}) -> 
 		laya.name = "LayaClient"
 		add_child(laya)
 		sim.register_brain(LayaBrain.new(laya, pick), true)
+		sim.teacher_id = "utility"   # log what the baseline would do in Laya's shoes, for retraining
 	sim.setup(p_seed)
 	if not saved.is_empty():
 		SaveGame.apply(sim, saved)

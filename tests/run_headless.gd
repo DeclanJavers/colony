@@ -19,6 +19,7 @@ var days := 10
 var max_lag := 15.0
 var action_counts := {}
 var brain_counts := {}
+var metrics := ColonyMetrics.new()
 var _done := false
 
 
@@ -37,6 +38,7 @@ func _initialize() -> void:
 		laya = LayaClient.new(String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
 		root.add_child(laya)
 		sim.register_brain(LayaBrain.new(laya, args.get("pick", "argmax")), true)
+		sim.teacher_id = "utility"
 	sim.setup(seed_v)
 
 	if args.get("log", "1") == "1":
@@ -78,6 +80,7 @@ func _initialize() -> void:
 			if who.is_adult():
 				sim.add_request(who, "the Watcher", jobs[rr.randi() % jobs.size()], 0.8))
 
+	metrics.attach(sim)
 	founders = sim.alive_count()
 	end_clock = sim.clock + days * 1440.0
 	t0 = Time.get_ticks_msec()
@@ -111,6 +114,7 @@ func _finish() -> void:
 	_done = true
 	var ms := Time.get_ticks_msec() - t0
 	print("FINAL ", JSON.stringify(sim.summary()))
+	print("METRICS ", JSON.stringify(metrics.report()))
 	print("ACTIONS ", JSON.stringify(action_counts))
 	print("CHOICES ", JSON.stringify(brain_counts))
 	print("failed decisions: %d of %d" % [sim.stats.get("failed_decisions", 0), sim.stats.get("decisions", 0)])

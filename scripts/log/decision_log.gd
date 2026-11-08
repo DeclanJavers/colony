@@ -39,9 +39,18 @@ func _on_decision(c: Colonist, ctx: Dictionary, decision: Dictionary, began: boo
 		"with_whom": decision.get("with_whom", -1), "began": began,
 		"latency_ms": decision.get("latency_ms", 0.0), "model": decision.get("model", ""),
 		"error": decision.get("error", ""),
+		"teacher": _teacher(ctx),
 		"needs_before": c.needs.duplicate(),
 		"outcome": null, "label": null,
 	})
+
+
+func _teacher(ctx: Dictionary) -> Variant:
+	var t: Dictionary = ctx.get("teacher", {})
+	if t.is_empty():
+		return null
+	return {"brain": t.get("brain", ""), "chosen": t.get("action", ""), "probs": t.get("probs", {}),
+		"build_probs": t.get("build_probs", {}), "social_probs": t.get("social_probs", {})}
 
 
 func _on_hour(_d: int, _h: int) -> void:

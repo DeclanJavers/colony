@@ -22,7 +22,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "brain_se
 from laya_format import OPTION_FIELDS, PROB_FIELDS, QUESTIONS_VERSION, build_questions, id_to_label  # noqa: E402
 
 
-def to_row(r: dict) -> dict | None:
+def to_row(r: dict, use_teacher: bool = False) -> dict | None:
+    if use_teacher:
+        t = r.get("teacher")
+        if not t or not t.get("probs"):
+            return None
+        # Relabel: the state the learner reached, the teacher's answer as the target.
+        r = {**r, "probs": t["probs"], "build_probs": t.get("build_probs", {}),
+             "social_probs": t.get("social_probs", {}), "chosen": t.get("chosen", "")}
     if not r.get("options") or not r.get("probs"):
         return None
     questions = build_questions(r)
@@ -52,6 +59,9 @@ def main() -> None:
     ap.add_argument("--eval-seeds", default="")
     ap.add_argument("--brain", default="utility", help="only use decisions made by this brain")
     ap.add_argument("--max-train", type=int, default=0, help="subsample train rows (0 = all)")
+    ap.add_argument("--teacher", action="store_true",
+                    help="use the logged teacher's answer as the target (relabel a learner's own states); "
+                         "with this, --brain selects whose states (e.g. laya)")
     a = ap.parse_args()
     eval_seeds = {int(s) for s in a.eval_seeds.split(",") if s}
 
@@ -65,7 +75,7 @@ def main() -> None:
             if k in seen:
                 continue
             seen.add(k)
-            row = to_row(r)
+            row = to_row(r, a.teacher)
             if row:
                 (evals if r.get("seed") in eval_seeds else train).append(row)
     random.seed(0)
