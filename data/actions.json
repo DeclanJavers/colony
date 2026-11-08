@@ -176,7 +176,7 @@
     ],
     "description": "take a short break and relax",
     "params": {
-      "minutes": 30,
+      "minutes": 60,
       "energy_per_hour": 4.0
     }
   },
