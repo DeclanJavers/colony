@@ -149,6 +149,8 @@ func tick(dt: float = 1.0) -> void:
 	_world_tick(dt)
 	if int(clock) % PERCEIVE_EVERY == 0:
 		_perceive()
+	if int(clock) % 30 == 0:
+		_casual_chats()
 	if hour() != _last_hour:
 		_last_hour = hour()
 		_on_hour()
@@ -316,6 +318,32 @@ const SIGHT := 3.0           # tiles: close enough to a storage pile to see what
 func observe_stock(c: Colonist) -> void:
 	for k in Knowledge.STOCK_KEYS:
 		c.knowledge.observe(k, float(stock.get(k, 0.0)), clock)
+
+
+const CHAT_NEAR := 1.8          # tiles: close enough to chat while working
+const CHAT_COOLDOWN := 180.0    # minutes between a colonist's casual chats
+const CHAT_CHANCE := 0.35       # per check, for a pair that's close and free to chat
+
+
+## Colonists working side by side sometimes swap a few words (and news) without stopping.
+func _casual_chats() -> void:
+	var busy := colonists.values().filter(func(c: Colonist) -> bool:
+		return c.state == "acting" and c.action != null and c.action.phase != "walking" and c.action.phase != "sleeping" \
+			and clock - float(c.get_meta("last_chat", -1e9)) > CHAT_COOLDOWN)
+	for i in busy.size():
+		var a: Colonist = busy[i]
+		if clock - float(a.get_meta("last_chat", -1e9)) <= CHAT_COOLDOWN:
+			continue
+		for j in range(i + 1, busy.size()):
+			var b: Colonist = busy[j]
+			if clock - float(b.get_meta("last_chat", -1e9)) <= CHAT_COOLDOWN or a.pos.distance_to(b.pos) > CHAT_NEAR:
+				continue
+			if rng.randf() > CHAT_CHANCE:
+				continue
+			a.set_meta("last_chat", clock)
+			b.set_meta("last_chat", clock)
+			converse(a, b, "chat")
+			break
 
 
 func _perceive() -> void:
