@@ -26,6 +26,9 @@ var model: Node3D
 var anim: AnimationPlayer
 var current := ""
 var _hand: BoneAttachment3D        # right hand: holds the tool for the current job
+var _skel: Skeleton3D
+var _kid_head := -1.0              # head scale currently applied (children get a bigger head)
+const KID_HEAD := 1.3
 var _tool := ""
 const TOOL_FOR_ACTION := {"gather_wood": "axe", "gather_stone": "pickaxe", "build": "hammer",
 	"farm": "hoe", "fetch_water": "bucket"}
@@ -51,6 +54,7 @@ func setup(c: Colonist, shirt: Color) -> void:
 	var skel: Skeleton3D = null
 	for n in model.find_children("*", "Skeleton3D", true, false):
 		skel = n
+	_skel = skel
 	if skel != null and skel.find_bone("RightHand") >= 0:
 		_hand = BoneAttachment3D.new()
 		_hand.bone_name = "RightHand"
@@ -107,6 +111,7 @@ func play(name: String, speed := 1.0) -> void:
 ## Pick and play the clip for this frame. speed_mps = how fast the colonist is moving on screen.
 func update_for(c: Colonist, speed_mps: float) -> void:
 	_update_tool(c)
+	_update_head(c)
 	var a := c.action
 	if speed_mps > 0.05:
 		var carrying := a != null and a.phase == "carrying"
@@ -120,6 +125,17 @@ func update_for(c: Colonist, speed_mps: float) -> void:
 		play("idle")   # arrived or waiting for a path
 		return
 	play(String(CLIP_FOR_ACTION.get(String(a.def.get("id", "")), "idle")))
+
+
+## Children have bigger heads (the animations don't key bone scale, so this sticks).
+func _update_head(c: Colonist) -> void:
+	var want := 1.0 if c.is_adult() else KID_HEAD
+	if want == _kid_head or _skel == null:
+		return
+	_kid_head = want
+	var i := _skel.find_bone("Head")
+	if i >= 0:
+		_skel.set_bone_pose_scale(i, Vector3.ONE * want)
 
 
 ## Show the tool for what they're doing (only while actually working, not walking there).
