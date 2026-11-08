@@ -13,6 +13,7 @@ var sim: Sim
 var log: DecisionLog
 var brain_id: String = "laya"        # which brain runs the colony
 var laya: LayaClient                 # set when brain_id == "laya"
+var loaded := false                  # true when this run continued from a save
 var history: Array = []              # hourly snapshots {clock, stock, pop}, newest last (3 days kept)
 var speed_index: int = 1
 var minutes_per_second: float = 12.0
@@ -23,7 +24,10 @@ var _max_lag: float = 15.0
 
 
 ## brain_override: "laya" or "utility"; empty = data/config.json decision.brain.
-func start(p_seed: int, brain_override: String = "") -> void:
+## saved: a SaveGame dictionary to continue from (its seed rebuilds the same map).
+func start(p_seed: int, brain_override: String = "", saved: Dictionary = {}) -> void:
+	if not saved.is_empty():
+		p_seed = int(saved["seed"])
 	var content := Content.get_instance()
 	sim = Sim.new()
 	brain_id = brain_override if brain_override != "" else String(content.cfg("decision.brain", "laya"))
@@ -35,6 +39,10 @@ func start(p_seed: int, brain_override: String = "") -> void:
 		add_child(laya)
 		sim.register_brain(LayaBrain.new(laya, pick), true)
 	sim.setup(p_seed)
+	if not saved.is_empty():
+		SaveGame.apply(sim, saved)
+		loaded = true
+		history = saved.get("history", []).duplicate(true)
 	minutes_per_second = 1440.0 / float(content.cfg("real_seconds_per_day", 120.0))
 	_max_lag = float(content.cfg("decision.max_lag_minutes", 15))
 	log = DecisionLog.new()
@@ -64,6 +72,20 @@ func snapshot_hours_ago(hours: float) -> Dictionary:
 		if float(snap["clock"]) >= want:
 			return snap
 	return {} if history.is_empty() else history[0]
+
+
+func save_game() -> Error:
+	return SaveGame.save(sim, history)
+
+
+## Reload the scene and continue from the save (a clean restart of view, HUD and brains).
+func load_game() -> bool:
+	var data := SaveGame.read()
+	if data.is_empty():
+		return false
+	SaveGame.pending = data
+	get_tree().reload_current_scene()
+	return true
 
 
 func speed() -> int:

@@ -10,6 +10,7 @@ extends Node3D
 ##   --inspect what     open the inspector on: colony | building:<type> | node:<type> | colonist:<name> | tile
 ##   --talk [intent]    the first two colonists start a conversation (chat | news | ask) right away
 ##   --say "text"        with --select: say this to the selected colonist, then save the chat as a memory
+##   --load             continue from the saved game (user://save.tres)
 ##   --brain B           laya (default, from data/config.json) or utility (hand-made baseline)
 
 var runner := SimRunner.new()
@@ -27,7 +28,11 @@ func _ready() -> void:
 	var seed_v := int(args.get("seed", str(content.cfg("default_seed", 1234))))
 
 	add_child(runner)
-	runner.start(seed_v, String(args.get("brain", "")))
+	if args.has("load") and SaveGame.pending.is_empty():
+		SaveGame.pending = SaveGame.read()
+	var saved := SaveGame.pending
+	SaveGame.pending = {}
+	runner.start(seed_v, String(args.get("brain", "")), saved)
 	if args.has("prewarm"):
 		runner.prewarm(float(args["prewarm"]))
 	if args.has("time"):
@@ -79,6 +84,9 @@ func _ready() -> void:
 			view.select_target(people[0])
 			cam.focus(view.target_position(people[0]), true)
 			runner.sim.converse(people[0], people[1], String(args["talk"]) if args["talk"] != "1" else "chat")
+
+	if args.has("save"):   # test hook: save right away (e.g. after --prewarm)
+		print("saved: ", runner.save_game() == OK)
 
 	if args.has("settings"):
 		hud._settings.visible = true

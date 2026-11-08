@@ -151,7 +151,7 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 	chat.memory_saved.connect(func(c: Colonist, text: String) -> void:
 		_log("[color=#80d8ff]%s will remember: %s[/color]" % [InspectText.link(c), text]))
 	_refresh_speed()
-	_log("The colony begins with %d settlers." % runner.sim.alive_count())
+	_log("Welcome back: day %d, %d people." % [runner.sim.day(), runner.sim.alive_count()] if runner.loaded else "The colony begins with %d settlers." % runner.sim.alive_count())
 
 
 var _last_log := ""
@@ -210,6 +210,32 @@ func _build_settings(root: Control) -> void:
 	cb.focus_mode = Control.FOCUS_NONE
 	cb.toggled.connect(func(on: bool) -> void: GameSettings.set_value("bubbles", on))
 	grid.add_child(cb)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var save_btn := Button.new()
+	save_btn.text = "Save (F5)"
+	save_btn.focus_mode = Control.FOCUS_NONE
+	save_btn.pressed.connect(_save)
+	var load_btn := Button.new()
+	load_btn.text = "Load (F9)"
+	load_btn.focus_mode = Control.FOCUS_NONE
+	load_btn.pressed.connect(_load)
+	row.add_child(save_btn)
+	row.add_child(load_btn)
+	var spacer := Label.new()
+	spacer.text = "Game"
+	grid.add_child(spacer)
+	grid.add_child(row)
+
+
+func _save() -> void:
+	var err := runner.save_game()
+	_log("[color=#9be29b]Game saved.[/color]" if err == OK else "[color=#ff8a80]Couldn't save (error %d).[/color]" % err)
+
+
+func _load() -> void:
+	if not runner.load_game():
+		_log("[color=#ff8a80]No saved game yet.[/color]")
 
 
 func _add_choice(grid: GridContainer, title: String, key: String, opts: Array) -> void:
@@ -250,8 +276,8 @@ func _process(_delta: float) -> void:
 			adults += 1
 	_pop.text = "Pop %d (%d kids)" % [sim.alive_count(), sim.alive_count() - adults]
 	var parts: PackedStringArray = []
-	for r in sim.stock:
-		parts.append("%s %d" % [String(r).capitalize(), int(sim.stock[r])])
+	for r in Knowledge.STOCK_KEYS:   # fixed order, whatever order the stock dictionary is in
+		parts.append("%s %d" % [String(r).capitalize(), int(sim.stock.get(r, 0))])
 	_stock.text = "%s   [%d/%d]" % ["  ".join(parts), int(sim.stock_total()), int(sim.storage_capacity())]
 	_tier.text = "Tier %d" % sim.unlocked_tier
 	_lag.text = "waiting on Laya..." if runner.lag_paused else ""
@@ -277,6 +303,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				runner.set_speed_index(3)
 			KEY_C:
 				view.select_target("colony")
+			KEY_F5:
+				_save()
+			KEY_F9:
+				_load()
 			KEY_F:
 				if cam != null and view.selected != null:
 					cam.follow_node = null if cam.follow_node != null else view.colonist_root(view.selected)
