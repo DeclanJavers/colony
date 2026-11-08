@@ -11,6 +11,8 @@ const MAX_TICKS_PER_FRAME := 400
 
 var sim: Sim
 var log: DecisionLog
+var brain_id: String = "laya"        # which brain runs the colony
+var laya: LayaClient                 # set when brain_id == "laya"
 var speed_index: int = 1
 var minutes_per_second: float = 12.0
 var lag_paused: bool = false     # true while waiting on a slow brain (sim slows rather than skips)
@@ -19,10 +21,18 @@ var _last_running_index: int = 1
 var _max_lag: float = 15.0
 
 
-func start(p_seed: int) -> void:
+## brain_override: "laya" or "utility"; empty = data/config.json decision.brain.
+func start(p_seed: int, brain_override: String = "") -> void:
 	var content := Content.get_instance()
 	sim = Sim.new()
-	sim.register_brain(UtilityBrain.new(), true)
+	brain_id = brain_override if brain_override != "" else String(content.cfg("decision.brain", "laya"))
+	var pick := String(content.cfg("decision.pick", "argmax"))
+	sim.register_brain(UtilityBrain.new(pick), brain_id == "utility")
+	if brain_id == "laya":
+		laya = LayaClient.new(String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
+		laya.name = "LayaClient"
+		add_child(laya)
+		sim.register_brain(LayaBrain.new(laya, pick), true)
 	sim.setup(p_seed)
 	minutes_per_second = 1440.0 / float(content.cfg("real_seconds_per_day", 120.0))
 	_max_lag = float(content.cfg("decision.max_lag_minutes", 15))
@@ -32,9 +42,14 @@ func start(p_seed: int) -> void:
 
 
 ## Fast-forward without rendering (for testing or to skip the early game).
+## Laya answers asynchronously, so a synchronous skip-ahead can't wait for it: prewarm always
+## runs on the baseline brain (its decisions are logged as brain "utility").
 func prewarm(days: float) -> void:
+	var keep := sim.default_brain_id
+	sim.default_brain_id = "utility"
 	for i in int(days * 1440.0):
 		sim.tick(1.0)
+	sim.default_brain_id = keep
 
 
 func speed() -> int:

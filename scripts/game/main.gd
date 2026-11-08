@@ -7,6 +7,7 @@ extends Node3D
 ##   --shot path.png     save a screenshot after --shot-delay seconds, then quit (for automated checks)
 ##   --time H            jump to hour H of the current day before showing (e.g. 21 for night)
 ##   --zoom S            camera ortho size
+##   --brain B           laya (default, from data/config.json) or utility (hand-made baseline)
 
 var runner := SimRunner.new()
 var view := WorldView.new()
@@ -21,7 +22,7 @@ func _ready() -> void:
 	var seed_v := int(args.get("seed", str(content.cfg("default_seed", 1234))))
 
 	add_child(runner)
-	runner.start(seed_v)
+	runner.start(seed_v, String(args.get("brain", "")))
 	if args.has("prewarm"):
 		runner.prewarm(float(args["prewarm"]))
 	if args.has("time"):

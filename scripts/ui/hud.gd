@@ -12,6 +12,7 @@ var _pop := Label.new()
 var _stock := Label.new()
 var _tier := Label.new()
 var _lag := Label.new()
+var _brain := Label.new()
 var _speed_buttons: Array[Button] = []
 var _feed := RichTextLabel.new()
 var _feed_lines: PackedStringArray = []
@@ -41,6 +42,9 @@ func _ready() -> void:
 	hb.add_child(spacer)
 	_lag.add_theme_color_override("font_color", Color(1, 0.8, 0.3))
 	hb.add_child(_lag)
+	_brain.add_theme_font_size_override("font_size", 13)
+	_brain.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(_brain)
 	var help := Label.new()
 	help.text = "WASD/drag pan · wheel zoom · Q/E rotate · click select · Space pause · 1/2/3 speed"
 	help.add_theme_font_size_override("font_size", 12)
@@ -144,7 +148,12 @@ func _process(_delta: float) -> void:
 		parts.append("%s %d" % [String(r).capitalize(), int(sim.stock[r])])
 	_stock.text = "%s   [%d/%d]" % ["  ".join(parts), int(sim.stock_total()), int(sim.storage_capacity())]
 	_tier.text = "Tier %d" % sim.unlocked_tier
-	_lag.text = "waiting on AI..." if runner.lag_paused else ""
+	_lag.text = "waiting on Laya..." if runner.lag_paused else ""
+	if runner.laya != null:
+		_brain.text = runner.laya.status()
+		_brain.add_theme_color_override("font_color", Color(0.6, 0.9, 0.6) if runner.laya.online else Color(1, 0.55, 0.45))
+	else:
+		_brain.text = "brain: %s" % runner.brain_id
 	if _card.visible and view.selected != null:
 		_card_text.text = _card_bbcode(view.selected)
 
@@ -161,7 +170,34 @@ func _card_bbcode(c: Colonist) -> String:
 		lines.append("%s: [color=%s]%s[/color] (%d)" % [String(sim.content.needs[need_id].get("label", need_id)).capitalize(), col, sim.need_word(c, need_id), int(v)])
 	if c.partner_id >= 0 and sim.colonists.has(c.partner_id):
 		lines.append("Partner: %s" % (sim.colonists[c.partner_id] as Colonist).name)
+	lines.append_array(_why_lines(c))
 	return "\n".join(lines)
+
+
+## What the brain weighed for this colonist's last choice (top 3 options).
+func _why_lines(c: Colonist) -> PackedStringArray:
+	var out: PackedStringArray = []
+	if c.state == "thinking":
+		out.append("[color=#ffe082]Thinking...[/color]")
+	var last: Dictionary = c.last_decision
+	if last.is_empty():
+		return out
+	var d: Dictionary = last["decision"]
+	var probs: Dictionary = d.get("probs", {})
+	var labels := {}
+	for o in last["ctx"]["options"]:
+		labels[o["id"]] = o["label"]
+	var keys := probs.keys()
+	keys.sort_custom(func(a, b) -> bool: return float(probs[a]) > float(probs[b]))
+	var parts: PackedStringArray = []
+	for k in keys.slice(0, 3):
+		parts.append("%s %d%%" % [labels.get(k, k), roundi(float(probs[k]) * 100.0)])
+	out.append("[color=#bbbbbb]%s weighed:[/color] %s" % [String(d.get("brain", "?")).capitalize(), ", ".join(parts)])
+	if d.get("build_what", "") != "" and d.get("action", "") == "build":
+		out.append("[color=#bbbbbb]Build pick:[/color] %s" % d["build_what"])
+	if not last["began"]:
+		out.append("[color=#ff8a80]Couldn't do \"%s\"[/color]" % labels.get(d.get("action", ""), d.get("action", "?")))
+	return out
 
 
 func _unhandled_input(event: InputEvent) -> void:

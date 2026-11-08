@@ -37,7 +37,8 @@ func _on_decision(c: Colonist, ctx: Dictionary, decision: Dictionary, began: boo
 		"social_probs": decision.get("social_probs", {}),
 		"chosen": decision.get("action", ""), "build_what": decision.get("build_what", ""),
 		"with_whom": decision.get("with_whom", -1), "began": began,
-		"latency_ms": decision.get("latency_ms", 0.0),
+		"latency_ms": decision.get("latency_ms", 0.0), "model": decision.get("model", ""),
+		"error": decision.get("error", ""),
 		"needs_before": c.needs.duplicate(),
 		"outcome": null, "label": null,
 	})
