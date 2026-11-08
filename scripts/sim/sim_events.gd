@@ -23,3 +23,4 @@ signal building_completed(b: Building)
 signal node_depleted(n: ResNode)
 signal tier_unlocked(tier: int)
 signal stock_changed(stock: Dictionary)
+signal delivered(c: Colonist, resource: String, amount: float)   # a colonist dropped goods at storage

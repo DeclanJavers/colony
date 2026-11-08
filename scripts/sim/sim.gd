@@ -584,6 +584,15 @@ func _on_decision(decision: Dictionary, cid: int, ctx: Dictionary) -> void:
 	else:
 		c.fail_streak = 0
 	c.last_decision = {"ctx": ctx, "decision": decision, "began": began, "t": clock}
+	var act_id := String(decision.get("action", ""))
+	var lbl := act_id
+	for o in ctx["options"]:
+		if o["id"] == act_id:
+			lbl = o["label"]
+	c.recent.append({"t": clock, "action": act_id, "label": lbl, "began": began,
+		"p": float(decision.get("probs", {}).get(act_id, 0.0)), "brain": decision.get("brain", "")})
+	if c.recent.size() > 8:
+		c.recent.pop_front()
 	events.decision_made.emit(c, ctx, decision, began)
 
 
@@ -624,10 +633,12 @@ func has_storage_space() -> bool:
 	return stock_total() < storage_capacity() - 1.0
 
 
-func deposit(res: String, amount: float) -> float:
+func deposit(res: String, amount: float, by: Colonist = null) -> float:
 	var put := minf(amount, maxf(0.0, storage_capacity() - stock_total()))
 	stock[res] = float(stock.get(res, 0.0)) + put
 	events.stock_changed.emit(stock)
+	if by != null and put > 0.0:
+		events.delivered.emit(by, res, put)
 	return put
 
 

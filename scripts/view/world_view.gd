@@ -9,6 +9,7 @@ signal colonist_clicked(c: Colonist)
 ## "colony", or null (deselect).
 signal target_selected(target: Variant)
 signal hovered(target: Variant, screen_pos: Vector2)
+signal follow_requested(c: Colonist)   # double-click a colonist
 
 const MODEL_DIR := "res://assets/models/"
 const GRASS := Color(0.36, 0.55, 0.26)
@@ -26,6 +27,12 @@ var _nodes: Dictionary = {}        # ResNode id -> Node3D
 var _buildings: Dictionary = {}    # Building id -> {root, model, frame, crops, light}
 var _colonists: Dictionary = {}    # Colonist id -> {root, model, label, ring}
 var _fire_lights: Array[OmniLight3D] = []
+var _hover: Variant = null              # thing under the mouse
+var _intent := MeshInstance3D.new()     # dotted line from the selected colonist to their target
+var _node_t := 0.0
+const NAME_ZOOM := 20.0                 # names show when zoomed in closer than this (camera size)
+const RES_COLORS := {"wood": Color(0.80, 0.62, 0.40), "stone": Color(0.78, 0.80, 0.84),
+	"food": Color(0.92, 0.45, 0.45), "water": Color(0.45, 0.70, 0.98)}
 var _select_ring: MeshInstance3D
 
 
@@ -46,6 +53,13 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	sim.events.building_completed.connect(_on_building_completed)
 	sim.events.colonist_born.connect(_add_colonist)
 	sim.events.colonist_died.connect(_on_colonist_died)
+	sim.events.delivered.connect(_on_delivered)
+	_intent.mesh = ImmediateMesh.new()
+	var im := _flat_mat(Color(1, 1, 1, 0.75), true)
+	im.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	im.no_depth_test = true
+	_intent.material_override = im
+	add_child(_intent)
 	_select_ring = MeshInstance3D.new()
 	var torus := TorusMesh.new()
 	torus.inner_radius = 0.38
@@ -160,6 +174,7 @@ func _add_node(n: ResNode) -> void:
 	m.rotation.y = _hash01(n.id) * TAU
 	var s := 0.85 + 0.3 * _hash01(n.id * 7)
 	m.scale = Vector3(s, s, s)
+	m.set_meta("base_scale", s)
 	add_child(m)
 	_nodes[n.id] = m
 
@@ -181,7 +196,7 @@ func _add_building(b: Building) -> void:
 	add_child(root)
 	var model := _model(b.type)
 	root.add_child(model)
-	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null}
+	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null, "pct": null}
 	if b.provides("farm") != null:
 		var crops := _model("farm_crops")
 		crops.visible = false
@@ -201,6 +216,11 @@ func _add_building(b: Building) -> void:
 		frame.scale = Vector3(b.size.x, 1.0 + 0.3 * (b.size.x - 1), b.size.y)
 		root.add_child(frame)
 		entry["frame"] = frame
+		var pct := _make_label("", 26)
+		pct.modulate = Color(1.0, 0.85, 0.5)
+		pct.position.y = 1.2 + 0.25 * b.size.x
+		root.add_child(pct)
+		entry["pct"] = pct
 	_buildings[b.id] = entry
 	_update_building(b)
 
@@ -212,6 +232,9 @@ func _on_building_completed(b: Building) -> void:
 	if e["frame"] != null:
 		(e["frame"] as Node3D).queue_free()
 		e["frame"] = null
+	if e["pct"] != null:
+		(e["pct"] as Node3D).queue_free()
+		e["pct"] = null
 	_update_building(b)
 
 
@@ -227,6 +250,11 @@ func _update_building(b: Building) -> void:
 		crops.visible = b.complete and b.farm_stage != "empty"
 		var g := 1.0 if b.farm_stage == "ripe" else 0.15 + 0.85 * b.farm_growth
 		crops.scale = Vector3(1.0, g, 1.0)
+		_tint(crops, Color(0.95, 0.78, 0.25) if b.farm_stage == "ripe" else null)
+	var pct: Label3D = e.get("pct")
+	if pct != null:
+		pct.text = "%d%%" % int(b.progress() * 100)
+		pct.visible = camera.size < NAME_ZOOM * 1.5
 
 
 ## ---- Colonists --------------------------------------------------------------
@@ -253,10 +281,13 @@ func _add_colonist(c: Colonist) -> void:
 		var body := model.find_child("body", true, false) as MeshInstance3D
 		if body != null:
 			body.set_surface_override_material(0, _flat_mat(colonist_color(c)))
-	var label := _make_label(c.name, 36)
-	label.position.y = 1.45
-	root.add_child(label)
-	_colonists[c.id] = {"root": root, "model": model, "label": label}
+	var over := Overhead.new()
+	root.add_child(over)
+	var carry := MeshInstance3D.new()   # what they're carrying, held in front of the chest
+	carry.visible = false
+	carry.position = Vector3(0, 0.62, 0.2)
+	model.add_child(carry)
+	_colonists[c.id] = {"root": root, "model": model, "over": over, "carry": carry}
 
 
 func _on_colonist_died(c: Colonist, _cause: String) -> void:
@@ -319,11 +350,11 @@ func _process(delta: float) -> void:
 		model.position.y = 0.12 if tip else 0.0
 		var s := 1.0 if c.is_adult() else 0.65
 		model.scale = Vector3(s, s, s)
-		var lbl: Label3D = e["label"]
-		# Zoomed far out, show names only to avoid clutter.
-		lbl.text = c.name if camera.size > 34.0 else "%s\n%s" % [c.name, short_action(c)]
-		lbl.position.y = 0.7 if sleeping else (1.45 * s + 0.1)
-		lbl.modulate = Color(1, 0.55, 0.5) if _critical(c) else Color.WHITE
+		var over: Overhead = e["over"]
+		var show_name: bool = camera.size < NAME_ZOOM or c == selected or InspectText.same(c, _hover)
+		over.position.y = 0.75 if sleeping else (1.3 * s + 0.12)
+		over.update_for(c, show_name, delta)
+		_update_carry(c, e["carry"])
 	for bid in _buildings:
 		var b := sim.buildings.get(bid) as Building
 		if b != null and (not b.complete or b.provides("farm") != null):
@@ -333,10 +364,117 @@ func _process(delta: float) -> void:
 		l.light_energy = lerpf(l.light_energy, 0.4 + 2.2 * night, follow)
 	if selected_target != null:
 		_place_ring()
+	_update_intent_line()
+	_node_t += delta
+	if _node_t > 0.5:
+		_node_t = 0.0
+		_update_nodes()
 
 
 func _critical(c: Colonist) -> bool:
 	return float(c.needs.get("thirst", 100)) < 15.0 or float(c.needs.get("hunger", 100)) < 15.0
+
+
+## ---- Readability helpers ---------------------------------------------------
+
+## Tint every mesh under n (null = back to the model's own colours).
+func _tint(n: Node3D, col: Variant) -> void:
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).material_override = _flat_mat(col) if col != null else null
+
+
+func _update_carry(c: Colonist, carry: MeshInstance3D) -> void:
+	var a := c.action
+	var res := ""
+	if a != null and a.phase == "carrying":
+		res = String(a.params.get("resource", "food"))
+	carry.visible = res != ""
+	if res == "" or carry.get_meta("res", "") == res:
+		return
+	carry.set_meta("res", res)
+	match res:
+		"wood":
+			var m := CylinderMesh.new()
+			m.top_radius = 0.045
+			m.bottom_radius = 0.045
+			m.height = 0.42
+			m.radial_segments = 6
+			carry.mesh = m
+			carry.rotation = Vector3(0, 0, PI / 2)
+		"stone":
+			var m := BoxMesh.new()
+			m.size = Vector3(0.16, 0.12, 0.14)
+			carry.mesh = m
+			carry.rotation = Vector3(0.3, 0.4, 0)
+		"water":
+			var m := CylinderMesh.new()
+			m.top_radius = 0.08
+			m.bottom_radius = 0.06
+			m.height = 0.13
+			m.radial_segments = 8
+			carry.mesh = m
+			carry.rotation = Vector3.ZERO
+		_:
+			var m := SphereMesh.new()   # a little bundle of berries / harvest
+			m.radius = 0.08
+			m.height = 0.14
+			m.radial_segments = 8
+			m.rings = 4
+			carry.mesh = m
+			carry.rotation = Vector3.ZERO
+	carry.material_override = _flat_mat(RES_COLORS.get(res, Color.WHITE))
+
+
+## A soft "+6 wood" that rises and fades where goods reach storage.
+func _on_delivered(c: Colonist, res: String, amount: float) -> void:
+	var e: Dictionary = _colonists.get(c.id, {})
+	if e.is_empty() or camera.size > NAME_ZOOM * 2.0:
+		return
+	var l := _make_label("+%d %s" % [roundi(amount), res], 28)
+	l.modulate = RES_COLORS.get(res, Color.WHITE)
+	l.position = (e["root"] as Node3D).position + Vector3(0, 1.7, 0)
+	add_child(l)
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(l, "position:y", l.position.y + 0.8, 1.6).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_property(l, "modulate:a", 0.0, 1.6).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(l.queue_free)
+
+
+## Dotted line from the selected colonist to whatever they're heading for or working on.
+func _update_intent_line() -> void:
+	var im := _intent.mesh as ImmediateMesh
+	im.clear_surfaces()
+	if selected == null or not _colonists.has(selected.id):
+		return
+	var tgt: Variant = InspectText.action_target(selected.action)
+	if tgt == null:
+		return
+	var to: Variant = target_position(tgt)
+	if to == null:
+		return
+	var from: Vector3 = (_colonists[selected.id]["root"] as Node3D).position + Vector3(0, 0.06, 0)
+	var end: Vector3 = (to as Vector3) + Vector3(0, 0.06, 0)
+	var d := end - from
+	var n := int(d.length() / 0.25)
+	if n < 1:
+		return
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	for i in range(0, n, 2):
+		im.surface_add_vertex(from + d * (float(i) / n))
+		im.surface_add_vertex(from + d * (float(i + 1) / n))
+	im.surface_end()
+
+
+## Trees and rocks shrink as they're used up.
+func _update_nodes() -> void:
+	for nid in _nodes:
+		var n := sim.nodes.get(nid) as ResNode
+		var m: Node3D = _nodes[nid]
+		if n == null or m == null:
+			continue
+		var base := float(m.get_meta("base_scale", 1.0))
+		var f := 0.55 + 0.45 * clampf(n.amount / maxf(n.max_amount, 1.0), 0.0, 1.0)
+		m.scale = Vector3.ONE * base * f
 
 
 ## ---- Picking ----------------------------------------------------------------
@@ -351,6 +489,12 @@ func select_target(t: Variant) -> void:
 	_place_ring()
 	colonist_clicked.emit(selected)
 	target_selected.emit(t)
+
+
+## The scene node that carries a living colonist (for the follow camera), or null.
+func colonist_root(c: Colonist) -> Node3D:
+	var e: Dictionary = _colonists.get(c.id, {}) if c != null else {}
+	return e.get("root")
 
 
 ## World position of an inspectable target (for the camera), or null.
@@ -437,6 +581,10 @@ static func describe_short(t: Variant) -> String:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		select_target(pick(event.position))
+		var t: Variant = pick(event.position)
+		select_target(t)
+		if event.double_click and t is Colonist:
+			follow_requested.emit(t)
 	elif event is InputEventMouseMotion:
-		hovered.emit(pick(event.position), event.position)
+		_hover = pick(event.position)
+		hovered.emit(_hover, event.position)

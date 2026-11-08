@@ -59,6 +59,6 @@ func tick(dt: float) -> int:
 					return DONE
 		"carrying":
 			if walk(dt):
-				sim.deposit("food", carrying)
+				sim.deposit("food", carrying, c)
 				return DONE
 	return RUNNING

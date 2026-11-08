@@ -28,6 +28,7 @@ var _why_title := RichTextLabel.new()
 var _why := VBoxContainer.new()
 var _why_key := ""
 var _memories := RichTextLabel.new()
+var _recent := RichTextLabel.new()
 var _state_btn := Button.new()
 var _state := RichTextLabel.new()
 var _chat_title := Label.new()
@@ -105,6 +106,8 @@ func _ready() -> void:
 	_why.add_theme_constant_override("separation", 1)
 	body.add_child(_why)
 
+	_rich(_recent, 13)
+	body.add_child(_recent)
 	_rich(_memories, 13)
 	body.add_child(_memories)
 
@@ -144,7 +147,7 @@ func _ready() -> void:
 	_send.focus_mode = Control.FOCUS_NONE
 	_send.pressed.connect(_on_send)
 	row.add_child(_send)
-	_colonist_only.assign([_needs, _why_title, _why, _memories, _state_btn, sep, _chat_title, _chat_log, _chat_status, row])
+	_colonist_only.assign([_needs, _why_title, _why, _recent, _memories, _state_btn, sep, _chat_title, _chat_log, _chat_status, row])
 
 
 ## Inspect anything (see WorldView.target_selected for the kinds). null closes the panel.
@@ -170,6 +173,11 @@ func _set_colonist_mode(on: bool) -> void:
 	for ctl in _colonist_only:
 		ctl.visible = on
 	_state.visible = on and _state_btn.button_pressed
+
+
+## Open a link like "c:12" (see InspectText): inspect it and move the camera there.
+func open_link(meta: String) -> void:
+	_on_link(meta)
 
 
 func _on_link(meta: Variant) -> void:
@@ -308,6 +316,7 @@ func _refresh() -> void:
 		word.text = sim.need_word(c, need_id)
 
 	_render_why(c)
+	_render_recent(c)
 	_render_memories(c)
 	if _state.visible:
 		_state.text = String(c.last_decision["ctx"]["state_text"]) if not c.last_decision.is_empty() else "(no decision yet)"
@@ -438,6 +447,21 @@ func _add_prob_rows(opts: Array, probs: Dictionary, chosen: String, limit: int) 
 		row.add_child(bar)
 		row.add_child(pct)
 		_why.add_child(row)
+
+
+func _render_recent(c: Colonist) -> void:
+	if c.recent.size() < 2:
+		_recent.text = ""
+		return
+	var lines: PackedStringArray = ["[b]Recent choices[/b]"]
+	var items := c.recent.duplicate()
+	items.reverse()
+	for r in items.slice(1, 7):   # the newest one is "Last choice" above
+		var t := float(r["t"])
+		var ok := "" if r["began"] else "  [color=#ff8a80]couldn't[/color]"
+		lines.append("[color=#aaaaaa]%02d:%02d[/color]  %s [color=#aaaaaa]%d%%[/color]%s" % [
+			int(fmod(t, 1440.0) / 60.0), int(fmod(t, 60.0)), r["label"], roundi(float(r["p"]) * 100.0), ok])
+	_recent.text = "\n".join(lines)
 
 
 func _render_memories(c: Colonist) -> void:

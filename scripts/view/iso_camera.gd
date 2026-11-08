@@ -14,6 +14,8 @@ var _pitch := Node3D.new()
 var _yaw_target := deg_to_rad(45.0)
 var _size_target := 18.0
 var _dragging := false
+var _glide: Variant = null      # Vector3 the camera is gliding to
+var follow_node: Node3D = null    # when set, the camera glides after it (any manual pan stops it)
 
 
 func _ready() -> void:
@@ -29,8 +31,13 @@ func _ready() -> void:
 	rotation.y = _yaw_target
 
 
-func focus(p: Vector3) -> void:
-	position = Vector3(p.x, 0, p.z)
+## Glide to a point (instant=true jumps). Any manual pan cancels the glide.
+func focus(p: Vector3, instant := false) -> void:
+	if instant:
+		position = Vector3(p.x, 0, p.z)
+		_glide = null
+	else:
+		_glide = Vector3(p.x, 0, p.z)
 
 
 func _ground_axes() -> Array[Vector3]:
@@ -53,8 +60,19 @@ func _process(delta: float) -> void:
 	if not typing and (Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)):
 		dir.y -= 1
 	if dir != Vector2.ZERO:
+		follow_node = null
+		_glide = null
 		var ax := _ground_axes()
 		position += (ax[0] * dir.x + ax[1] * dir.y) * camera.size * pan_speed * delta
+	if follow_node != null and is_instance_valid(follow_node):
+		var p := follow_node.global_position
+		position = position.lerp(Vector3(p.x, 0, p.z), clampf(delta * 4.0, 0, 1))
+	elif follow_node != null:
+		follow_node = null
+	elif _glide != null:
+		position = position.lerp(_glide, clampf(delta * 6.0, 0, 1))
+		if position.distance_to(_glide) < 0.02:
+			_glide = null
 	rotation.y = lerp_angle(rotation.y, _yaw_target, clampf(delta * 10.0, 0, 1))
 	camera.size = lerpf(camera.size, _size_target, clampf(delta * 12.0, 0, 1))
 	position.x = clampf(position.x, bounds.position.x, bounds.end.x)
@@ -71,6 +89,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
 				_dragging = event.pressed
 	elif event is InputEventMouseMotion and _dragging:
+		follow_node = null
+		_glide = null
 		var ax := _ground_axes()
 		var px_to_world := camera.size / float(get_viewport().get_visible_rect().size.y)
 		# Moving the mouse drags the ground with it; vertical motion is foreshortened by the pitch.

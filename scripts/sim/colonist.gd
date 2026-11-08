@@ -13,6 +13,7 @@ var needs: Dictionary = {}          # need_id -> 0..100 (100 = satisfied)
 var zero_minutes: Dictionary = {}   # need_id -> minutes spent at 0
 var skills: Dictionary = {}         # skill_id -> level (0 = novice)
 var memories: Array = []            # [{t, text, importance}]
+var recent: Array = []              # last few decisions, newest last: {t, action, label, p, began, brain}
 var affection: Dictionary = {}      # other colonist id -> -100..100
 var partner_id: int = -1
 var parent_ids: Array = []

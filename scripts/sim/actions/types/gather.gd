@@ -49,6 +49,6 @@ func tick(dt: float) -> int:
 				phase = "carrying"
 		"carrying":
 			if walk(dt):
-				sim.deposit(params["resource"], carrying)
+				sim.deposit(params["resource"], carrying, c)
 				return DONE
 	return RUNNING

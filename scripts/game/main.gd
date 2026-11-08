@@ -39,7 +39,7 @@ func _ready() -> void:
 	add_child(cam)
 	var n := runner.sim.map.size
 	cam.bounds = Rect2(0, 0, n, n)
-	cam.focus(Vector3(runner.sim.map.center.x, 0, runner.sim.map.center.y))
+	cam.focus(Vector3(runner.sim.map.center.x, 0, runner.sim.map.center.y), true)
 	if args.has("zoom"):
 		cam._size_target = float(args["zoom"])
 		cam.camera.size = cam._size_target
@@ -51,6 +51,8 @@ func _ready() -> void:
 	add_child(hud)
 	hud.bind(runner, view, chat)
 	hud.inspector.focus_requested.connect(func(p: Vector3) -> void: cam.focus(p))
+	hud.cam = cam
+	view.follow_requested.connect(func(c: Colonist) -> void: cam.follow_node = view.colonist_root(c))
 	if args.has("select"):
 		var first: Colonist = runner.sim.colonists.values()[0]
 		view.select(first)
@@ -85,7 +87,7 @@ func _inspect_for_test(what: String) -> void:
 	view.select_target(t)
 	var pos: Variant = view.target_position(t)
 	if pos != null:
-		cam.focus(pos)
+		cam.focus(pos, true)
 
 
 func _take_shot(path: String, delay: float) -> void:
