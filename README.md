@@ -51,6 +51,26 @@ the brain server is down colonists just keep thinking until it's back. `--prewar
 Laya, so skipped-ahead days run on the baseline brain. Click a colonist to see what its brain
 weighed for its last choice.
 
+## Fine-tuning Laya
+
+Base Laya can't run a colony (it ignores the state; 3 of 5 founders died by day 3). Fine-tuning
+fixes that. Never train on the Mac: use Colab, ideally the cheapest GPU (T4).
+
+1. Make baseline logs, e.g. 15-day headless runs on several seeds (`--pick sample` gives more
+   varied states). Keep a couple of seeds for evaluation only.
+2. `python3 tools/finetune/make_data.py --out logs/finetune/data_vN --eval-seeds 901,902 logs/decisions/<runs>.jsonl`
+   turns them into Laya `{state, questions, gold}` rows, using the same questions the server
+   asks (`brain_server/laya_format.py`).
+3. Copy `data_vN/` and `tools/finetune/train_colab.py` to Google Drive `colony_laya/`, then in
+   Colab: mount Drive, `!pip -q install laya==0.4.29`, `%run /content/drive/MyDrive/colony_laya/train_colab.py`
+   (env `DATA=data_vN OUT=laya_colony_vN`). It prints held-out accuracy before and after.
+4. Copy the checkpoint (without `checkpoint_latest/`) into `models/laya_colony_vN/`.
+   `brain_server/run.sh` serves the newest `models/laya_colony_*` automatically.
+
+v1 (24k baseline decisions, 2 epochs, 30 min on an A100): held-out agreement with the baseline
+went from 42% to 85%. On seed 1234 it ran 6 days with no deaths, reached tier 4 on day 5, and had
+the first birth.
+
 ## Extending it
 
 - **Restyle models:** edit `tools/blender/make_models.py`, then run

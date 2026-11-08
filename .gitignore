@@ -5,3 +5,4 @@ brain_server/__pycache__/
 logs/
 *.blend1
 .DS_Store
+models/

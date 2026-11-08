@@ -21,5 +21,14 @@ if ! curl -sf "http://127.0.0.1:${LLM_PORT}/health" >/dev/null 2>&1; then
   fi
 fi
 
+# Laya checkpoint: the newest fine-tuned colony model in ../models/ if there is one, else base Laya.
+if [ -z "${LAYA_MODEL:-}" ]; then
+  latest=$(ls -d ../models/laya_colony_* 2>/dev/null | sort -V | tail -1 || true)
+  if [ -n "$latest" ] && [ -f "$latest/rl_agent_config.json" ]; then
+    export LAYA_MODEL="$(cd "$latest" && pwd)"
+  fi
+fi
+echo "Laya model: ${LAYA_MODEL:-convaiinnovations/laya (base)}"
+
 export LLM_URL="${LLM_URL:-http://127.0.0.1:${LLM_PORT}/v1/chat/completions}"
 .venv/bin/uvicorn server:app --host 127.0.0.1 --port "${PORT:-8765}" --log-level warning

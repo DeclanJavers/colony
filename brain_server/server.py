@@ -22,6 +22,8 @@ import httpx
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from laya_format import QUESTIONS_VERSION, build_questions, label_to_id
+
 LAYA_MODEL = os.environ.get("LAYA_MODEL", "convaiinnovations/laya")
 LAYA_SUBFOLDER = os.environ.get("LAYA_SUBFOLDER") or None
 LAYA_DEVICE = os.environ.get("LAYA_DEVICE") or None  # None = auto (mps on Apple silicon)
@@ -52,24 +54,14 @@ class DecideRequest(BaseModel):
     requests: list[dict[str, Any]]
 
 
-def _choice(instructions: str, opts: list[dict]) -> dict:
-    return {"type": "choice", "instructions": instructions,
-            "criteria": {o["label"]: o.get("description", "") for o in opts}}
-
-
 def _to_ids(probs: dict[str, float], opts: list[dict]) -> dict[str, float]:
-    by_label = {o["label"]: str(o["id"]) for o in opts}
+    by_label = label_to_id(opts)
     return {by_label[k]: float(v) for k, v in probs.items() if k in by_label}
 
 
 def decide_one(ctx: dict) -> dict:
-    name = ctx.get("colonist_name", "the colonist")
     opts, bopts, sopts = ctx["options"], ctx.get("build_options", []), ctx.get("social_options", [])
-    questions = {"action": _choice(f"What should {name} do next?", opts)}
-    if bopts:
-        questions["build_what"] = _choice(f"If {name} builds, what should it be?", bopts)
-    if sopts:
-        questions["with_whom"] = _choice(f"If {name} socializes, who with?", sopts)
+    questions = build_questions(ctx)
 
     t = time.time()
     with _agent_lock:
@@ -81,7 +73,7 @@ def decide_one(ctx: dict) -> dict:
     action = max(probs, key=probs.get) if probs else ""
     out = {"action": action, "probs": probs, "build_what": "", "build_probs": {},
            "with_whom": -1, "social_probs": {}, "brain": "laya", "latency_ms": ms,
-           "model": _agent_info.get("model"), "confidence": ans["action"].get("confidence")}
+           "model": _agent_info.get("model"), "questions_version": QUESTIONS_VERSION, "confidence": ans["action"].get("confidence")}
     if "build_what" in ans:
         bp = _to_ids(ans["build_what"]["probabilities"], bopts)
         out["build_probs"] = bp
