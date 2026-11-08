@@ -56,7 +56,7 @@ Guiding rule (from the user): keep it simple, easy to read and good-looking. Sho
 - Slightly brighter nights.
 
 **Maybe later (only if they stay clean):**
-- Tools in hand while working (after the Kimodo clips land, so the hand poses fit).
+- Tools in hand while working (the Kimodo clips are in, so hand poses can now be matched).
 - Small sparklines on the Colony page (hourly history already exists).
 - A single optional overlay toggle (e.g. colour colonists by their most urgent need).
 - Lit windows at night in occupied houses.

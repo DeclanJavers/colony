@@ -1,0 +1,8 @@
+{
+  "_doc": "Which Kimodo take to use per clip (assets/anim_src/bvh_v1). Clips not listed use <clip>_s0.bvh. Picked by eye from preview sheets.",
+  "idle": "idle_s1.bvh",
+  "chop": "chop_s1.bvh",
+  "mine": "mine_s1.bvh",
+  "gather": "gather_s1.bvh",
+  "lie_down": "lie_down_s1.bvh"
+}

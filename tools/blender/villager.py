@@ -33,6 +33,9 @@ def arg(name, default=None):
 
 OUT = os.path.abspath(arg("--out", "assets/models"))
 BVH_DIR = arg("--bvh")
+TAKES = arg("--takes")          # optional JSON {clip: "chop_s1.bvh"}; default: <clip>_s0.bvh or <clip>.bvh
+ONE_SHOT = {"sit", "lie_down", "wave", "celebrate"}   # not looped (they play once and hold)
+LOOP_BLEND = 10                 # frames blended from the end of a clip back into its start
 PREVIEW = arg("--preview")
 FPS = 30
 
@@ -289,8 +292,8 @@ def make_placeholders(arm):
 
 # ------------------------------------------------------------------------------------ retarget
 
-def retarget_bvh(arm, path):
-    name = os.path.splitext(os.path.basename(path))[0]
+def retarget_bvh(arm, path, name=None):
+    name = name or os.path.splitext(os.path.basename(path))[0]
     before = set(bpy.data.objects)
     bpy.ops.import_anim.bvh(filepath=path, global_scale=0.01, frame_start=1, use_fps_scale=False,
                             update_scene_fps=False, update_scene_duration=False, rotate_mode="NATIVE",
@@ -310,7 +313,7 @@ def retarget_bvh(arm, path):
     yaw0 = math.atan2(fwd.x, -fwd.y)
     unyaw = q_axis((0, 0, 1), math.degrees(yaw0))   # turn the clip so it starts facing -Y
 
-    new_action(arm, name)
+    frames = []
     for f in range(f0, f1 + 1):
         sc.frame_set(f)
         world = {}
@@ -321,8 +324,20 @@ def retarget_bvh(arm, path):
             delta = unyaw @ pose_q @ src_rest[n].inverted()
             world[n] = delta @ rest_rot(arm, n)
         hips_now = src.matrix_world @ src.pose.bones["Hips"].head
-        offset = Vector((0, 0, (hips_now.z - rest_hips.z) * height_ratio))   # in place: keep only bob
-        key_world_pose(arm, f - f0 + 1, world, offset)
+        frames.append((world, Vector((0, 0, (hips_now.z - rest_hips.z) * height_ratio))))   # in place: keep only bob
+    if name not in ONE_SHOT and len(frames) > 3 * LOOP_BLEND:
+        # Seamless loop: ease the last frames into the first pose so repeating doesn't hitch.
+        first_w, first_o = frames[0]
+        n_fr = len(frames)
+        for j in range(LOOP_BLEND):
+            i = n_fr - LOOP_BLEND + j
+            w = (j + 1) / LOOP_BLEND
+            w = w * w * (3 - 2 * w)   # smoothstep
+            rots, off = frames[i]
+            frames[i] = ({b: rots[b].slerp(first_w[b], w) for b in rots}, off.lerp(first_o, w))
+    new_action(arm, name)
+    for k, (world, offset) in enumerate(frames):
+        key_world_pose(arm, k + 1, world, offset)
     bpy.data.objects.remove(src)
     bpy.data.actions.remove(act)
     print(f"retargeted {name}: {f1 - f0 + 1} frames")
@@ -380,11 +395,25 @@ arm = build_armature()
 meshes = build_mesh(arm)
 make_placeholders(arm)
 if BVH_DIR:
+    import json
+    import re
+    chosen = {}
     for path in sorted(glob.glob(os.path.join(BVH_DIR, "*.bvh"))):
-        name = os.path.splitext(os.path.basename(path))[0]
-        if name in bpy.data.actions:
-            bpy.data.actions.remove(bpy.data.actions[name])   # Kimodo clip replaces placeholder
-        retarget_bvh(arm, path)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        m = re.match(r"(.+)_s(\d+)$", stem)
+        clip, take = (m.group(1), int(m.group(2))) if m else (stem, 0)
+        if take == 0 or clip not in chosen:
+            chosen.setdefault(clip, path)
+            if take == 0:
+                chosen[clip] = path
+    if TAKES and os.path.exists(TAKES):
+        for clip, fname in json.load(open(TAKES)).items():
+            if not clip.startswith("_") and os.path.exists(os.path.join(BVH_DIR, fname)):
+                chosen[clip] = os.path.join(BVH_DIR, fname)
+    for clip, path in sorted(chosen.items()):
+        if clip in bpy.data.actions:
+            bpy.data.actions.remove(bpy.data.actions[clip])   # Kimodo clip replaces placeholder
+        retarget_bvh(arm, path, clip)
 arm.animation_data.action = bpy.data.actions["idle"]
 for pb in arm.pose.bones:
     if "_prevq" in pb:
