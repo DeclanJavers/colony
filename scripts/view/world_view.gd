@@ -235,11 +235,18 @@ func _add_colonist(c: Colonist) -> void:
 	var root := Node3D.new()
 	root.position = to_world(c.pos)
 	add_child(root)
-	var model := _model("colonist")
-	root.add_child(model)
-	var body := model.find_child("body", true, false) as MeshInstance3D
-	if body != null:
-		body.set_surface_override_material(0, _flat_mat(colonist_color(c)))
+	var model: Node3D
+	if ColonistAvatar.available():
+		var avatar := ColonistAvatar.new()
+		root.add_child(avatar)
+		avatar.setup(c, colonist_color(c))
+		model = avatar
+	else:   # old capsule placeholder
+		model = _model("colonist")
+		root.add_child(model)
+		var body := model.find_child("body", true, false) as MeshInstance3D
+		if body != null:
+			body.set_surface_override_material(0, _flat_mat(colonist_color(c)))
 	var label := _make_label(c.name, 36)
 	label.position.y = 1.45
 	root.add_child(label)
@@ -290,14 +297,20 @@ func _process(delta: float) -> void:
 		var model: Node3D = e["model"]
 		var target := to_world(c.pos)
 		var move := target - root.position
+		var before := root.position
 		root.position = root.position.lerp(target, follow)
 		var sleeping := c.action != null and c.action.phase == "sleeping"
+		var avatar := model as ColonistAvatar
+		if avatar != null:
+			avatar.update_for(c, (root.position - before).length() / maxf(delta, 0.0001))
 		# Sleeping at home = inside the house: hide the body, keep the label.
 		model.visible = not (sleeping and c.action.get("where") == "at home")
 		if move.length() > 0.01 and not sleeping:
 			model.rotation.y = lerp_angle(model.rotation.y, atan2(move.x, move.z), follow)
-		model.rotation.x = lerpf(model.rotation.x, -PI / 2.0 if sleeping else 0.0, follow)
-		model.position.y = 0.18 if sleeping else 0.0
+		# Tip the model over to sleep unless it has a real lie-down animation.
+		var tip := sleeping and not (avatar != null and avatar.lies_down())
+		model.rotation.x = lerpf(model.rotation.x, -PI / 2.0 if tip else 0.0, follow)
+		model.position.y = 0.12 if tip else 0.0
 		var s := 1.0 if c.is_adult() else 0.65
 		model.scale = Vector3(s, s, s)
 		var lbl: Label3D = e["label"]

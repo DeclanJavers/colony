@@ -1,0 +1,21 @@
+{
+  "_doc": "One entry per game animation: name -> prompt + seconds. Each becomes <name>_s0.bvh and <name>_s1.bvh (two takes). Prompts say 'in place' where the colonist shouldn't travel; root motion is removed on retarget anyway.",
+  "clips": [
+    {"name": "idle", "seconds": 6, "prompt": "A person stands in place, relaxed, shifting their weight and looking around."},
+    {"name": "walk", "seconds": 4, "prompt": "A person walks forward at a relaxed pace."},
+    {"name": "carry", "seconds": 4, "prompt": "A person walks forward carrying a heavy box in front of them with both hands."},
+    {"name": "chop", "seconds": 5, "prompt": "A person stands in place and chops wood, swinging an axe down from over their shoulder again and again."},
+    {"name": "mine", "seconds": 5, "prompt": "A person stands in place and swings a pickaxe down at a rock repeatedly."},
+    {"name": "gather", "seconds": 5, "prompt": "A person bends down and picks berries from a low bush with one hand, again and again."},
+    {"name": "build", "seconds": 5, "prompt": "A person stands in place hammering a nail into a wall at chest height, again and again."},
+    {"name": "farm", "seconds": 5, "prompt": "A person stands in place digging the soil with a hoe, pulling it toward them repeatedly."},
+    {"name": "draw_water", "seconds": 5, "prompt": "A person pulls a rope hand over hand to lift a bucket out of a well."},
+    {"name": "eat", "seconds": 5, "prompt": "A person stands and eats food from their hand, chewing."},
+    {"name": "drink", "seconds": 4, "prompt": "A person lifts a cup to their mouth and drinks, then lowers it."},
+    {"name": "sit", "seconds": 5, "prompt": "A person sits down on the ground cross-legged and rests."},
+    {"name": "lie_down", "seconds": 5, "prompt": "A person lies down on the ground on their back and goes to sleep."},
+    {"name": "talk", "seconds": 5, "prompt": "A person stands talking to someone in front of them, gesturing with their hands."},
+    {"name": "wave", "seconds": 3, "prompt": "A person waves hello with their right hand."},
+    {"name": "celebrate", "seconds": 3, "prompt": "A person cheers with both arms raised in the air."}
+  ]
+}
