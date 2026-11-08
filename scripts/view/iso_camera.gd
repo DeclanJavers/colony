@@ -43,13 +43,14 @@ func _ground_axes() -> Array[Vector3]:
 
 func _process(delta: float) -> void:
 	var dir := Vector2.ZERO
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+	var typing := get_viewport().gui_get_focus_owner() is LineEdit
+	if not typing and (Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)):
 		dir.x -= 1
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+	if not typing and (Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT)):
 		dir.x += 1
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+	if not typing and (Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)):
 		dir.y += 1
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+	if not typing and (Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)):
 		dir.y -= 1
 	if dir != Vector2.ZERO:
 		var ax := _ground_axes()

@@ -21,6 +21,7 @@ var sent: int = 0
 var answered: int = 0
 var errors: int = 0
 var avg_latency_ms: float = 0.0   # server-side Laya time per decision (moving average)
+var model_name: String = "base"   # short name of the checkpoint the server runs
 
 var _queue: Array[Dictionary] = []          # [{ctx, done}]
 var _free: Array[HTTPRequest] = []
@@ -66,7 +67,7 @@ func pending() -> int:
 
 func status() -> String:
 	if online:
-		return "Laya online · %d decisions · %.0f ms each" % [answered, avg_latency_ms]
+		return "Laya %s · %d decisions · %.0f ms" % [model_name, answered, avg_latency_ms]
 	if last_error != "":
 		return "Laya offline: %s (run brain_server/run.sh)" % last_error
 	return "connecting to Laya..."
@@ -134,6 +135,8 @@ func _on_health(result: int, code: int, _headers: PackedStringArray, body: Packe
 	if result == HTTPRequest.RESULT_SUCCESS and code == 200:
 		var data = JSON.parse_string(body.get_string_from_utf8())
 		var loaded: bool = typeof(data) == TYPE_DICTIONARY and bool(data.get("laya_loaded", false))
+		if loaded:
+			model_name = short_model_name(String(data.get("laya", {}).get("model", "")))
 		_set_online(loaded, "" if loaded else "model still loading")
 	else:
 		_set_online(false, _result_text(result))
@@ -145,6 +148,13 @@ func _set_online(v: bool, why: String) -> void:
 	last_error = why
 	if changed:
 		status_changed.emit(online, status())
+
+
+## "/path/models/laya_colony_v1" -> "colony_v1"; the Hub base model -> "base".
+static func short_model_name(model: String) -> String:
+	if model == "" or model.begins_with("convaiinnovations/"):
+		return "base"
+	return model.get_file().trim_prefix("laya_")
 
 
 static func _result_text(result: int) -> String:

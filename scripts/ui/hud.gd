@@ -16,8 +16,8 @@ var _brain := Label.new()
 var _speed_buttons: Array[Button] = []
 var _feed := RichTextLabel.new()
 var _feed_lines: PackedStringArray = []
-var _card := PanelContainer.new()
-var _card_text := RichTextLabel.new()
+var inspector := Inspector.new()
+var _root: Control
 
 
 func _ready() -> void:
@@ -25,6 +25,7 @@ func _ready() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
+	_root = root
 
 	# --- top bar
 	var bar := PanelContainer.new()
@@ -45,12 +46,6 @@ func _ready() -> void:
 	_brain.add_theme_font_size_override("font_size", 13)
 	_brain.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	hb.add_child(_brain)
-	var help := Label.new()
-	help.text = "WASD/drag pan · wheel zoom · Q/E rotate · click select · Space pause · 1/2/3 speed"
-	help.add_theme_font_size_override("font_size", 12)
-	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	help.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hb.add_child(help)
 	var labels := ["Pause", "1x", "3x", "10x"]
 	for i in labels.size():
 		var b := Button.new()
@@ -78,27 +73,28 @@ func _ready() -> void:
 	_feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	feed_panel.add_child(_feed)
 
-	# --- selection card (bottom right). The full inspector comes in step 4.
-	_card.add_theme_stylebox_override("panel", _panel_style())
-	_card.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_card.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_card.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_card.position = Vector2(-10, -10)
-	_card.custom_minimum_size = Vector2(320, 0)
-	_card.visible = false
-	root.add_child(_card)
-	_card_text.fit_content = true
-	_card_text.bbcode_enabled = true
-	_card_text.scroll_active = false
-	_card_text.custom_minimum_size = Vector2(320, 0)
-	_card_text.add_theme_font_size_override("normal_font_size", 14)
-	_card.add_child(_card_text)
+	# --- controls hint (bottom centre, out of the way of the top bar)
+	var help := Label.new()
+	help.text = "WASD / right-drag pan · wheel zoom · Q/E rotate · click a colonist to inspect and talk · Space pause · 1/2/3 speed"
+	help.add_theme_font_size_override("font_size", 12)
+	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	help.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	help.add_theme_constant_override("outline_size", 4)
+	help.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	help.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	help.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	help.offset_bottom = -8
+	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(help)
+
+	# --- inspector + chat (right side), set up in bind() once the chat service exists
+	root.add_child(inspector)
 
 
-
-func bind(p_runner: SimRunner, p_view: WorldView) -> void:
+func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 	runner = p_runner
 	view = p_view
+	inspector.setup(runner, view, chat, _panel_style())
 	var ev := runner.sim.events
 	ev.colonist_born.connect(func(c: Colonist) -> void:
 		if not c.parent_ids.is_empty():
@@ -115,7 +111,9 @@ func bind(p_runner: SimRunner, p_view: WorldView) -> void:
 			_log("Started a %s." % b.def().get("label", b.type)))
 	ev.tier_unlocked.connect(func(t: int) -> void: _log("[color=#80d8ff]Tier %d unlocked![/color]" % t))
 	runner.speed_changed.connect(func(_s: int) -> void: _refresh_speed())
-	view.colonist_clicked.connect(func(c: Colonist) -> void: _card.visible = c != null)
+	view.colonist_clicked.connect(func(c: Colonist) -> void: inspector.show_colonist(c))
+	chat.memory_saved.connect(func(c: Colonist, text: String) -> void:
+		_log("[color=#80d8ff]%s will remember: %s[/color]" % [c.name, text]))
 	_refresh_speed()
 	_log("The colony begins with %d settlers." % runner.sim.alive_count())
 
@@ -154,50 +152,6 @@ func _process(_delta: float) -> void:
 		_brain.add_theme_color_override("font_color", Color(0.6, 0.9, 0.6) if runner.laya.online else Color(1, 0.55, 0.45))
 	else:
 		_brain.text = "brain: %s" % runner.brain_id
-	if _card.visible and view.selected != null:
-		_card_text.text = _card_bbcode(view.selected)
-
-
-func _card_bbcode(c: Colonist) -> String:
-	var sim := runner.sim
-	var lines: PackedStringArray = []
-	lines.append("[b]%s[/b]  (%s, %.1f days)" % [c.name, c.life_stage(), c.age_days()])
-	lines.append("[color=#bbbbbb]%s[/color]" % ", ".join(c.traits))
-	lines.append("Doing: [b]%s[/b]" % view.short_action(c))
-	for need_id in sim.content.needs:
-		var v := float(c.needs.get(need_id, 0))
-		var col := "#9be29b" if v > 55 else "#ffe082" if v > 25 else "#ff8a80"
-		lines.append("%s: [color=%s]%s[/color] (%d)" % [String(sim.content.needs[need_id].get("label", need_id)).capitalize(), col, sim.need_word(c, need_id), int(v)])
-	if c.partner_id >= 0 and sim.colonists.has(c.partner_id):
-		lines.append("Partner: %s" % (sim.colonists[c.partner_id] as Colonist).name)
-	lines.append_array(_why_lines(c))
-	return "\n".join(lines)
-
-
-## What the brain weighed for this colonist's last choice (top 3 options).
-func _why_lines(c: Colonist) -> PackedStringArray:
-	var out: PackedStringArray = []
-	if c.state == "thinking":
-		out.append("[color=#ffe082]Thinking...[/color]")
-	var last: Dictionary = c.last_decision
-	if last.is_empty():
-		return out
-	var d: Dictionary = last["decision"]
-	var probs: Dictionary = d.get("probs", {})
-	var labels := {}
-	for o in last["ctx"]["options"]:
-		labels[o["id"]] = o["label"]
-	var keys := probs.keys()
-	keys.sort_custom(func(a, b) -> bool: return float(probs[a]) > float(probs[b]))
-	var parts: PackedStringArray = []
-	for k in keys.slice(0, 3):
-		parts.append("%s %d%%" % [labels.get(k, k), roundi(float(probs[k]) * 100.0)])
-	out.append("[color=#bbbbbb]%s weighed:[/color] %s" % [String(d.get("brain", "?")).capitalize(), ", ".join(parts)])
-	if d.get("build_what", "") != "" and d.get("action", "") == "build":
-		out.append("[color=#bbbbbb]Build pick:[/color] %s" % d["build_what"])
-	if not last["began"]:
-		out.append("[color=#ff8a80]Couldn't do \"%s\"[/color]" % labels.get(d.get("action", ""), d.get("action", "?")))
-	return out
 
 
 func _unhandled_input(event: InputEvent) -> void:

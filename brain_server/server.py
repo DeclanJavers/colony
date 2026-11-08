@@ -104,10 +104,13 @@ def decide(req: DecideRequest) -> dict:
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
-def llm(messages: list[dict], max_tokens: int = 300, temperature: float = 0.6) -> str:
+def llm(messages: list[dict], max_tokens: int = 300, temperature: float = 0.6,
+        stop: list[str] | None = None) -> str:
     body = {"model": LLM_MODEL, "messages": messages, "max_tokens": max_tokens,
             "temperature": temperature, "top_k": 50, "repeat_penalty": 1.1,
             "chat_template_kwargs": {"enable_thinking": False}}
+    if stop:
+        body["stop"] = stop
     r = httpx.post(LLM_URL, json=body, timeout=120.0)
     r.raise_for_status()
     text = r.json()["choices"][0]["message"]["content"] or ""
@@ -123,13 +126,39 @@ def persona(c: dict) -> str:
     why = c.get("why", "")
     return (
         f"You are {c['name']}, a {c.get('stage', 'adult')} living in a small colony where everyone "
-        f"shares everything. Your traits: {', '.join(c.get('traits', [])) or 'none'}. "
-        f"Right now you feel: {needs}. You are currently: {c.get('action', 'idle')}. {why}\n"
-        f"Colony: {c.get('colony', '')}\n"
+        f"shares everything. Your traits: {', '.join(c.get('traits', [])) or 'none'}.\n"
+        f"How you feel right now: {needs}. These are your real feelings: never claim to be hungry, "
+        f"thirsty, tired or lonely unless it says so here.\n"
+        f"What you are doing: {c.get('action', 'idle')}. {why}\n"
+        f"The colony: {c.get('colony', '')}\n"
         f"Things you remember:\n{mems or '- nothing much yet'}\n\n"
         "You are talking to the Watcher, a mysterious voice only you can hear. Stay in character. "
-        "Answer in 1-3 short sentences, in plain spoken language. Never mention being an AI or a game."
+        "Reply with only what you say out loud: 1-3 short sentences. No actions in asterisks, no "
+        "narration, no names, labels or formatting. "
+        "Never mention being an AI or a game."
     )
+
+
+SPEAKER_RE = re.compile(r"^\s*(\*\*)?[A-Z][\w ]{0,20}(\*\*)?\s*:")
+
+
+def clean_reply(text: str, name: str) -> str:
+    """Keep only the colonist's own words: small models sometimes start writing the next turn."""
+    text = re.sub(r"\*[^*\n]{1,120}\*", " ", text.replace("**", "").replace("__", ""))  # *actions*
+    text = text.strip()
+    text = re.sub(rf"^{re.escape(name)}\s*:\s*", "", text)
+    kept = []
+    for line in text.splitlines():
+        if kept and SPEAKER_RE.match(line):
+            break
+        if line.strip():
+            kept.append(line.strip())
+    out = " ".join(kept)
+    out = re.sub(r"\s+", " ", out).strip()
+    sentences = re.split(r"(?<=[.!?])\s+", out)
+    # Drop third-person narration about the Watcher, then keep at most three sentences.
+    sentences = [x for x in sentences if not re.search(r"\bThe Watcher (doesn't|does not|says|waits|is)\b", x)]
+    return " ".join(sentences[:3]).strip().strip('"')
 
 
 class ChatRequest(BaseModel):
@@ -144,8 +173,9 @@ def chat(req: ChatRequest) -> dict:
     msgs += req.history[-10:]
     msgs.append({"role": "user", "content": req.message})
     t = time.time()
+    name = req.colonist.get("name", "")
     try:
-        reply = llm(msgs)
+        reply = clean_reply(llm(msgs, max_tokens=160, stop=["\nWatcher:", "\nYou:", f"\n{name}:", f"\n**{name}"]), name)
     except Exception as e:
         return {"reply": "", "error": repr(e)}
     return {"reply": reply or "...", "latency_ms": (time.time() - t) * 1000.0}
@@ -164,11 +194,16 @@ def remember(req: RememberRequest) -> dict:
         {"role": "system", "content": "You compress conversations into one short first-person memory."},
         {"role": "user", "content": (
             f"{name} just had this conversation with the Watcher:\n{convo}\n\n"
-            f"Write ONE sentence (max 20 words) in first person, as {name}, of what matters most to "
-            "remember from it, especially any request or advice about what to do. Only the sentence.")},
+            f"Write ONE short sentence (at most 15 words) in first person, as {name}, of what matters most "
+            "to remember from it, especially any request or advice about what to do. "
+            "Example: The Watcher asked me to fetch water because the colony is running low. "
+            "Only the sentence.")},
     ]
     try:
-        mem = llm(msgs, max_tokens=80, temperature=0.2).split("\n")[0].strip().strip('"')
+        mem = llm(msgs, max_tokens=60, temperature=0.2).replace("**", "").split("\n")[0].strip().strip('"')
+        words = mem.split()
+        if len(words) > 25:  # memories go into Laya's ~320-token state, so keep them short
+            mem = " ".join(words[:25]).rstrip(",;") + "..."
     except Exception as e:
         return {"memory": "", "error": repr(e)}
     return {"memory": mem}

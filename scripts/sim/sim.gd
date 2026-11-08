@@ -301,6 +301,11 @@ func _pick_name() -> String:
 	return "%s %d" % [base, _used_names[base]]
 
 
+## Living or dead colonist by id (null if unknown).
+func find_colonist(cid: int) -> Colonist:
+	return _find_colonist_any(cid)
+
+
 func _find_colonist_any(cid: int) -> Colonist:
 	if colonists.has(cid):
 		return colonists[cid]

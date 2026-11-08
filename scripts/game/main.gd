@@ -7,6 +7,7 @@ extends Node3D
 ##   --shot path.png     save a screenshot after --shot-delay seconds, then quit (for automated checks)
 ##   --time H            jump to hour H of the current day before showing (e.g. 21 for night)
 ##   --zoom S            camera ortho size
+##   --say "text"        with --select: say this to the selected colonist, then save the chat as a memory
 ##   --brain B           laya (default, from data/config.json) or utility (hand-made baseline)
 
 var runner := SimRunner.new()
@@ -14,6 +15,7 @@ var view := WorldView.new()
 var cam := IsoCamera.new()
 var day_night := DayNight.new()
 var hud := Hud.new()
+var chat: WatcherChat
 
 
 func _ready() -> void:
@@ -42,11 +44,17 @@ func _ready() -> void:
 		cam.camera.size = cam._size_target
 	add_child(view)
 	view.bind(runner.sim, cam.camera)
+	chat = WatcherChat.new(runner.sim, String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
+	chat.name = "WatcherChat"
+	add_child(chat)
 	add_child(hud)
-	hud.bind(runner, view)
+	hud.bind(runner, view, chat)
 	if args.has("select"):
 		var first: Colonist = runner.sim.colonists.values()[0]
 		view.select(first)
+		if args.has("say"):
+			chat.reply_received.connect(func(c: Colonist, _r: String) -> void: chat.save_memory(c), CONNECT_ONE_SHOT)
+			chat.send(first, String(args["say"]))
 
 	if args.has("shot"):
 		_take_shot(String(args["shot"]), float(args.get("shot-delay", "2.0")))
@@ -55,6 +63,7 @@ func _ready() -> void:
 func _take_shot(path: String, delay: float) -> void:
 	await get_tree().create_timer(delay).timeout
 	await RenderingServer.frame_post_draw
+	print("shot debug: cam size %.1f pos %s | inspector visible %s rect %s | window %s" % [cam.camera.size, cam.position, hud.inspector.visible, hud.inspector.get_global_rect(), get_viewport().get_visible_rect().size])
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(path)
 	print("screenshot: ", path)
