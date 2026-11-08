@@ -25,6 +25,12 @@ static var _loops_set := false
 var model: Node3D
 var anim: AnimationPlayer
 var current := ""
+var _hand: BoneAttachment3D        # right hand: holds the tool for the current job
+var _tool := ""
+const TOOL_FOR_ACTION := {"gather_wood": "axe", "gather_stone": "pickaxe", "build": "hammer",
+	"farm": "hoe", "fetch_water": "bucket"}
+const WOOD := Color(0.55, 0.38, 0.22)
+const METAL := Color(0.62, 0.64, 0.68)
 
 
 static func available() -> bool:
@@ -42,6 +48,13 @@ func setup(c: Colonist, shirt: Color) -> void:
 		for name in anim.get_animation_list():
 			anim.get_animation(name).loop_mode = Animation.LOOP_NONE if name in ONE_SHOT else Animation.LOOP_LINEAR
 	_dress(c, shirt)
+	var skel: Skeleton3D = null
+	for n in model.find_children("*", "Skeleton3D", true, false):
+		skel = n
+	if skel != null and skel.find_bone("RightHand") >= 0:
+		_hand = BoneAttachment3D.new()
+		_hand.bone_name = "RightHand"
+		skel.add_child(_hand)
 	play("idle")
 
 
@@ -93,6 +106,7 @@ func play(name: String, speed := 1.0) -> void:
 
 ## Pick and play the clip for this frame. speed_mps = how fast the colonist is moving on screen.
 func update_for(c: Colonist, speed_mps: float) -> void:
+	_update_tool(c)
 	var a := c.action
 	if speed_mps > 0.05:
 		var carrying := a != null and a.phase == "carrying"
@@ -106,6 +120,81 @@ func update_for(c: Colonist, speed_mps: float) -> void:
 		play("idle")   # arrived or waiting for a path
 		return
 	play(String(CLIP_FOR_ACTION.get(String(a.def.get("id", "")), "idle")))
+
+
+## Show the tool for what they're doing (only while actually working, not walking there).
+func _update_tool(c: Colonist) -> void:
+	if _hand == null:
+		return
+	var want := ""
+	var a := c.action
+	if a != null and a.phase == "working":
+		want = String(TOOL_FOR_ACTION.get(String(a.def.get("id", "")), ""))
+	if want == _tool:
+		return
+	_tool = want
+	for ch in _hand.get_children():
+		ch.queue_free()
+	if want != "":
+		_hand.add_child(_make_tool(want))
+
+
+## Tools are a few simple shapes in the same low-poly style. In the hand bone's space, +Y runs
+## along the hand toward the fingers and the handle runs across the fist (local Z).
+static func _make_tool(kind: String) -> Node3D:
+	var root := Node3D.new()
+	root.position = Vector3(0, 0.03, 0)
+	var handle_len: float = {"axe": 0.40, "pickaxe": 0.40, "hammer": 0.26, "hoe": 0.52, "bucket": 0.0}[kind]
+	if handle_len > 0.0:
+		var h := _part(CylinderMesh.new(), WOOD)
+		(h.mesh as CylinderMesh).top_radius = 0.016
+		(h.mesh as CylinderMesh).bottom_radius = 0.016
+		(h.mesh as CylinderMesh).height = handle_len
+		(h.mesh as CylinderMesh).radial_segments = 6
+		h.rotation.x = PI / 2.0
+		h.position.z = handle_len * 0.3
+		root.add_child(h)
+	var tip: float = handle_len * 0.8
+	match kind:
+		"axe":
+			var head := _part(BoxMesh.new(), METAL)
+			(head.mesh as BoxMesh).size = Vector3(0.025, 0.11, 0.07)
+			head.position = Vector3(0, 0.05, tip)
+			root.add_child(head)
+		"pickaxe":
+			var head := _part(BoxMesh.new(), METAL)
+			(head.mesh as BoxMesh).size = Vector3(0.025, 0.24, 0.03)
+			head.position = Vector3(0, 0, tip)
+			root.add_child(head)
+		"hammer":
+			var head := _part(BoxMesh.new(), METAL)
+			(head.mesh as BoxMesh).size = Vector3(0.045, 0.1, 0.045)
+			head.position = Vector3(0, 0, tip)
+			root.add_child(head)
+		"hoe":
+			var head := _part(BoxMesh.new(), METAL)
+			(head.mesh as BoxMesh).size = Vector3(0.02, 0.09, 0.06)
+			head.position = Vector3(0, 0.05, tip)
+			root.add_child(head)
+		"bucket":
+			var b := _part(CylinderMesh.new(), WOOD)
+			(b.mesh as CylinderMesh).top_radius = 0.06
+			(b.mesh as CylinderMesh).bottom_radius = 0.048
+			(b.mesh as CylinderMesh).height = 0.09
+			(b.mesh as CylinderMesh).radial_segments = 8
+			b.position = Vector3(0, 0.06, 0)
+			root.add_child(b)
+	return root
+
+
+static func _part(mesh: Mesh, col: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.roughness = 0.8
+	mi.material_override = m
+	return mi
 
 
 ## True when the avatar shows lying down itself (so the view doesn't need to tip the model over).
