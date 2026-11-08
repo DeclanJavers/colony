@@ -1,0 +1,183 @@
+[
+  {
+    "id": "drink",
+    "type": "consume",
+    "label": "drink water",
+    "for": [
+      "adult",
+      "child"
+    ],
+    "description": "go drink water to fix thirst",
+    "params": {
+      "need": "thirst",
+      "resource": "water",
+      "use": 5,
+      "restore": 70,
+      "minutes": 10,
+      "sources": [
+        "stockpile",
+        "tile:water",
+        "building:well"
+      ]
+    }
+  },
+  {
+    "id": "eat",
+    "type": "consume",
+    "label": "eat food",
+    "for": [
+      "adult",
+      "child"
+    ],
+    "description": "go eat food to fix hunger",
+    "params": {
+      "need": "hunger",
+      "resource": "food",
+      "use": 4,
+      "restore": 65,
+      "minutes": 20,
+      "sources": [
+        "stockpile",
+        "node:berry_bush"
+      ]
+    }
+  },
+  {
+    "id": "sleep",
+    "type": "sleep",
+    "label": "sleep",
+    "for": [
+      "adult",
+      "child"
+    ],
+    "description": "go to bed and sleep until rested",
+    "params": {
+      "base_rate_per_hour": 9.0,
+      "wake_at": 97
+    }
+  },
+  {
+    "id": "gather_wood",
+    "type": "gather",
+    "label": "chop wood",
+    "for": [
+      "adult"
+    ],
+    "description": "cut a tree and bring wood to storage",
+    "params": {
+      "resource": "wood",
+      "sources": [
+        "node:tree"
+      ]
+    }
+  },
+  {
+    "id": "gather_stone",
+    "type": "gather",
+    "label": "mine stone",
+    "for": [
+      "adult"
+    ],
+    "description": "break rocks and bring stone to storage",
+    "params": {
+      "resource": "stone",
+      "sources": [
+        "node:rock"
+      ]
+    }
+  },
+  {
+    "id": "gather_food",
+    "type": "gather",
+    "label": "pick berries",
+    "for": [
+      "adult"
+    ],
+    "description": "pick berries and bring food to storage",
+    "params": {
+      "resource": "food",
+      "sources": [
+        "node:berry_bush"
+      ]
+    }
+  },
+  {
+    "id": "fetch_water",
+    "type": "gather",
+    "label": "fetch water",
+    "for": [
+      "adult"
+    ],
+    "description": "carry water to storage for everyone",
+    "params": {
+      "resource": "water",
+      "sources": [
+        "building:well",
+        "tile:water"
+      ],
+      "per_trip": 10,
+      "work_minutes": 10
+    }
+  },
+  {
+    "id": "farm",
+    "type": "farm",
+    "label": "work the farm",
+    "for": [
+      "adult"
+    ],
+    "description": "plant or harvest a farm plot for lots of food",
+    "params": {}
+  },
+  {
+    "id": "build",
+    "type": "build",
+    "label": "build",
+    "for": [
+      "adult"
+    ],
+    "description": "construct a new building or help finish one",
+    "params": {}
+  },
+  {
+    "id": "socialize",
+    "type": "socialize",
+    "label": "socialize",
+    "for": [
+      "adult",
+      "child"
+    ],
+    "description": "spend time talking with someone",
+    "params": {
+      "minutes": 40,
+      "restore": 45,
+      "affection_gain": 12
+    }
+  },
+  {
+    "id": "have_child",
+    "type": "have_child",
+    "label": "have a child",
+    "for": [
+      "adult"
+    ],
+    "description": "start a family with your partner",
+    "params": {
+      "minutes": 60
+    }
+  },
+  {
+    "id": "rest",
+    "type": "rest",
+    "label": "rest",
+    "for": [
+      "adult",
+      "child"
+    ],
+    "description": "take a short break and relax",
+    "params": {
+      "minutes": 30,
+      "energy_per_hour": 4.0
+    }
+  }
+]

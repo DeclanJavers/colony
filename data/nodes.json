@@ -1,0 +1,6 @@
+{
+  "_doc": "Natural resource nodes placed by world generation.",
+  "tree":       {"resource": "wood",  "amount": 30, "per_trip": 6, "work_minutes": 25, "regrow_per_hour": 0, "blocks": true,  "skill": "gathering"},
+  "rock":       {"resource": "stone", "amount": 40, "per_trip": 6, "work_minutes": 35, "regrow_per_hour": 0, "blocks": true,  "skill": "gathering"},
+  "berry_bush": {"resource": "food",  "amount": 18, "per_trip": 6, "work_minutes": 20, "regrow_per_hour": 0.6, "blocks": true, "skill": "gathering"}
+}

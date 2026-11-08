@@ -1,0 +1,20 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="Colony"
+config/features=PackedStringArray("4.6", "Forward Plus")
+
+[autoload]
+
+_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
+
+[physics]
+
+3d/physics_engine="Jolt Physics"

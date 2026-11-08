@@ -1,0 +1,81 @@
+{
+  "_doc": "100 = fully satisfied, 0 = empty. 'words' describe the level for the AI, low to high, split at 'thresholds'.",
+  "hunger": {
+    "label": "food",
+    "decay_per_hour": 4.0,
+    "death_after_hours_at_zero": 24,
+    "thresholds": [
+      10,
+      30,
+      55,
+      80
+    ],
+    "words": [
+      "starving",
+      "very hungry",
+      "hungry",
+      "a bit hungry",
+      "well fed"
+    ],
+    "death_cause": "starvation"
+  },
+  "thirst": {
+    "label": "water",
+    "decay_per_hour": 6.0,
+    "death_after_hours_at_zero": 12,
+    "thresholds": [
+      10,
+      30,
+      55,
+      80
+    ],
+    "words": [
+      "dying of thirst",
+      "very thirsty",
+      "thirsty",
+      "a bit thirsty",
+      "not thirsty"
+    ],
+    "death_cause": "thirst"
+  },
+  "energy": {
+    "label": "energy",
+    "decay_per_hour": 4.5,
+    "death_after_hours_at_zero": null,
+    "zero_effect": {
+      "work_speed": 0.5,
+      "move_speed": 0.6
+    },
+    "thresholds": [
+      10,
+      30,
+      55,
+      80
+    ],
+    "words": [
+      "exhausted",
+      "very tired",
+      "tired",
+      "a bit tired",
+      "well rested"
+    ]
+  },
+  "social": {
+    "label": "company",
+    "decay_per_hour": 2.0,
+    "death_after_hours_at_zero": null,
+    "thresholds": [
+      15,
+      35,
+      60,
+      85
+    ],
+    "words": [
+      "very lonely",
+      "lonely",
+      "wants company",
+      "content",
+      "socially fulfilled"
+    ]
+  }
+}

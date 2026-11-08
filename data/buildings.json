@@ -1,0 +1,175 @@
+{
+  "_doc": "Add a building = add an entry here (+ an optional model in assets/models/<id>.glb). 'work' is in work-minutes.",
+  "campfire": {
+    "label": "campfire",
+    "tier": 0,
+    "cost": {
+      "wood": 8
+    },
+    "work": 90,
+    "footprint": [
+      1,
+      1
+    ],
+    "max_count": 1,
+    "description": "a warm gathering place; better to rest and sleep near",
+    "provides": {
+      "rest_spot": 1.25
+    }
+  },
+  "stockpile": {
+    "label": "stockpile",
+    "tier": 0,
+    "cost": {
+      "wood": 15
+    },
+    "work": 120,
+    "footprint": [
+      2,
+      2
+    ],
+    "max_count": 2,
+    "description": "shared storage for 200 goods",
+    "provides": {
+      "storage": 200
+    }
+  },
+  "well": {
+    "label": "well",
+    "tier": 1,
+    "cost": {
+      "wood": 15,
+      "stone": 25
+    },
+    "work": 420,
+    "footprint": [
+      1,
+      1
+    ],
+    "max_count": 3,
+    "description": "clean water close to home",
+    "provides": {
+      "water_source": 1
+    }
+  },
+  "farm_plot": {
+    "label": "farm plot",
+    "tier": 1,
+    "cost": {
+      "wood": 10
+    },
+    "work": 150,
+    "footprint": [
+      2,
+      2
+    ],
+    "max_count": 12,
+    "walkable": true,
+    "description": "grows 25 food every few days if planted and harvested",
+    "provides": {
+      "farm": {
+        "grow_hours": 36,
+        "yield": 25,
+        "plant_minutes": 40,
+        "harvest_minutes": 60
+      }
+    }
+  },
+  "house": {
+    "label": "house",
+    "tier": 2,
+    "cost": {
+      "wood": 45,
+      "stone": 35
+    },
+    "work": 900,
+    "footprint": [
+      2,
+      2
+    ],
+    "max_count": 25,
+    "description": "two beds; good sleep and needed to raise children",
+    "provides": {
+      "beds": 2,
+      "sleep_quality": 1.8
+    }
+  },
+  "storehouse": {
+    "label": "storehouse",
+    "tier": 2,
+    "cost": {
+      "wood": 50,
+      "stone": 50
+    },
+    "work": 720,
+    "footprint": [
+      2,
+      2
+    ],
+    "max_count": 3,
+    "description": "large shared storage for 500 goods",
+    "provides": {
+      "storage": 500
+    }
+  },
+  "workshop": {
+    "label": "workshop",
+    "tier": 3,
+    "cost": {
+      "wood": 70,
+      "stone": 70
+    },
+    "work": 1200,
+    "footprint": [
+      2,
+      2
+    ],
+    "max_count": 1,
+    "description": "everyone builds 25% faster",
+    "provides": {
+      "colony": {
+        "build_speed": 1.25
+      }
+    }
+  },
+  "kitchen": {
+    "label": "kitchen",
+    "tier": 3,
+    "cost": {
+      "wood": 60,
+      "stone": 70
+    },
+    "work": 1080,
+    "footprint": [
+      2,
+      2
+    ],
+    "max_count": 1,
+    "description": "harvests give 30% more food",
+    "provides": {
+      "colony": {
+        "food_yield": 1.3
+      }
+    }
+  },
+  "town_hall": {
+    "label": "town hall",
+    "tier": 4,
+    "cost": {
+      "wood": 140,
+      "stone": 180
+    },
+    "work": 2400,
+    "footprint": [
+      3,
+      3
+    ],
+    "max_count": 1,
+    "description": "meeting hall; socializing is 50% more effective",
+    "provides": {
+      "colony": {
+        "social_gain": 1.5
+      }
+    }
+  }
+}

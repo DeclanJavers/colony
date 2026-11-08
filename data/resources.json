@@ -1,0 +1,6 @@
+{
+  "food":  {"label": "food"},
+  "water": {"label": "water"},
+  "wood":  {"label": "wood"},
+  "stone": {"label": "stone"}
+}

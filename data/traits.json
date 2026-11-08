@@ -1,0 +1,11 @@
+{
+  "_doc": "'text' is read by the AI. 'mods' change numbers. 'utility' only biases the hand-made UtilityBrain baseline.",
+  "hardworking": {"text": "hardworking", "mods": {"work_speed": 1.15}, "utility": {"work": 0.2, "rest": -0.15}},
+  "lazy":        {"text": "lazy",        "mods": {"work_speed": 0.85, "energy_decay": 1.1}, "utility": {"work": -0.2, "rest": 0.25}},
+  "social":      {"text": "loves company", "mods": {"social_decay": 1.4}, "utility": {"socialize": 0.25}},
+  "loner":       {"text": "prefers to be alone", "mods": {"social_decay": 0.6}, "utility": {"socialize": -0.2}},
+  "cautious":    {"text": "cautious, keeps supplies high", "mods": {}, "utility": {"gather": 0.15}},
+  "curious":     {"text": "curious, loves building new things", "mods": {}, "utility": {"build": 0.25}},
+  "strong":      {"text": "strong", "mods": {"carry": 1.3}, "utility": {"gather": 0.1}},
+  "nimble":      {"text": "quick on their feet", "mods": {"move_speed": 1.2}, "utility": {}}
+}

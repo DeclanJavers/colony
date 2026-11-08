@@ -1,0 +1,7 @@
+[
+  {"tier": 0, "requires": {}},
+  {"tier": 1, "requires": {"campfire": 1}},
+  {"tier": 2, "requires": {"well": 1, "farm_plot": 1}},
+  {"tier": 3, "requires": {"house": 2}},
+  {"tier": 4, "requires": {"workshop": 1, "kitchen": 1}}
+]

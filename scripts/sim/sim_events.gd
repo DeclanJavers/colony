@@ -1,0 +1,25 @@
+class_name SimEvents
+extends RefCounted
+## Event bus owned by a Sim. Views, UI, loggers and future upgrades subscribe here
+## instead of being wired into the core.
+
+signal ticked(clock_minutes: float)
+signal hour_passed(day: int, hour: int)
+signal day_passed(day: int)
+
+signal colonist_born(c: Colonist)
+signal colonist_grew_up(c: Colonist)
+signal colonist_died(c: Colonist, cause: String)
+signal couple_formed(a: Colonist, b: Colonist)
+signal memory_added(c: Colonist, memory: Dictionary)
+
+signal decision_requested(c: Colonist, ctx: Dictionary)
+signal decision_made(c: Colonist, ctx: Dictionary, decision: Dictionary, began: bool)
+signal action_started(c: Colonist, action: ActionBase)
+signal action_finished(c: Colonist, action: ActionBase, ok: bool)
+
+signal building_placed(b: Building)
+signal building_completed(b: Building)
+signal node_depleted(n: ResNode)
+signal tier_unlocked(tier: int)
+signal stock_changed(stock: Dictionary)

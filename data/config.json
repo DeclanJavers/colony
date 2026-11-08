@@ -1,0 +1,54 @@
+{
+  "_doc": "Global tuning. Everything the sim reads lives in data/*.json so upgrades are data edits, not code edits.",
+  "map_size": 60,
+  "default_seed": 1234,
+  "minutes_per_tick": 1.0,
+  "real_seconds_per_day": 120.0,
+  "move_speed_tiles_per_min": 0.4,
+  "adult_age_days": 3.0,
+  "founder_age_days": [
+    5.0,
+    12.0
+  ],
+  "lifespan_days": [
+    25.0,
+    40.0
+  ],
+  "child_need_decay_mult": 0.7,
+  "night_hours": [
+    21,
+    6
+  ],
+  "night_work_mult": 0.75,
+  "max_population": 50,
+  "start": {
+    "colonists": 5,
+    "buildings": [
+      "stockpile"
+    ],
+    "stock": {
+      "food": 40,
+      "water": 20,
+      "wood": 15,
+      "stone": 0
+    }
+  },
+  "reproduction": {
+    "min_food_stock": 30,
+    "pregnancy_hours": 24,
+    "couple_affection": 45,
+    "cooldown_days": 2
+  },
+  "decision": {
+    "brain": "utility",
+    "pick": "argmax",
+    "hesitate_minutes_on_fail": 5,
+    "max_lag_minutes": 15,
+    "max_social_candidates": 6
+  },
+  "log": {
+    "dir": "res://logs/decisions",
+    "outcome_after_hours": 6
+  },
+  "brain_server_url": "http://127.0.0.1:8765"
+}
