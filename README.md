@@ -51,6 +51,27 @@ the brain server is down colonists just keep thinking until it's back. `--prewar
 Laya, so skipped-ahead days run on the baseline brain. Click a colonist to see what its brain
 weighed for its last choice.
 
+## Playing
+
+| Key / button | What it does |
+|---|---|
+| Click anything | Inspect it: colonists, buildings, sites, farms, trees, rocks, graves, ground |
+| `C` / Colony | Colony overview: trends, stock, next tier, buildings, people, history |
+| `Tab` / `Shift+Tab` | Next / previous colonist |
+| `F` / double-click | Follow the selected colonist |
+| `Space`, `1` `2` `3` | Pause, 1x / 3x / 10x speed |
+| `F5` / `F9` | Save / load (also under Settings) |
+| Settings | Who writes conversations (chat model for all / on-screen only / quick), names, speech bubbles |
+| `Esc` | Close the panel |
+
+**What you see on screen:**
+- **Head badges:** a small icon over each colonist shows what they're doing. It turns red and pulses when they're in danger, and shows grey dots while their brain is thinking.
+- **Hands:** they hold the tool for their job while working, and carry the goods they're bringing back.
+- **Children** have bigger heads.
+- **Little moments:** parents celebrate births, and builders cheer when they finish.
+- **Signs of life:** houses glow in the evening while people are home, and the kitchen and workshop chimneys smoke.
+- **Speech bubbles:** conversations show when you're zoomed in or a speaker is selected.
+
 ## Inspecting and talking to colonists
 
 Click a colonist to open the side panel:
@@ -77,8 +98,8 @@ Colonists don't see the true stock. Each has a `Knowledge` (`scripts/sim/knowled
   - friends are believed more than strangers.
 - **What Laya reads:** these beliefs (with source and age) and any requests, not the truth.
 
-**Conversations** happen when colonists socialize, or when a colonist chooses **share news** or
-**ask for help**.
+**Conversations** happen when colonists socialize, when they chat casually while working side
+by side, or when a colonist chooses **share news** or **ask for help**.
 - **In the game:** the chat model writes the dialogue from each speaker's beliefs, needs and
   memories (`/converse`). A second step extracts what was actually told or asked, and the sim
   applies exactly that, mistakes included.
