@@ -39,48 +39,32 @@ It keeps the colony alive but is capped at the baseline's quality and ignores th
 
 ## Readability: seeing what's going on
 
-Done (2026-11-08):
-- Click anything to inspect it: colonists, buildings and sites, farms, trees, rocks, bushes, graves, ground, and the Colony overview (button or `C`).
-- Names in the panel are links that inspect the target and move the camera there.
+Guiding rule (from the user): keep it simple, easy to read and good-looking. Show detail on demand
+(hover, select, inspector), and don't pile features on screen.
+
+**Done:**
+- Click anything to inspect it: colonists, buildings and sites, farms, trees, rocks, bushes, graves, ground, and the Colony overview (`C`).
+- Names in the panel and the event feed are links.
 - Hover tooltips.
-- A colonist who dies while selected stays selected as their grave.
-- Colony page: stock change over the last day, next-tier progress, buildings, a roster of every colonist with their task and worst need, graves, brain stats.
+- Round icon badges over heads: one style, soft colours. A red pulsing badge means danger; grey dots mean the brain is thinking. Names appear only when zoomed in, hovered or selected.
+- A dotted line from the selected colonist to their target.
+- Carried goods are visible.
+- Soft "+N resource" popups at storage.
+- Site percentages, golden ripe crops, and trees and rocks that shrink as they're used.
+- Camera: `Tab` cycles colonists, `F` or double-click follows, and the camera glides instead of snapping.
+- Recent choices on the colonist page.
+- Slightly brighter nights.
 
-To do, in rough priority order:
+**Maybe later (only if they stay clean):**
+- Tools in hand while working (after the Kimodo clips land, so the hand poses fit).
+- Small sparklines on the Colony page (hourly history already exists).
+- A single optional overlay toggle (e.g. colour colonists by their most urgent need).
+- Lit windows at night in occupied houses.
 
-**In the world**
-1. **Head icons instead of text labels:** an action icon (axe, pickaxe, hammer, food, bed, speech) and danger icons (thirst, hunger). Show a "…" bubble while waiting on Laya and a "?" when Laya was unsure (low top probability). Show names only on hover, when selected, or when zoomed in. Fixes overlapping labels.
-2. **Intent lines:** a faint line from a colonist to their target (tree, well, site), shown for the selected colonist or toggled for everyone.
-3. **Carried items and tools:** a log, stone, berry basket or bucket while carrying; an axe, pickaxe, hammer or hoe while working. Possible now that the villager has hand bones.
-4. **Floating popups:** "+6 wood" at storage, "Built!" and "Born!" on events.
-5. **Progress over sites and fields:** progress bars on sites, a growth ring on farms, a sparkle when ripe.
-6. **Visible resource levels:** trees and rocks shrink as they're used up, and berry bushes lose berries.
-7. **Signs of life in buildings:** lit windows when a house is occupied at night, smoke when the kitchen is in use, a water level in the well.
-8. **Hover and selection outlines** on 3D objects (outline shader).
-9. **Night readability:** a rim light on colonists and a slightly brighter night ambient.
-10. **Overlay modes:** colour by most urgent need, by job, relationship lines, an activity heatmap, reachable area.
-11. **Minimap** with colonists as dots.
-
-**Panels and camera**
-12. **Event log:** clickable lines (inspect + focus), a scrollable full history, filters (births/deaths, building, chat), icons.
-13. **Toasts for big events** (death, birth, tier, starvation warning), with an option to auto-slow or pause.
-14. **Camera controls:** follow a colonist (double-click or `F`), `Tab` to cycle colonists, bookmarks.
-15. **Colonist roster table:** sortable by name, task, each need, age, partner.
-16. **Graphs:** population and each resource over time (hourly snapshots already exist in `SimRunner.history`), plus a births and deaths timeline.
-17. **Tech-tier view:** every tier, what it needs, and what it unlocks.
-18. **Per-colonist history:**
-    - A timeline of their last N decisions, with Laya's probabilities and whether each worked.
-    - Need sparklines.
-    - Skills.
-19. **Brain view:** colour colonists by Laya's confidence and highlight failed decisions. A "why not X?" view comparing Laya with the baseline for the same state.
-20. **Relationship graph** (who likes whom, couples, families).
-21. **HUD tooltips:** e.g. food → eaten per day, days left, top producers.
-22. **Time controls:** show the real sim speed when Laya slows it; "skip to morning"; pause while typing to a colonist.
-23. **Accessibility:** UI scale, font size, colour-blind-safe palette.
+**Left out on purpose (clutter):** minimap, many overlay modes, a roster table (the Colony page covers it), toasts, relationship graph, tech-tree screen.
 
 ## Other known issues
 - At 50 colonists Laya (~120-200 ms per decision; ~500-800 ms while the chat model and game share the GPU) can't keep up at 1x, so the sim slows down. Options: smaller or quantized model, `predict_batch` on matching question sets, or fewer decisions per colonist.
 - Laya v1 had 11 failed decisions in 521 on seed 1234 (baseline: 0).
-- Colonist labels overlap when colonists stand together.
 - ObjectDB leak warnings at exit (harmless).
 - The Godot AI MCP server never started on :8000, so everything is built from files.
