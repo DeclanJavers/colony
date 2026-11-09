@@ -53,7 +53,7 @@ var _used_names: Dictionary = {}
 
 func setup(p_seed: int) -> void:
 	content = Content.get_instance()
-	meetings.sim = self
+	meetings.watch(self)
 	seed_value = p_seed
 	rng.seed = p_seed
 	_load_action_types()

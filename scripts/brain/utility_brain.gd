@@ -250,7 +250,7 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 	# The plan agreed at the meeting (if they know it): its jobs are worth more, and more again for
 	# the people who said they'd do them.
 	if sim.meetings.knows_plan(c):
-		for it in sim.meetings.plan.get("items", []):
+		for it in sim.meetings.open_items():
 			if String(it.get("action", "")) == aid:
 				s += 0.35 + (0.25 if (it.get("who", []) as Array).has(c.name) else 0.0)
 				break
@@ -290,7 +290,7 @@ func _build_score(bid: String, sim: Sim) -> float:
 	if bid == "continue":
 		return 1.2
 	var planned := 0.0
-	for it in sim.meetings.plan.get("items", []):
+	for it in sim.meetings.open_items():
 		if String(it.get("build_what", "")) == bid:
 			planned = 0.6     # the colony agreed to build it
 	if bid.begins_with("expand:"):

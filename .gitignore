@@ -7,3 +7,4 @@ logs/
 .DS_Store
 /models/
 assets/preview/
+/.claude/worktrees/

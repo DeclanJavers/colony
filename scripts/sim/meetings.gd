@@ -22,6 +22,25 @@ var held: int = 0
 var last_overflow: int = 0      # people who had to stand outside at the last meeting
 
 
+## Building jobs in the plan are done once someone starts them ("build a house" means one house).
+func watch(p_sim: Sim) -> void:
+	sim = p_sim
+	sim.events.building_placed.connect(func(b: Building) -> void: _mark_done(b.type))
+	sim.events.building_expansion_started.connect(func(b: Building) -> void: _mark_done("expand:" + b.type))
+
+
+func _mark_done(build_what: String) -> void:
+	for it in plan.get("items", []):
+		if String(it.get("build_what", "")) == build_what and not bool(it.get("done", false)):
+			it["done"] = true
+			return
+
+
+## Plan items still to do.
+func open_items() -> Array:
+	return plan.get("items", []).filter(func(it) -> bool: return not bool(it.get("done", false)))
+
+
 func cfg(key: String, default: Variant) -> Variant:
 	return sim.content.meetings.get(key, default)
 
@@ -326,7 +345,8 @@ func plan_summary(p: Dictionary = plan) -> String:
 	var parts: PackedStringArray = []
 	for it in p.get("items", []):
 		var who: Array = it.get("who", [])
-		parts.append("%s%s" % [it["label"], " (%s)" % ", ".join(who) if not who.is_empty() else ""])
+		parts.append("%s%s%s" % [it["label"], " (%s)" % ", ".join(who) if not who.is_empty() else "",
+			" (done)" if bool(it.get("done", false)) else ""])
 	return ", ".join(parts) if not parts.is_empty() else "nothing in particular"
 
 
