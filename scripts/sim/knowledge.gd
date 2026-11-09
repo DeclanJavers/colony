@@ -22,7 +22,8 @@ const STOCK_KEYS := ["food", "water", "wood", "stone"]
 
 var owner_id: int = 0
 var facts: Dictionary = {}     # key -> {v: float, t: float, src: "seen"|"heard", from: String}
-var places: Dictionary = {}    # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from}
+var places: Dictionary = {}    # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from, amt}
+var seen := PackedByteArray()  # land this colonist has seen with their own eyes (y * size + x)
 
 
 func _init(p_owner: int = 0) -> void:
@@ -95,16 +96,28 @@ func uncertainty(now: float) -> float:
 
 ## ---- Places: where resources are --------------------------------------------------
 
-func see_place(node_id: int, type: String, cell: Vector2i, now: float) -> void:
-	places[node_id] = {"type": type, "cell": cell, "t": now, "src": "seen", "from": ""}
+## `amount`: how much they saw there (-1 = didn't notice).
+func see_place(node_id: int, type: String, cell: Vector2i, now: float, amount: float = -1.0) -> void:
+	places[node_id] = {"type": type, "cell": cell, "t": now, "src": "seen", "from": "", "amt": amount}
 
 
-## Told where something is. Only adds places they didn't know (their own sighting wins).
-func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, from: String) -> bool:
-	if places.has(node_id):
+## Told where something is (and roughly how much the teller remembers there). Fresher news replaces
+## older news; their own recent sighting wins.
+func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, from: String, amount: float = -1.0) -> bool:
+	if places.has(node_id) and float(places[node_id]["t"]) >= t_source:
 		return false
-	places[node_id] = {"type": type, "cell": cell, "t": t_source, "src": "heard", "from": from}
-	return true
+	var is_new := not places.has(node_id)
+	places[node_id] = {"type": type, "cell": cell, "t": t_source, "src": "heard", "from": from, "amt": amount}
+	return is_new
+
+
+## Places of a type they believe are worth going to: something was left there when last seen (or
+## they don't know how much), or it regrows and they last saw it long enough ago.
+func usable_places_of(type: String, from: Vector2i, now: float, regrows: bool) -> Array:
+	return places_of(type, from).filter(func(p: Dictionary) -> bool:
+		var e: Dictionary = places[p["id"]]
+		var amt := float(e.get("amt", -1.0))
+		return amt < 0.0 or amt >= 1.0 or (regrows and (now - float(e["t"])) / 60.0 > 24.0))
 
 
 func forget_place(node_id: int) -> void:

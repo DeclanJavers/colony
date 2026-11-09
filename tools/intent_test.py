@@ -6,6 +6,7 @@ import urllib.request
 
 CASES = [
     ("go chop some wood", "gather_wood"), ("can you fetch water", "fetch_water"),
+    ("can you explore the land to the east", "explore"), ("go scout around", "explore"),
     ("please build a house", "build"), ("warm up by the fire", "warm_up"),
     ("could you pick some berries for us", "gather_food"), ("go mine some stone", "gather_stone"),
     ("we need food, go work the farm", "farm"), ("take a break, you look tired", "rest"),

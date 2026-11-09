@@ -17,7 +17,7 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 		"format": FORMAT, "seed": sim.seed_value, "clock": sim.clock, "stock": sim.stock.duplicate(),
 		"tier": sim.unlocked_tier, "stats": sim.stats.duplicate(true), "next_id": sim._next_id,
 		"next_request_id": sim._next_request_id, "used_names": sim._used_names.duplicate(),
-		"conv_id": sim._conv_id, "weather": sim.weather, "footfall": sim.footfall, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
+		"conv_id": sim._conv_id, "weather": sim.weather, "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
 		"nodes": [], "buildings": [], "colonists": [], "graveyard": [],
 	}
 	for n: ResNode in sim.nodes.values():
@@ -104,13 +104,25 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 		sim.colonists[c.id] = c
 	for d in data["graveyard"]:
 		sim.graveyard.append(_restore(d, sim))
+	# What the colony has seen. Saves from before exploration: everyone knows the camp's surroundings.
+	var disc: Variant = data.get("discovered")
+	sim.discovered.fill(0)
+	sim.discovered_count = 0
+	var disc_ok := disc is PackedByteArray and (disc as PackedByteArray).size() == sim.discovered.size()
+	if disc_ok:
+		sim.discovered = disc
+		sim.discovered_count = sim.discovered.count(1)
+	for c: Colonist in sim.colonists.values():
+		if not disc_ok or c.knowledge.places.is_empty() or c.knowledge.seen.size() != sim.discovered.size():
+			sim.look_around(c, Sim.FOUNDERS_KNOW, Vector2(sim.map.center))
+		c.remove_meta("looked_from")
 
 
 static func _colonist(c: Colonist) -> Dictionary:
 	return {"id": c.id, "name": c.name, "age": c.age_minutes, "lifespan": c.lifespan_days, "traits": Array(c.traits),
 		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(),
 		"memories": c.memories.duplicate(true), "recent": c.recent.duplicate(true),
-		"knowledge": c.knowledge.facts.duplicate(true), "requests": c.requests.duplicate(true),
+		"knowledge": c.knowledge.facts.duplicate(true), "places": c.knowledge.places.duplicate(true), "seen": c.knowledge.seen, "requests": c.requests.duplicate(true),
 		"conversations": c.conversations.duplicate(true), "affection": c.affection.duplicate(),
 		"partner": c.partner_id, "parents": c.parent_ids.duplicate(), "home": c.home_id, "pos": c.pos, "cell": c.cell,
 		"dead": not c.alive(), "brain": c.brain_id, "pregnant_until": c.pregnant_until, "last_child_at": c.last_child_at,
@@ -125,6 +137,10 @@ static func _restore(d: Dictionary, sim: Sim) -> Colonist:
 	c.memories = d["memories"].duplicate(true); c.recent = d["recent"].duplicate(true)
 	c.knowledge = Knowledge.new(c.id)
 	c.knowledge.facts = d["knowledge"].duplicate(true)
+	c.knowledge.places = d.get("places", {}).duplicate(true)
+	var seen: Variant = d.get("seen")
+	if seen is PackedByteArray:
+		c.knowledge.seen = seen
 	c.requests = d["requests"].duplicate(true); c.conversations = d["conversations"].duplicate(true)
 	c.affection = d["affection"].duplicate(); c.partner_id = int(d["partner"]); c.parent_ids = d["parents"].duplicate()
 	c.home_id = int(d["home"]); c.pos = d["pos"]; c.cell = d["cell"]; c.brain_id = d["brain"]

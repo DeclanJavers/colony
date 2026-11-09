@@ -7,7 +7,7 @@ const RESOURCE_TARGETS := {"food": 80.0, "water": 40.0, "wood": 60.0, "stone": 5
 const KIND_OF := {
 	"gather_wood": "gather", "gather_stone": "gather", "gather_food": "gather", "fetch_water": "gather",
 	"farm": "work", "build": "build", "socialize": "socialize", "have_child": "socialize",
-	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest",
+	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work",
 }
 
 var temperature: float = 0.12
@@ -73,6 +73,20 @@ func _scarcity(sim: Sim, c: Colonist, res: String) -> float:
 func _plenty(sim: Sim, c: Colonist, res: String) -> float:
 	var target := float(RESOURCE_TARGETS.get(res, 50.0)) + _seasonal_reserve(sim, res)
 	return clampf((_believed(sim, c, res, target) / target - 1.5) / 1.5, 0.0, 1.0)
+
+
+## Does `c` know somewhere to get `res` right now: a resource node they've seen or heard of that
+## still has something on it, or for food, farms in a season when crops grow? (Picked-clean
+## bushes and winter fields don't count: that's when it's worth looking further afield.)
+## Only from what they remember (Knowledge.places and the amounts they last saw there).
+func _knows_source(sim: Sim, c: Colonist, res: String) -> bool:
+	if res == "food" and sim.count_of("farm_plot", false) > 0 and float(sim.season_def().get("crop_growth", 1.0)) > 0.0:
+		return true
+	for t in sim.content.nodes:
+		var d: Dictionary = sim.content.nodes[t]
+		if String(d.get("resource", "")) == res and not c.knowledge.usable_places_of(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0).is_empty():
+			return true
+	return false
 
 
 func _believed(sim: Sim, c: Colonist, res: String, target: float) -> float:
@@ -173,8 +187,11 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 		"socialize":
 			s = 2.0 * _u(c, "social")
 		"have_child":
-			# A new mouth is a worse idea when they believe food is short (e.g. before winter).
-			s = 1.1 - 0.9 * _scarcity(sim, c, "food")
+			# A child is a mouth for every winter to come: worth it when the stores (as they believe
+			# them) could carry everyone, the newborn included, through a whole winter.
+			var winter_need := float(RESOURCE_TARGETS["food"]) + (sim.alive_count() + 1) * _daily_food(sim) * float(sim.content.seasons.get("days_per_season", 4))
+			var have := _believed(sim, c, "food", winter_need)
+			s = 1.1 - 1.6 * clampf(1.0 - have / winter_need, 0.0, 1.0)
 		"rest":
 			s = 0.1 + 0.5 * _u(c, "energy")
 		"share_news":
@@ -194,6 +211,17 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			s -= _recently(c, sim, ["share_news", "ask_help"], 8.0)
 		"warm_up":
 			s = 3.0 * _u(c, "warmth") + (0.3 if float(c.needs.get("warmth", 100)) < 50.0 else -0.6)
+		"explore":
+			# Worth it when nobody they know of has seen a source of something the colony needs
+			# (they can't gather what they can't find), and a little while much of the land is unknown.
+			var need := 0.0
+			for res in ["wood", "stone", "food"]:
+				if not _knows_source(sim, c, res):
+					need = maxf(need, 0.4 + _scarcity(sim, c, res))
+			# Night and bad weather make it a poor time to head into the unknown.
+			var seen_share := float(c.knowledge.seen.count(1)) / maxf(1.0, float(c.knowledge.seen.size()))
+			s = 1.3 * need + 0.4 * (1.0 - seen_share) - 0.6 - _recently(c, sim, ["explore"], 10.0) \
+				- (0.8 if sim.is_night() else 0.0) - 1.5 * (1.0 - sim.weather_work_mult())
 		"check_stores":
 			# Worth a look when what they know is old or missing.
 			s = 1.3 * c.knowledge.uncertainty(sim.clock) - 0.35
@@ -233,7 +261,14 @@ func _build_score(bid: String, sim: Sim) -> float:
 		"farm_plot":
 			# Enough fields for the people there are: another one isn't needed (and costs wood
 			# that houses need). The teacher's judgement, not a game rule.
-			s += 0.7 if sim.count_of("farm_plot") < 1 + sim.alive_count() / 4 else -1.0
+			# While food is short of what the colony will need (winter included), more fields pay:
+			# about one per three people instead of one per four. No point starting one in winter.
+			var food_goal := float(RESOURCE_TARGETS["food"]) + _winter_food(sim)
+			var short := float(sim.stock.get("food", 0.0)) < food_goal
+			var enough := 1 + sim.alive_count() / (3 if short else 4)
+			s += 0.7 if sim.count_of("farm_plot") < enough else -1.0
+			# A field is worth as much as crops grow this season (data/seasons.json): nothing in winter.
+			s -= 1.0 - clampf(float(sim.season_def().get("crop_growth", 1.0)), 0.0, 1.0)
 		"house":
 			s += 0.9 if sim.free_beds() <= 1 else -0.6
 		"stockpile", "storehouse":

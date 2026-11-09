@@ -194,6 +194,19 @@
     ]
   },
   {
+    "id": "explore",
+    "type": "explore",
+    "label": "explore",
+    "description": "head out toward land you haven't seen, and remember the trees, rocks and berry bushes you find",
+    "params": {
+      "distance": 14,
+      "minutes": 10
+    },
+    "for": [
+      "adult"
+    ]
+  },
+  {
     "id": "share_news",
     "type": "inform",
     "label": "share news",

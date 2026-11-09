@@ -72,6 +72,15 @@ func _initialize() -> void:
 				walk_ok = false
 	check("buildings block the same tiles", walk_ok and a.buildings.size() == b.buildings.size())
 	check("same resource nodes", a.nodes.size() == b.nodes.size())
+	check("same explored land", a.discovered == b.discovered and a.discovered_count == b.discovered_count)
+	var places_ok := true
+	for cid in a.colonists:
+		var x: Colonist = a.colonists[cid]
+		var y: Colonist = b.colonists.get(cid)
+		if y == null or x.knowledge.places.size() != y.knowledge.places.size() or x.knowledge.seen != y.knowledge.seen:
+			places_ok = false
+	check("same known places and seen land", places_ok)
+	check("same footpaths", a.footfall == b.footfall)
 	for i in 2 * 1440:
 		b.tick(1.0)
 	check("loaded colony keeps going", b.alive_count() > 0 and int(b.stats["failed_decisions"]) == 0,

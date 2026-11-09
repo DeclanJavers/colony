@@ -198,6 +198,8 @@ static func tile(sim: Sim, cell: Vector2i) -> String:
 			kind = "river (can't cross; colonists drink at the shore)"
 		WorldMap.Tile.FORD:
 			kind = "shallow ford (the river can be crossed here)"
+	if not sim.is_discovered(cell):
+		return "Ground: unexplored\nNobody in the colony has seen this land yet."
 	var L: PackedStringArray = ["Ground: %s" % kind,
 		"Walkable: %s" % ("yes" if sim.map.is_walkable(cell) else "no")]
 	var here := []

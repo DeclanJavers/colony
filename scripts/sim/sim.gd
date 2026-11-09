@@ -21,6 +21,12 @@ var stock: Dictionary = {}              # resource -> amount (shared by everyone
 ## grass where people actually go.
 var footfall := PackedFloat32Array()
 const FOOTFALL_FADE_PER_HOUR := 0.995
+## Land anyone in the colony has seen (y * size + x: 1 = seen). Resources are only used where a
+## colonist knows about them (Knowledge.places); the rest of the map has to be explored.
+var discovered := PackedByteArray()
+var discovered_count := 0
+const LOOK := 6.0            # tiles a colonist sees around them
+const FOUNDERS_KNOW := 10.0  # tiles around the camp the founders scouted before settling
 var unlocked_tier: int = 0
 
 var brains: Dictionary = {}             # brain id -> Brain
@@ -53,6 +59,7 @@ func setup(p_seed: int) -> void:
 	map.setup(int(content.cfg("map_size", 60)))
 	map.generate(rng, self)
 	footfall.resize(map.size * map.size)
+	discovered.resize(map.size * map.size)
 	clock = 6.0 * 60.0  # start at 06:00 on day 0
 	_last_hour = hour()
 	_last_day = day()
@@ -71,6 +78,7 @@ func setup(p_seed: int) -> void:
 		spawn_colonist(cell, rng.randf_range(float(ages[0]), float(ages[1])), [])
 	for c: Colonist in colonists.values():
 		observe_stock(c)   # the founders packed the stores themselves
+		look_around(c, FOUNDERS_KNOW, Vector2(map.center))
 	_update_tier(true)
 	_assign_beds()
 	_roll_weather()
@@ -427,6 +435,7 @@ func spawn_colonist(cell: Vector2i, age_days: float, parents: Array) -> Colonist
 	if not parents.is_empty():
 		stats["births"] += 1
 		add_memory(c, "I was born.", 5.0)
+		look_around(c)   # a newborn knows only what's around them; the rest they hear in time
 	events.colonist_born.emit(c)
 	return c
 
@@ -492,6 +501,8 @@ func _casual_chats() -> void:
 
 
 func _perceive() -> void:
+	for c: Colonist in colonists.values():
+		look_around(c)
 	var stores: Array[Building] = []
 	for b: Building in buildings.values():
 		if b.complete and float(b.provides("storage", 0)) > 0.0:
@@ -501,6 +512,146 @@ func _perceive() -> void:
 			if c.pos.distance_to(b.center()) <= SIGHT + b.size.x * 0.5:
 				observe_stock(c)
 				break
+
+
+## ---- Exploration ----------------------------------------------------------
+
+func is_discovered(cell: Vector2i) -> bool:
+	return map.in_bounds(cell) and discovered[cell.y * map.size + cell.x] > 0
+
+
+## `c` looks around (from `at`, default where they stand): they remember every resource within
+## `radius`, forget ones they knew there that are gone, and the land becomes discovered.
+## Returns how many places were new to them. Cheap to call often: it skips if they haven't moved.
+func look_around(c: Colonist, radius: float = LOOK, at: Variant = null) -> int:
+	var centre: Vector2 = c.pos if at == null else at
+	var here := Vector2i(roundi(centre.x), roundi(centre.y))
+	if at == null:
+		if c.get_meta("looked_from", Vector2i(-99, -99)) == here:
+			return 0
+		c.set_meta("looked_from", here)
+	var r := int(ceil(radius))
+	var found := 0
+	if c.knowledge.seen.size() != map.size * map.size:
+		c.knowledge.seen.resize(map.size * map.size)
+	for y in range(maxi(0, here.y - r), mini(map.size, here.y + r + 1)):
+		for x in range(maxi(0, here.x - r), mini(map.size, here.x + r + 1)):
+			var cell := Vector2i(x, y)
+			if Vector2(cell - here).length() > radius:
+				continue
+			var i := y * map.size + x
+			if discovered[i] == 0:
+				discovered[i] = 1
+				discovered_count += 1
+			c.knowledge.seen[i] = 1
+			var nid: Variant = map.node_at.get(cell)
+			if nid != null and nodes.has(nid):
+				var n: ResNode = nodes[nid]
+				if not c.knowledge.knows_place(n.id):
+					found += 1
+				c.knowledge.see_place(n.id, n.type, n.cell, clock, n.amount)
+	# Places they remember around here that aren't there any more.
+	for nid in c.knowledge.places.keys():
+		var p: Dictionary = c.knowledge.places[nid]
+		if not nodes.has(nid) and Vector2(p["cell"] - here).length() <= radius:
+			c.knowledge.forget_place(nid)
+	return found
+
+
+## Where to explore: a walkable spot about `distance` tiles away, in the direction with the most
+## land this colonist hasn't seen (their own knowledge, not the colony's).
+func exploration_target(c: Colonist, distance: int) -> Vector2i:
+	var cands := []
+	for k in 8:
+		var dir := Vector2.from_angle(k * TAU / 8.0 + rng.randf_range(-0.2, 0.2))
+		var aim := Vector2i((c.pos + dir * distance).round()).clamp(Vector2i.ZERO, Vector2i(map.size - 1, map.size - 1))
+		var p := map.nearest_walkable(aim)
+		if p.x < 0 or not map.in_bounds(p):
+			continue
+		var unknown := 0
+		var total := 0
+		for dy in range(-4, 5, 2):
+			for dx in range(-4, 5, 2):
+				var q := p + Vector2i(dx, dy)
+				if map.in_bounds(q):
+					total += 1
+					if not _seen_by(c, q):
+						unknown += 1
+		cands.append({"cell": p, "score": float(unknown) / maxf(1.0, float(total)) + rng.randf() * 0.1})
+	cands.sort_custom(func(a, b) -> bool: return a["score"] > b["score"])
+	for cand in cands:
+		if cand["score"] <= 0.15:
+			break
+		if cand["cell"] == c.cell or not map.find_path(c.cell, cand["cell"]).is_empty():
+			return cand["cell"]
+	return Vector2i(-1, -1)
+
+
+## Has `c` seen this spot with their own eyes?
+func _seen_by(c: Colonist, cell: Vector2i) -> bool:
+	var i := cell.y * map.size + cell.x
+	return i < c.knowledge.seen.size() and c.knowledge.seen[i] > 0
+
+
+## After taking from a resource node, the colonist knows how much is left (or that it's gone).
+func saw_node_after_use(c: Colonist, source: Dictionary) -> void:
+	if source.get("kind") != "node":
+		return
+	var n := source["ref"] as ResNode
+	if nodes.has(n.id):
+		c.knowledge.see_place(n.id, n.type, n.cell, clock, n.amount)
+	else:
+		c.knowledge.forget_place(n.id)
+
+
+func explored_share() -> float:
+	return float(discovered_count) / float(maxi(1, discovered.size()))
+
+
+## "north", "south-east"... from the camp, as people would say it (screen-up = north).
+func direction_word(cell: Vector2i) -> String:
+	var d := Vector2(cell - map.center)
+	if d.length() < 4.0:
+		return "near the camp"
+	var names := ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"]
+	var k := posmod(roundi(d.angle() / (TAU / 8.0)), 8)
+	return "to the " + String(names[k])
+
+
+const PLACES_PER_TALK := 3   # a conversation has room for a few "there's a good patch of X by Y"
+
+
+## `from` mentions places `to` doesn't know, the ones that matter most first: kinds of resource
+## the listener knows nowhere to get. Whether it sticks depends on how much they trust the
+## speaker. Returns the resources that were news, e.g. [{resource: "stone", cell}].
+func share_places(from: Colonist, to: Colonist, limit: int = PLACES_PER_TALK) -> Array:
+	var news := {}
+	var told := 0
+	var known: Array = from.knowledge.places.keys().filter(func(nid) -> bool:
+		var a := float(from.knowledge.places[nid].get("amt", -1.0))
+		return not to.knowledge.knows_place(nid) and (a < 0.0 or a >= 1.0))
+	var lacks := func(nid) -> int:
+		var ty: String = from.knowledge.places[nid]["type"]
+		return 0 if to.knowledge.usable_places_of(ty, to.cell, clock, false).is_empty() else 1
+	known.sort_custom(func(a, b) -> bool:
+		var la: int = lacks.call(a)
+		var lb: int = lacks.call(b)
+		if la != lb:
+			return la < lb
+		return Vector2(from.knowledge.places[a]["cell"] - from.cell).length() < Vector2(from.knowledge.places[b]["cell"] - from.cell).length())
+	var tr := trust(to, from)
+	for nid in known:
+		if told >= limit:
+			break
+		var p: Dictionary = from.knowledge.places[nid]
+		told += 1
+		if rng.randf() > 0.4 + 0.6 * tr:
+			continue    # mentioned, but it didn't stick
+		var had_type := not to.knowledge.places_of(p["type"], to.cell).is_empty()
+		if to.knowledge.hear_place(nid, p["type"], p["cell"], float(p["t"]), from.name, float(p.get("amt", -1.0))):
+			if not had_type:
+				news[String(content.nodes.get(p["type"], {}).get("resource", p["type"]))] = p["cell"]
+	return news.keys().map(func(r) -> Dictionary: return {"resource": r, "cell": news[r]})
 
 
 ## How much `c` believes what `from` tells them (0..1): liking someone makes them more believable.
@@ -638,6 +789,17 @@ func apply_conversation(conv: Dictionary, result: Dictionary) -> void:
 		var li: Colonist = by_name.get(r.get("to", ""))
 		if sp != null and li != null and sp != li and li.alive():
 			add_request(li, sp.name, String(r.get("action", "")), trust(li, sp))
+	# Talk also passes on where things are (whatever the words were): what's new gets remembered.
+	var places_learned := []
+	for pair in [[a, b], [b, a]]:
+		var sp: Colonist = pair[0]
+		var li: Colonist = pair[1]
+		if not li.alive():
+			continue
+		for news in share_places(sp, li):
+			places_learned.append({"who": li.name, "resource": news["resource"], "from": sp.name})
+			add_memory(li, "%s told me where to find %s (%s)." % [sp.name, news["resource"], direction_word(news["cell"])], 3.0)
+	conv["places_learned"] = places_learned
 	conv["lines"] = result.get("lines", [])
 	conv["facts"] = result.get("facts", [])
 	conv["requests"] = result.get("requests", [])
@@ -1072,7 +1234,9 @@ func storage_access(from: Vector2i) -> Vector2i:
 
 ## ---- Sources (where to eat, drink, gather) --------------------------------
 
-func find_sources(specs: Array, resource: String, from: Vector2i, amount: float, for_gather: bool = false) -> Array:
+## Places to get `resource`. With a `knower`, only resource nodes they know about count (they
+## can't use a tree nobody has seen).
+func find_sources(specs: Array, resource: String, from: Vector2i, amount: float, for_gather: bool = false, knower: Colonist = null) -> Array:
 	var cands := []
 	for spec: String in specs:
 		if spec == "stockpile":
@@ -1083,7 +1247,13 @@ func find_sources(specs: Array, resource: String, from: Vector2i, amount: float,
 					cands.append({"kind": "stockpile", "ref": b, "cells": b.cells(), "d": Vector2(b.cell - from).length_squared()})
 		elif spec.begins_with("node:"):
 			var t := spec.substr(5)
-			for n: ResNode in nodes.values():
+			var pool: Array = nodes.values()
+			if knower != null:
+				pool = []
+				for p in knower.knowledge.places_of(t, from):
+					if nodes.has(p["id"]):
+						pool.append(nodes[p["id"]])
+			for n: ResNode in pool:
 				if n.type == t and n.amount >= 1.0 and (not for_gather or n.workers < 2) and clock >= n.unreachable_until:
 					cands.append({"kind": "node", "ref": n, "cells": [n.cell], "d": Vector2(n.cell - from).length_squared()})
 		elif spec.begins_with("building:"):
@@ -1127,7 +1297,7 @@ func take_from_source(source: Dictionary, resource: String, amount: float) -> bo
 			if not nodes.has(n.id) or n.amount < 1.0:
 				return false
 			n.amount -= minf(amount, n.amount)
-			if n.amount <= 0.0:
+			if n.amount < 1.0:      # less than a trip's worth: it's used up
 				_deplete(n)
 			return true
 	return true
@@ -1140,7 +1310,7 @@ func harvest_source(source: Dictionary, amount: float) -> float:
 			return 0.0
 		var got := minf(amount, n.amount)
 		n.amount -= got
-		if n.amount <= 0.0:
+		if n.amount < 1.0:          # less than a trip's worth: it's used up
 			_deplete(n)
 		return got
 	return amount

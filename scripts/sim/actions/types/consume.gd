@@ -9,11 +9,11 @@ func kind() -> String:
 
 
 func available() -> bool:
-	return not sim.find_sources(params["sources"], params["resource"], c.cell, float(params.get("use", 1))).is_empty()
+	return not sim.find_sources(params["sources"], params["resource"], c.cell, float(params.get("use", 1)), false, c).is_empty()
 
 
 func begin() -> bool:
-	for s in sim.find_sources(params["sources"], params["resource"], c.cell, float(params.get("use", 1))):
+	for s in sim.find_sources(params["sources"], params["resource"], c.cell, float(params.get("use", 1)), false, c):
 		if go_to(s["access"]):
 			source = s
 			phase = "walking"
@@ -28,6 +28,7 @@ func tick(dt: float) -> int:
 		"walking":
 			if walk(dt):
 				var ok := sim.take_from_source(source, params["resource"], float(params.get("use", 1)))
+				sim.saw_node_after_use(c, source)
 				if source.get("kind") == "stockpile":
 					sim.observe_stock(c)   # at the stores: they see what's (still) there
 				if not ok:

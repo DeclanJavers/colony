@@ -80,6 +80,7 @@ func report() -> Dictionary:
 		"homeless_share": snappedf(homeless_hours / maxf(person_hours, 1.0), 0.01),
 		"critical_share": snappedf(critical_hours / maxf(person_hours, 1.0), 0.001),
 		"cold_share": snappedf(cold_hours / maxf(person_hours, 1.0), 0.001), "winter_wood": winter_wood,
+		"explored_share": snappedf(sim.explored_share(), 0.01),
 		"famine_share": snappedf(float(famine_hours) / maxf(hours, 1.0), 0.01),
 		"max_farms_per_person": snappedf(max_farms_per_person, 0.01),
 		"max_glut_days": {}, "failed_share": snappedf(float(sim.stats.get("failed_decisions", 0)) / maxf(decisions, 1.0), 0.001),

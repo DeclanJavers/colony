@@ -489,6 +489,7 @@ func _render_beliefs(c: Colonist) -> void:
 	var lines: PackedStringArray = ["[b]What %s believes[/b]  [color=#aaaaaa](actual in grey)[/color]" % c.name]
 	for k in Knowledge.STOCK_KEYS:
 		lines.append("%s  [color=#aaaaaa]· %d[/color]" % [c.knowledge.phrase(k, sim.clock), int(sim.stock.get(k, 0))])
+	lines.append("[color=#b8d4a8]%s[/color]" % sim.describer.places_phrase(sim, c))
 	for r in sim.active_requests(c):
 		lines.append("[color=#c9b6e4]%s asked them to %s (%dh ago)[/color]" % [r["from"], r["label"], int((sim.clock - float(r["t"])) / 60.0)])
 	_beliefs.text = "\n".join(lines)

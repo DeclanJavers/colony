@@ -3,7 +3,7 @@ extends Node3D
 ## Land nobody in the colony has seen yet stays under a soft dark veil, and resources there are
 ## hidden. It lifts as colonists explore (Sim.discovered, updated as they look around).
 
-const VEIL := Color(0.05, 0.06, 0.09, 0.62)
+const VEIL := Color(0.118, 0.102, 0.122, 0.6)   # STYLE.md background, so unseen land fades into the void
 const REFRESH_S := 0.5
 
 var sim: Sim

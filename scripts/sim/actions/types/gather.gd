@@ -12,11 +12,11 @@ func kind() -> String:
 
 
 func available() -> bool:
-	return sim.has_storage_space() and not sim.find_sources(params["sources"], params["resource"], c.cell, 1.0, true).is_empty()
+	return sim.has_storage_space() and not sim.find_sources(params["sources"], params["resource"], c.cell, 1.0, true, c).is_empty()
 
 
 func begin() -> bool:
-	for s in sim.find_sources(params["sources"], params["resource"], c.cell, 1.0, true):
+	for s in sim.find_sources(params["sources"], params["resource"], c.cell, 1.0, true, c):
 		if go_to(s["access"]):
 			source = s
 			sim.reserve_source(source, 1)
@@ -45,6 +45,7 @@ func tick(dt: float) -> int:
 				var per_trip := float(params.get("per_trip", sim.source_def(source).get("per_trip", 5)))
 				per_trip *= c.trait_mod("carry")
 				carrying = sim.harvest_source(source, per_trip)
+				sim.saw_node_after_use(c, source)
 				if carrying <= 0.0:
 					return fail("source empty")
 				if not go_to(sim.storage_access(c.cell)):

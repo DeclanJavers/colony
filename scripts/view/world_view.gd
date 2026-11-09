@@ -46,6 +46,8 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	camera = p_camera
 	camera.add_child(PixelPass.new(camera))
 	_build_terrain()
+	var fog := FogView.new()
+	add_child(fog)
 	for n: ResNode in sim.nodes.values():
 		_add_node(n)
 	for b: Building in sim.buildings.values():
@@ -54,6 +56,7 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 		_add_colonist(c)
 	for g in sim.graveyard:
 		_add_grave(g)
+	fog.setup(sim, self)
 	sim.events.node_depleted.connect(_on_node_depleted)
 	sim.events.building_placed.connect(_add_building)
 	sim.events.building_completed.connect(_on_building_completed)
@@ -819,13 +822,22 @@ func tint_trees(season: String, autumn: Array, winter: Color) -> void:
 				mi.material_override = _flat_mat(c2) if c2 != null else null
 
 
-## Trees and rocks shrink as they're used up.
+var _fog: Callable    # cell -> bool (discovered); unseen resources stay hidden
+
+
+func set_fog(is_seen: Callable) -> void:
+	_fog = is_seen
+	_update_nodes()
+
+
+## Trees and rocks shrink as they're used up; ones nobody has seen yet stay hidden in the fog.
 func _update_nodes() -> void:
 	for nid in _nodes:
 		var n := sim.nodes.get(nid) as ResNode
 		var m: Node3D = _nodes[nid]
 		if n == null or m == null:
 			continue
+		m.visible = not _fog.is_valid() or bool(_fog.call(n.cell))
 		var base := float(m.get_meta("base_scale", 1.0))
 		var f := 0.55 + 0.45 * clampf(n.amount / maxf(n.max_amount, 1.0), 0.0, 1.0)
 		m.scale = Vector3.ONE * base * f
@@ -916,7 +928,7 @@ func pick(screen_pos: Vector2) -> Variant:
 	if b != null:
 		return b
 	var n := sim.node_at_cell(cell)
-	if n != null:
+	if n != null and sim.is_discovered(cell):
 		return n
 	return cell
 

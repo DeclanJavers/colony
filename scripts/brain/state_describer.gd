@@ -4,8 +4,40 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v3"   # v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
+const VERSION := "v4"   # v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
 const MAX_MEMORIES := 3
+
+
+## What they know about where resources are, e.g. "Knows where to find: wood (5 places, nearest
+## 4 tiles away), food (2 places, nearest 9 tiles away), stone (nowhere they know of)."
+func places_phrase(sim: Sim, c: Colonist) -> String:
+	# Only what they remember: places they've seen or heard of that had something left.
+	var by_res := {}
+	var spent := {}
+	for t in sim.content.nodes:
+		var d: Dictionary = sim.content.nodes[t]
+		var res := String(d.get("resource", t))
+		var usable := c.knowledge.usable_places_of(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0)
+		if usable.size() < c.knowledge.places_of(t, c.cell).size():
+			spent[res] = true
+		for p in usable:
+			var e: Dictionary = by_res.get(res, {"n": 0, "d": INF})
+			e["n"] = int(e["n"]) + 1
+			e["d"] = minf(float(e["d"]), float(p["d"]))
+			by_res[res] = e
+	var out: PackedStringArray = []
+	for t in sim.content.nodes:
+		var res := String(sim.content.nodes[t].get("resource", t))
+		if out.size() > 0 and Array(out).any(func(x: String) -> bool: return x.begins_with(res + " ")):
+			continue
+		if by_res.has(res):
+			var e: Dictionary = by_res[res]
+			out.append("%s (%d place%s, nearest %d tiles away)" % [res, e["n"], "" if e["n"] == 1 else "s", int(e["d"])])
+		elif spent.has(res):
+			out.append("%s (only places they saw picked clean)" % res)
+		else:
+			out.append("%s (nowhere they know of)" % res)
+	return "Knows where to find: %s." % ", ".join(out)
 
 
 func describe(sim: Sim, c: Colonist) -> String:
@@ -31,6 +63,7 @@ func describe(sim: Sim, c: Colonist) -> String:
 	for k in Knowledge.STOCK_KEYS:
 		st.append(c.knowledge.phrase(k, sim.clock))
 	parts.append("%s thinks the stores hold: %s." % [c.name, ", ".join(st)])
+	parts.append(places_phrase(sim, c))
 
 	var built := {}
 	var sites: PackedStringArray = []
