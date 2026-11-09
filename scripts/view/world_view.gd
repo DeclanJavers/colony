@@ -362,7 +362,8 @@ func _process(delta: float) -> void:
 		return
 	var follow := clampf(delta * 12.0, 0.0, 1.0)
 	_update_nudges()
-	for cid in _colonists:
+	_names_shown.clear()
+	for cid in _colonist_order():
 		var c := sim.colonists.get(cid) as Colonist
 		if c == null:
 			continue
@@ -411,6 +412,8 @@ func _process(delta: float) -> void:
 		var show_name: bool = names_mode == "always" or (names_mode == "auto" and (camera.size < NAME_ZOOM or c == selected or InspectText.same(c, _hover)))
 		over.visible = not in_hall or c == selected     # inside the hall: the hall's own label says who's there
 		over.position.y = 0.75 if sleeping else (1.3 * s + 0.12)
+		if show_name and not _name_room(c, root):
+			show_name = false     # another name is already there on screen
 		over.update_for(c, show_name, delta)
 		_update_carry(c, e["carry"])
 	for bid in _buildings:
@@ -538,6 +541,38 @@ func _update_meeting_label() -> void:
 	_meeting_label.text = "Meeting · %d inside%s" % [inside, (" · %d outside" % outside) if outside > 0 else ""]
 	_meeting_label.position = at(place.center()) + Vector3(0, 3.2 + 0.4 * place.level, 0)
 	_meeting_label.visible = true
+
+
+var _names_shown: Array[Vector2] = []   # screen spots already holding a name this frame
+const NAME_GAP := Vector2(64, 22)        # px: two names closer than this would overlap
+
+
+## Colonists in the order their names get priority: selected, hovered, then the rest.
+func _colonist_order() -> Array:
+	var ids := _colonists.keys()
+	ids.sort_custom(func(a, b) -> bool:
+		return _name_rank(a) < _name_rank(b))
+	return ids
+
+
+func _name_rank(cid) -> int:
+	if selected != null and selected.id == cid:
+		return 0
+	if _hover is Colonist and (_hover as Colonist).id == cid:
+		return 1
+	return 2
+
+
+## Is there room on screen for this colonist's name (no other name right there)?
+func _name_room(c: Colonist, root: Node3D) -> bool:
+	if camera.is_position_behind(root.global_position):
+		return false
+	var p := camera.unproject_position(root.global_position + Vector3(0, 1.4, 0))
+	for q in _names_shown:
+		if absf(p.x - q.x) < NAME_GAP.x and absf(p.y - q.y) < NAME_GAP.y:
+			return c == selected or InspectText.same(c, _hover)
+	_names_shown.append(p)
+	return true
 
 
 ## Rebuild a building's visuals (it changed shape: started or finished being enlarged).

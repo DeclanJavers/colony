@@ -20,6 +20,7 @@ uniform float bands = 0.0;              // colour levels per channel (0 = off)
 uniform float saturation = 1.04;
 uniform float night = 0.0;              // 0 day .. 1 night: cool blue grade (warm lights keep their colour)
 uniform vec3 night_tint : source_color = vec3(0.50, 0.60, 1.0);
+uniform float vignette = 0.28;          // darker towards the corners, like looking at a diorama
 
 void vertex() {
 	POSITION = vec4(VERTEX.xy * 2.0, 1.0, 1.0);
@@ -76,5 +77,7 @@ void fragment() {
 	}
 	col = mix(col, col * 0.55, inner * inner_strength / 0.45);
 	col = mix(col, outline_color.rgb, outer * outline_strength);
+	vec2 sv = SCREEN_UV - 0.5;
+	col *= 1.0 - vignette * smoothstep(0.35, 0.85, length(sv * vec2(1.0, 0.85)) * 1.25);
 	ALBEDO = clamp(col, 0.0, 1.0);
 }

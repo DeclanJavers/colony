@@ -23,6 +23,13 @@ func _ready() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	# A soft glow around fire, lamps and lit windows (only bright, emissive things bloom).
+	env.glow_enabled = true
+	env.glow_intensity = 0.55
+	env.glow_strength = 0.9
+	env.glow_bloom = 0.0
+	env.glow_hdr_threshold = 1.15
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	we.environment = env
 	add_child(we)
 

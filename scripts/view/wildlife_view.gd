@@ -52,6 +52,8 @@ func setup(p_sim: Sim, p_view: WorldView, p_camera: Camera3D) -> void:
 	_fireflies = _make_particles(Color("#E8F27A"), Color("#B8F28A"), 0.035, 60, 5.0, true)
 	_leaves = _make_particles(Color("#D9822B"), Color("#B9472A"), 0.07, 50, 6.0, false)
 	(_leaves.process_material as ParticleProcessMaterial).gravity = Vector3(0, -0.35, 0)
+	# Leaves are lit like everything else (unlit, they'd glow like embers at night).
+	((_leaves.draw_pass_1 as QuadMesh).material as StandardMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	for k in 24:
 		var r := MeshInstance3D.new()
 		var t := TorusMesh.new()
