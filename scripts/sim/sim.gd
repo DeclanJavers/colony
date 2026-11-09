@@ -86,6 +86,7 @@ func setup(p_seed: int) -> void:
 	_last_season = season()
 	_heat_houses()
 	_rain_water()
+	story.watch(self)
 
 
 func register_brain(brain: Brain, make_default: bool = false) -> void:
@@ -838,6 +839,7 @@ var conversation_handler: Callable
 ## call meetings.apply() itself. Unset (headless): the meeting is worked out symbolically.
 var meeting_handler: Callable
 var meetings := ColonyMeetings.new()
+var story := ColonyStory.new()          # timeline and weekly summaries, for watching
 var _conv_id := 0
 
 

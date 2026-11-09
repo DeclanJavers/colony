@@ -160,6 +160,9 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 			_log("[color=#c9b6e4]%s asked %s to %s.[/color]" % [InspectText.link(a), InspectText.link(b), lbl])
 		elif conv["intent"] == "news":
 			_log("[color=#c9b6e4]%s told %s the news.[/color]" % [InspectText.link(a), InspectText.link(b)]))
+	ev.week_summarized.connect(func(wk: Dictionary) -> void:
+		var lines: Array = wk["lines"]
+		_log("[color=#cfc6b0][b]Week %d[/b]: %s (more on the Colony page)[/color]" % [int(wk["week"]), String(lines[0]) if not lines.is_empty() else "a quiet week."]))
 	ev.meeting_called.connect(func(m: Dictionary) -> void:
 		_log("[color=#d8c79a]The bell rings: the weekly meeting at the %s.[/color]" % (m["place"] as Building).def().get("label", "campfire")))
 	ev.meeting_held.connect(func(p: Dictionary) -> void:

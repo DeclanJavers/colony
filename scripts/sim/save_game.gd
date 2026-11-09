@@ -17,7 +17,7 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 		"format": FORMAT, "seed": sim.seed_value, "clock": sim.clock, "stock": sim.stock.duplicate(),
 		"tier": sim.unlocked_tier, "stats": sim.stats.duplicate(true), "next_id": sim._next_id,
 		"next_request_id": sim._next_request_id, "used_names": sim._used_names.duplicate(),
-		"conv_id": sim._conv_id, "weather": sim.weather, "meetings": sim.meetings.to_dict(), "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
+		"conv_id": sim._conv_id, "weather": sim.weather, "meetings": sim.meetings.to_dict(), "story": sim.story.to_dict(), "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
 		"nodes": [], "buildings": [], "colonists": [], "graveyard": [],
 	}
 	for n: ResNode in sim.nodes.values():
@@ -62,6 +62,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 	sim._conv_id = int(data.get("conv_id", 0))
 	sim.weather = String(data.get("weather", "clear"))
 	sim.meetings.from_dict(data.get("meetings", {}))
+	sim.story.from_dict(data.get("story", {}))
 	var ff: Variant = data.get("footfall")
 	if ff is PackedFloat32Array and (ff as PackedFloat32Array).size() == sim.footfall.size():
 		sim.footfall = ff

@@ -36,3 +36,5 @@ signal building_expanded(b: Building)
 ## The meeting bell rang (meeting = ColonyMeetings.current) / the meeting agreed a plan.
 signal meeting_called(meeting: Dictionary)
 signal meeting_held(plan: Dictionary)
+## A week of the colony's story closed: {week, from_day, to_day, lines}.
+signal week_summarized(week: Dictionary)

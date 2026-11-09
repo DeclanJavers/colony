@@ -33,6 +33,7 @@ var _beliefs := RichTextLabel.new()
 var _convos := RichTextLabel.new()
 var _charts := VBoxContainer.new()   # colony page: trends over the last 3 days
 var _sparks: Dictionary = {}
+var _timeline := StoryTimeline.new()
 var _state_btn := Button.new()
 var _state := RichTextLabel.new()
 var _chat_title := Label.new()
@@ -107,6 +108,8 @@ func _ready() -> void:
 		var sp := Sparkline.new(spec[0], spec[1])
 		_charts.add_child(sp)
 		_sparks[spec[0]] = sp
+	_timeline.visible = false
+	body.add_child(_timeline)
 	_rich(_info, 14)
 	_info.meta_underlined = true
 	_info.meta_clicked.connect(_on_link)
@@ -197,12 +200,15 @@ func _update_charts() -> void:
 			series[k].append(float(snap["stock"].get(k, 0)))
 	for k in series:
 		(_sparks[k] as Sparkline).set_values(series[k])
+	_timeline.sim = runner.sim
+	_timeline.refresh()
 
 
 func _set_colonist_mode(on: bool) -> void:
 	for ctl in _colonist_only:
 		ctl.visible = on
 	_charts.visible = target is String and target == "colony"
+	_timeline.visible = _charts.visible
 	_state.visible = on and _state_btn.button_pressed
 
 

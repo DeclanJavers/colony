@@ -269,6 +269,16 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 		sim.alive_count(), adults, sim.alive_count() - adults, couples / 2, int(sim.stats.get("births", 0)),
 		("deaths: " + ", ".join(death_parts)) if not death_parts.is_empty() else "no deaths"])
 
+	# The story: this week so far, then the last weeks (newest first), one short paragraph each.
+	var story := sim.story
+	L.append("\n[b]This week[/b] %s" % gray("(week %d, since day %d)" % [story.week_number(int(story._w.get("from_day", 0))), int(story._w.get("from_day", 0))]))
+	L.append(" ".join(PackedStringArray(story.current())))
+	var past_weeks := story.weeks.duplicate()
+	past_weeks.reverse()
+	for wk in past_weeks.slice(0, 3):
+		L.append("\n[color=#cfc6b0][b]Week %d[/b] (days %d\u2013%d):[/color] %s" % [int(wk["week"]), int(wk["from_day"]), int(wk["to_day"]),
+			" ".join(PackedStringArray(wk["lines"]))])
+
 	L.append("\n[b]Stock[/b] %s" % gray("(change over the last day)"))
 	var past := runner.snapshot_hours_ago(24)
 	for r in sim.stock:
@@ -341,10 +351,10 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 		L.append(gray("Graves: ") + ", ".join(gp))
 
 	if not runner.chronicle.is_empty():
-		L.append("\n[b]History[/b] %s" % gray("(newest first)"))
+		L.append("\n[b]Recent events[/b] %s" % gray("(newest first)"))
 		var items := runner.chronicle.duplicate()
 		items.reverse()
-		for e in items.slice(0, 15):
+		for e in items.slice(0, 8):
 			var t := float(e["t"])
 			L.append("%s %s" % [gray("D%d %02d:00" % [int(t / 1440.0), int(fmod(t, 1440.0) / 60.0)]), e["text"]])
 
