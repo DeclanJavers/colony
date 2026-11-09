@@ -7,7 +7,8 @@ enum Tile { GRASS, WATER, FORD }
 var size: int
 var tiles: PackedByteArray
 var astar := AStarGrid2D.new()
-var node_at: Dictionary = {}        # Vector2i -> ResNode id
+var node_at: Dictionary = {}        # Vector2i -> ResNode id (nodes that block walking)
+var litter_at: Dictionary = {}      # Vector2i -> ResNode id (sticks, pebbles: walk over them)
 var building_at: Dictionary = {}    # Vector2i -> Building id
 var shore_cells: Array[Vector2i] = []   # walkable cells next to water (drink/fetch spots)
 var center: Vector2i
@@ -93,6 +94,7 @@ func generate(rng: RandomNumberGenerator, sim: Sim) -> void:
 	_scatter_ring(rng, sim, "tree", 12, 8.0, 16.0)
 	_scatter_ring(rng, sim, "rock", 6, 9.0, 17.0)
 	_scatter_ring(rng, sim, "berry_bush", 8, 6.0, 13.0)
+	_scatter_litter(rng, sim)
 	rebuild_shore()
 
 
@@ -107,6 +109,33 @@ func _scatter_ring(rng: RandomNumberGenerator, sim: Sim, type: String, count: in
 		if in_bounds(c) and tile(c) == Tile.GRASS and is_walkable(c):
 			sim.spawn_node(type, c)
 			placed += 1
+
+
+## Sticks under trees and pebbles by rocks (data/nodes.json "near"), plus a few near the camp so
+## the founders can make their first tools.
+func _scatter_litter(rng: RandomNumberGenerator, sim: Sim) -> void:
+	for t in sim.content.nodes:
+		var d: Dictionary = sim.content.nodes[t]
+		if d.get("blocks", true) or not d.has("near"):
+			continue
+		var near := String(d["near"])
+		for n: ResNode in sim.nodes.values().duplicate():
+			if n.type != near or rng.randf() > float(d.get("near_chance", 0.2)):
+				continue
+			for k in 6:
+				var c: Vector2i = n.cell + Vector2i(rng.randi_range(-1, 1), rng.randi_range(-1, 1))
+				if c != n.cell and in_bounds(c) and tile(c) == Tile.GRASS and is_walkable(c) and not litter_at.has(c):
+					sim.spawn_node(t, c)
+					break
+		var placed := 0
+		var tries := 0
+		while placed < 5 and tries < 200:
+			tries += 1
+			var a := rng.randf() * TAU
+			var c := center + Vector2i(int(cos(a) * rng.randf_range(3.0, 8.0)), int(sin(a) * rng.randf_range(3.0, 8.0)))
+			if in_bounds(c) and tile(c) == Tile.GRASS and is_walkable(c) and not litter_at.has(c):
+				sim.spawn_node(t, c)
+				placed += 1
 
 
 func rebuild_shore() -> void:

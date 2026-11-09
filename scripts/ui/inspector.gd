@@ -329,6 +329,11 @@ func _refresh() -> void:
 	_title.text = "[b]%s[/b]  [color=#aaaaaa]%s, %.1f days · %s[/color]" % [c.name, c.life_stage(), c.age_days(), ", ".join(traits)]
 	if c.role != "":
 		_title.text += "\n[color=#d8c79a]the colony's %s[/color]" % runner.sim.role_name(c.role)
+	if not c.tools.is_empty():
+		var tl: PackedStringArray = []
+		for t in c.tools:
+			tl.append("%s (%d uses left)" % [runner.sim.content.tools.get(t, {}).get("label", t), int(c.tools[t])])
+		_title.text += "\n[color=#aaaaaa]carries: %s[/color]" % ", ".join(tl)
 
 	var lines: PackedStringArray = []
 	if not c.alive():

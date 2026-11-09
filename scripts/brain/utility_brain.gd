@@ -7,7 +7,7 @@ const RESOURCE_TARGETS := {"food": 80.0, "water": 40.0, "wood": 60.0, "stone": 5
 const KIND_OF := {
 	"gather_wood": "gather", "gather_stone": "gather", "gather_food": "gather", "fetch_water": "gather",
 	"farm": "work", "build": "build", "socialize": "socialize", "have_child": "socialize",
-	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize",
+	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize", "make_hatchet": "work", "make_pickaxe": "work",
 }
 
 var temperature: float = 0.12
@@ -238,6 +238,12 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			var seen_share := float(c.knowledge.seen.count(1)) / maxf(1.0, float(c.knowledge.seen.size()))
 			s = 1.3 * need + 0.4 * (1.0 - seen_share) - 0.6 - _recently(c, sim, ["explore"], 10.0) \
 				- (0.8 if sim.is_night() else 0.0) - 1.5 * (1.0 - sim.weather_work_mult())
+		"make_hatchet", "make_pickaxe":
+			# Trees and big rocks need the tool. Worth making when you'll need what it gets (the
+			# colony is short of it) or when the bare-hands sources you know of are thin.
+			var res := "wood" if aid == "make_hatchet" else "stone"
+			var no_tool_source := not _knows_source(sim, c, res)
+			s = 0.5 + 0.9 * _scarcity(sim, c, res) + (0.4 if no_tool_source else 0.0) - _recently(c, sim, [aid], 6.0)
 		"attend_meeting":
 			# The weekly meeting is where news and plans are shared: worth going to unless something
 			# urgent comes first (needs score up to ~3). The bell's request adds to this below.

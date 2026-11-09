@@ -1,0 +1,29 @@
+{
+  "_doc": "Hand tools. Colonists start with none: they gather sticks and pebbles by hand, then make stone tools, which trees and big rocks need (data/nodes.json needs_tool). Each trip with a tool uses one of its uses; when they run out it breaks. A workshop makes tools last longer (colony uses_mult). label: how people say it.",
+  "hatchet": {
+    "label": "stone hatchet",
+    "cost": {
+      "wood": 3,
+      "stone": 2
+    },
+    "minutes": 40,
+    "uses": 30
+  },
+  "pickaxe": {
+    "label": "stone pickaxe",
+    "cost": {
+      "wood": 3,
+      "stone": 3
+    },
+    "minutes": 45,
+    "uses": 30
+  },
+  "rod": {
+    "label": "fishing rod",
+    "cost": {
+      "wood": 2
+    },
+    "minutes": 25,
+    "uses": 25
+  }
+}

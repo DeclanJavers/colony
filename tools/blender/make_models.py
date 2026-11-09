@@ -681,6 +681,27 @@ def berry_bush():
         blob("berry", 0.045, (math.cos(a) * r, math.sin(a) * r, 0.2 + rnd.uniform(0, 0.2)), M("berry"), sub=1)
 
 
+def sticks():
+    """Fallen sticks and twigs: gathered by hand (no hatchet needed)."""
+    rnd = random.Random(6)
+    for i in range(5):
+        a = rnd.uniform(0, math.pi)
+        L = rnd.uniform(0.28, 0.45)
+        x, y = rnd.uniform(-0.18, 0.18), rnd.uniform(-0.18, 0.18)
+        beam("stick", (x - math.cos(a) * L / 2, y - math.sin(a) * L / 2, 0.025 + i * 0.012),
+             (x + math.cos(a) * L / 2, y + math.sin(a) * L / 2, 0.03 + i * 0.012), 0.035, M("plank" if i % 2 else "plank_dark"))
+    blob("leaf", 0.05, (0.12, -0.1, 0.03), M("leaf_light"), sub=1, scale=(1, 0.7, 0.4))
+
+
+def pebbles():
+    """Small loose stones: gathered by hand (no pickaxe needed)."""
+    rnd = random.Random(8)
+    for i in range(6):
+        r = rnd.uniform(0.045, 0.08)
+        blob("pebble", r, (rnd.uniform(-0.2, 0.2), rnd.uniform(-0.2, 0.2), r * 0.6),
+             M(["stone", "stone_light", "stone_dark"][i % 3]), sub=1, scale=(1.2, 1, 0.7))
+
+
 # ---- Props --------------------------------------------------------------------------------------
 
 def prop_crate():
@@ -712,6 +733,7 @@ MODELS = {
     "storehouse": storehouse, "workshop": workshop, "kitchen": kitchen, "town_hall": town_hall,
     "site_frame": site_frame, "tree": tree, "tree_2": tree_2, "tree_3": tree_3,
     "rock": rock, "rock_2": rock_2, "berry_bush": berry_bush,
+    "sticks": sticks, "pebbles": pebbles,
     "meeting_hall": lambda: meeting_hall(3, 1), "meeting_hall_lv2": lambda: meeting_hall(4, 2),
     "meeting_hall_lv3": lambda: meeting_hall(5, 3),
     "meeting_hall_lv4": lambda: meeting_hall(6, 4),

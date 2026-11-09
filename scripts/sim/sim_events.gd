@@ -38,3 +38,5 @@ signal meeting_called(meeting: Dictionary)
 signal meeting_held(plan: Dictionary)
 ## A week of the colony's story closed: {week, from_day, to_day, lines}.
 signal week_summarized(week: Dictionary)
+## Someone made a tool (data/tools.json).
+signal tool_made(c: Colonist, tool: String)

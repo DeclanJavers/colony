@@ -158,6 +158,10 @@ func _update_tool(c: Colonist) -> void:
 	var a := c.action
 	if a != null and a.phase == "working":
 		want = String(TOOL_FOR_ACTION.get(String(a.def.get("id", "")), ""))
+		# Picking up sticks and pebbles is done by hand: the axe and pick are for trees and rocks.
+		var src: Variant = a.get("source")
+		if want in ["axe", "pickaxe"] and src is Dictionary and a.sim.tool_for(src) == "":
+			want = ""
 	if want == _tool:
 		return
 	_tool = want

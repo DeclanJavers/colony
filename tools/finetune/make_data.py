@@ -59,6 +59,9 @@ def main() -> None:
     ap.add_argument("--eval-seeds", default="")
     ap.add_argument("--brain", default="utility", help="only use decisions made by this brain")
     ap.add_argument("--max-train", type=int, default=0, help="subsample train rows (0 = all)")
+    ap.add_argument("--cap-per-choice", type=int, default=0,
+                    help="keep at most this many train rows per target choice (0 = no cap): trims the very "
+                         "common ones (rest, socialize) so rare but important ones (explore, meetings) aren't drowned")
     ap.add_argument("--mistakes", type=float, default=-1.0,
                     help="with --teacher: keep every state where the learner's choice differed from the "
                          "teacher's, plus this fraction of the ones where they agreed (e.g. 0.25)")
@@ -88,6 +91,15 @@ def main() -> None:
                 (evals if r.get("seed") in eval_seeds else train).append(row)
     random.seed(0)
     random.shuffle(train)
+    if a.cap_per_choice:
+        per = collections.Counter()
+        capped = []
+        for row in train:
+            c = row["meta"]["chosen"]
+            if per[c] < a.cap_per_choice:
+                per[c] += 1
+                capped.append(row)
+        train = capped
     if a.max_train:
         train = train[: a.max_train]
     os.makedirs(a.out, exist_ok=True)

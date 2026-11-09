@@ -1,5 +1,18 @@
 # Backlog
 
+## Overnight queue (2026-11-09)
+
+Decided with the user:
+- **Animals are scenery for now** (birds, rabbits, deer wander, graze, flee). Hunting comes later as its own pack.
+- **Tools are needed for big resources.** Start with sticks and small stones from the ground, craft a stone hatchet and pickaxe, which are required to fell trees and break big rocks. Tools wear out.
+- **Fishing** from the river shore with a stick rod.
+- **Ambient life:** butterflies, fireflies, falling leaves, rain ripples. Looks only.
+- **Terrain:** raised plateaus with stepped earth edges, small ponds, flower and tall-grass patches, more varied rocks.
+- **Game shell:** a menu with New Game (map generation options), save and load slots, and the whole thing looking beautiful.
+- Also: polish from the checker notes, tests for the new systems, docs refresh.
+
+Order: v4 scoreboard first, then features, then the v5 training data last, so it covers everything. Each step gets an independent check.
+
 ## Next big Laya training run (v2)
 
 Goal: one larger fine-tune that covers everything below, instead of several small runs.

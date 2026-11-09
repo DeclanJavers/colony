@@ -50,6 +50,15 @@
       "jobs": [
         "build"
       ]
+    },
+    "crafting": {
+      "role": "toolmaker",
+      "good_at": "making tools",
+      "jobs": [
+        "make_hatchet",
+        "make_pickaxe",
+        "make_rod"
+      ]
     }
   }
 }

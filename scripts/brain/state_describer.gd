@@ -4,8 +4,25 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v6"   # v6: + weekly meeting and the colony plan. v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
+const VERSION := "v7"   # v7: + tools. v6: + weekly meeting and the colony plan. v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
 const MAX_MEMORIES := 3
+
+
+## "Has a stone hatchet (well used) and no pickaxe (needed for big rocks)."
+func tools_phrase(sim: Sim, c: Colonist) -> String:
+	var have: PackedStringArray = []
+	var lack: PackedStringArray = []
+	for t in sim.content.tools:
+		var d: Dictionary = sim.content.tools[t]
+		if c.has_tool(t):
+			var left := float(c.tools[t]) / maxf(1.0, float(d.get("uses", 30)) * sim.colony_mult("tool_uses"))
+			have.append("a %s%s" % [d.get("label", t), " (nearly worn out)" if left < 0.25 else (" (well used)" if left < 0.6 else "")])
+		elif t in ["hatchet", "pickaxe"]:
+			lack.append("no %s" % String(d.get("label", t)).replace("stone ", ""))
+	var out := "%s has %s" % [c.name, " and ".join(have) if not have.is_empty() else "no tools"]
+	if not lack.is_empty() and not have.is_empty():
+		out += ", " + " and ".join(lack)
+	return out + " (trees need a hatchet, big rocks a pickaxe)."
 
 
 ## The weekly meeting and the plan, e.g. "The weekly meeting is in 3 hours at the meeting hall.
@@ -94,6 +111,8 @@ func describe(sim: Sim, c: Colonist) -> String:
 	var work := work_phrase(sim, c)
 	if work != "":
 		parts.append(work)
+	if c.is_adult():
+		parts.append(tools_phrase(sim, c))
 	parts.append("It is day %d, %s, %s%s." % [sim.day(), _part_of_day(sim), _season_phrase(sim),
 		(", " + String(sim.weather_def().get("label", sim.weather))) if sim.weather != "clear" else ""])
 	if sim.cold() >= float(sim.content.seasons.get("heating_from_cold", 0.3)):

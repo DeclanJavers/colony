@@ -662,7 +662,7 @@ func look_around(c: Colonist, radius: float = LOOK, at: Variant = null) -> int:
 				discovered[i] = 1
 				discovered_count += 1
 			c.knowledge.seen[i] = 1
-			var nid: Variant = map.node_at.get(cell)
+			var nid: Variant = map.node_at.get(cell, map.litter_at.get(cell))
 			if nid != null and nodes.has(nid):
 				var n: ResNode = nodes[nid]
 				if not c.knowledge.knows_place(n.id):
@@ -1000,7 +1000,7 @@ func building_at_cell(cell: Vector2i) -> Building:
 
 
 func node_at_cell(cell: Vector2i) -> ResNode:
-	return nodes.get(map.node_at.get(cell, -1)) as ResNode
+	return nodes.get(map.node_at.get(cell, map.litter_at.get(cell, -1))) as ResNode
 
 
 ## Living or dead colonist by id (null if unknown).
@@ -1398,6 +1398,9 @@ func find_sources(specs: Array, resource: String, from: Vector2i, amount: float,
 			for n: ResNode in pool:
 				if knower != null and clock < n.unreachable_until:
 					knower.knowledge.block_place(n.id, n.unreachable_until)   # they'd find they can't get there
+				var need := String(n.def().get("needs_tool", ""))
+				if knower != null and need != "" and not knower.has_tool(need):
+					continue     # can't fell a tree with bare hands
 				if n.type == t and n.amount >= 1.0 and (not for_gather or n.workers < 2) and clock >= n.unreachable_until:
 					cands.append({"kind": "node", "ref": n, "cells": [n.cell], "d": Vector2(n.cell - from).length_squared()})
 		elif spec.begins_with("building:"):
@@ -1466,6 +1469,30 @@ func harvest_source(source: Dictionary, amount: float) -> float:
 	return amount
 
 
+## ---- Tools ------------------------------------------------------------------
+
+func give_tool(c: Colonist, tool: String) -> void:
+	var d: Dictionary = content.tools.get(tool, {})
+	c.tools[tool] = float(d.get("uses", 30)) * colony_mult("tool_uses")
+	add_memory(c, "I made a %s." % d.get("label", tool), 2.5)
+	events.tool_made.emit(c, tool)
+
+
+## One use of the tool a job needs; it breaks when the uses run out.
+func use_tool(c: Colonist, tool: String) -> void:
+	if tool == "" or not c.tools.has(tool):
+		return
+	c.tools[tool] = float(c.tools[tool]) - 1.0
+	if float(c.tools[tool]) <= 0.0:
+		c.tools.erase(tool)
+		add_memory(c, "My %s broke." % content.tools.get(tool, {}).get("label", tool), 2.0)
+
+
+## The tool needed to work a source ("" if bare hands will do).
+func tool_for(source: Dictionary) -> String:
+	return String(source_def(source).get("needs_tool", ""))
+
+
 func spawn_node(type: String, cell: Vector2i) -> ResNode:
 	var d: Dictionary = content.nodes[type]
 	var n := ResNode.new()
@@ -1478,6 +1505,8 @@ func spawn_node(type: String, cell: Vector2i) -> ResNode:
 	if d.get("blocks", true):
 		map.node_at[cell] = n.id
 		map.refresh_cell(cell)
+	else:
+		map.litter_at[cell] = n.id
 	return n
 
 
@@ -1485,8 +1514,11 @@ func _deplete(n: ResNode) -> void:
 	if float(n.def().get("regrow_per_hour", 0)) > 0.0:
 		return  # bushes stay and regrow
 	nodes.erase(n.id)
-	map.node_at.erase(n.cell)
-	map.refresh_cell(n.cell)
+	if map.litter_at.get(n.cell, -1) == n.id:
+		map.litter_at.erase(n.cell)
+	else:
+		map.node_at.erase(n.cell)
+		map.refresh_cell(n.cell)
 	events.node_depleted.emit(n)
 
 
@@ -1626,6 +1658,13 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	b.placed_at = clock
 	b.placed_by = by.name if by != null else ""
 	buildings[b.id] = b
+	for cell in b.cells():
+		if map.litter_at.has(cell):      # sticks and pebbles where it goes are cleared away
+			var lit := nodes.get(map.litter_at[cell]) as ResNode
+			map.litter_at.erase(cell)
+			if lit != null:
+				nodes.erase(lit.id)
+				events.node_depleted.emit(lit)
 	if not d.get("walkable", false):
 		for cell in b.cells():
 			map.building_at[cell] = b.id

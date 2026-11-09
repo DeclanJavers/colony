@@ -67,7 +67,8 @@
     "params": {
       "resource": "wood",
       "sources": [
-        "node:tree"
+        "node:tree",
+        "node:sticks"
       ]
     }
   },
@@ -82,9 +83,34 @@
     "params": {
       "resource": "stone",
       "sources": [
-        "node:rock"
+        "node:rock",
+        "node:pebbles"
       ]
     }
+  },
+  {
+    "id": "make_hatchet",
+    "type": "craft",
+    "label": "make a stone hatchet",
+    "description": "bind a sharp stone to a stick: needed to fell trees",
+    "params": {
+      "tool": "hatchet"
+    },
+    "for": [
+      "adult"
+    ]
+  },
+  {
+    "id": "make_pickaxe",
+    "type": "craft",
+    "label": "make a stone pickaxe",
+    "description": "a heavy pointed stone on a handle: needed to break big rocks",
+    "params": {
+      "tool": "pickaxe"
+    },
+    "for": [
+      "adult"
+    ]
   },
   {
     "id": "gather_food",

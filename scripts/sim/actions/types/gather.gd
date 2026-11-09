@@ -47,6 +47,7 @@ func tick(dt: float) -> int:
 				var per_trip := float(params.get("per_trip", sim.source_def(source).get("per_trip", 5)))
 				per_trip *= c.trait_mod("carry")
 				carrying = sim.harvest_source(source, per_trip)
+				sim.use_tool(c, sim.tool_for(source))
 				sim.saw_node_after_use(c, source)
 				if carrying <= 0.0:
 					return fail("source empty")

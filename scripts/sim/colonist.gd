@@ -14,7 +14,8 @@ var zero_minutes: Dictionary = {}   # need_id -> minutes spent at 0
 var skills: Dictionary = {}         # skill_id -> level (0 = novice); each level = 8 hours of practice
 var role: String = ""               # skill id they're known for (data/roles.json), "" = none yet
 var practice: Dictionary = {}       # skill_id -> recent minutes of practice (fades; see data/roles.json)
-var plan_day: int = -1              # day of the meeting whose plan they know (were there or were told)
+var plan_day: int = -1
+var tools: Dictionary = {}          # tool id -> uses left (data/tools.json)              # day of the meeting whose plan they know (were there or were told)
 var memories: Array = []            # [{t, text, importance}]
 var recent: Array = []              # last few decisions, newest last: {t, action, label, p, began, brain}
 var knowledge: Knowledge            # what they believe about the colony (see knowledge.gd)
@@ -66,6 +67,10 @@ func trait_mod(key: String) -> float:
 	for t in traits:
 		m *= float(t_defs.get(t, {}).get("mods", {}).get(key, 1.0))
 	return m
+
+
+func has_tool(tool: String) -> bool:
+	return float(tools.get(tool, 0.0)) > 0.0
 
 
 func skill_mult(skill: String) -> float:

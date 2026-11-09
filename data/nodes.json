@@ -1,6 +1,54 @@
 {
-  "_doc": "Natural resource nodes placed by world generation.",
-  "tree":       {"resource": "wood",  "amount": 30, "per_trip": 6, "work_minutes": 25, "regrow_per_hour": 0, "blocks": true,  "skill": "woodcutting"},
-  "rock":       {"resource": "stone", "amount": 40, "per_trip": 6, "work_minutes": 35, "regrow_per_hour": 0, "blocks": true,  "skill": "mining"},
-  "berry_bush": {"resource": "food",  "amount": 18, "per_trip": 6, "work_minutes": 20, "regrow_per_hour": 0.6, "blocks": true, "skill": "foraging"}
+  "_doc": "Natural resource nodes placed by world generation. needs_tool: a tool the gatherer must carry (data/tools.json). blocks: false = litter you can walk over (sticks, pebbles). near: litter is scattered next to these when the map is made.",
+  "tree": {
+    "resource": "wood",
+    "amount": 30,
+    "per_trip": 6,
+    "work_minutes": 25,
+    "regrow_per_hour": 0,
+    "blocks": true,
+    "skill": "woodcutting",
+    "needs_tool": "hatchet"
+  },
+  "rock": {
+    "resource": "stone",
+    "amount": 40,
+    "per_trip": 6,
+    "work_minutes": 35,
+    "regrow_per_hour": 0,
+    "blocks": true,
+    "skill": "mining",
+    "needs_tool": "pickaxe"
+  },
+  "berry_bush": {
+    "resource": "food",
+    "amount": 18,
+    "per_trip": 6,
+    "work_minutes": 20,
+    "regrow_per_hour": 0.6,
+    "blocks": true,
+    "skill": "foraging"
+  },
+  "sticks": {
+    "resource": "wood",
+    "amount": 4,
+    "per_trip": 2,
+    "work_minutes": 12,
+    "regrow_per_hour": 0.12,
+    "blocks": false,
+    "skill": "foraging",
+    "near": "tree",
+    "near_chance": 0.18
+  },
+  "pebbles": {
+    "resource": "stone",
+    "amount": 4,
+    "per_trip": 2,
+    "work_minutes": 14,
+    "regrow_per_hour": 0.1,
+    "blocks": false,
+    "skill": "foraging",
+    "near": "rock",
+    "near_chance": 0.45
+  }
 }

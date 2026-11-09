@@ -74,6 +74,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 	for cell in sim.map.node_at.keys() + sim.map.building_at.keys():
 		touched[cell] = true
 	sim.map.node_at.clear()
+	sim.map.litter_at.clear()
 	sim.map.building_at.clear()
 	sim.nodes.clear()
 	sim.buildings.clear()
@@ -84,7 +85,10 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 		n.id = int(d["id"]); n.type = d["type"]; n.cell = d["cell"]
 		n.amount = float(d["amount"]); n.max_amount = float(d["max"])
 		sim.nodes[n.id] = n
-		sim.map.node_at[n.cell] = n.id
+		if n.def().get("blocks", true):
+			sim.map.node_at[n.cell] = n.id
+		else:
+			sim.map.litter_at[n.cell] = n.id
 		touched[n.cell] = true
 	for d in data["buildings"]:
 		var b := Building.new()
@@ -125,7 +129,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 
 static func _colonist(c: Colonist) -> Dictionary:
 	return {"id": c.id, "name": c.name, "age": c.age_minutes, "lifespan": c.lifespan_days, "traits": Array(c.traits),
-		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(), "role": c.role, "practice": c.practice.duplicate(), "known_roles": c.knowledge.roles.duplicate(), "plan_day": c.plan_day,
+		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(), "role": c.role, "tools": c.tools.duplicate(), "practice": c.practice.duplicate(), "known_roles": c.knowledge.roles.duplicate(), "plan_day": c.plan_day,
 		"memories": c.memories.duplicate(true), "recent": c.recent.duplicate(true),
 		"knowledge": c.knowledge.facts.duplicate(true), "places": c.knowledge.places.duplicate(true), "seen": c.knowledge.seen, "requests": c.requests.duplicate(true),
 		"conversations": c.conversations.duplicate(true), "affection": c.affection.duplicate(),
@@ -142,6 +146,11 @@ static func _restore(d: Dictionary, sim: Sim) -> Colonist:
 	c.role = String(d.get("role", ""))
 	c.plan_day = int(d.get("plan_day", -1))
 	c.practice = d.get("practice", {}).duplicate()
+	c.tools = d.get("tools", {}).duplicate()
+	if not d.has("tools") and float(d["age"]) / 1440.0 >= float(Content.get_instance().cfg("adult_age_days", 3.0)):
+		# Saves from before tools: they were already felling trees, so they have what they used.
+		for t in ["hatchet", "pickaxe"]:
+			c.tools[t] = float(Content.get_instance().tools.get(t, {}).get("uses", 30))
 	if c.skills.has("gathering"):   # saves from before skills were split per job
 		var g := float(c.skills["gathering"])
 		c.skills.erase("gathering")

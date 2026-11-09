@@ -129,10 +129,11 @@
       2
     ],
     "max_count": 1,
-    "description": "everyone builds 25% faster",
+    "description": "tools and repairs: building goes 25% faster and tools last 50% longer",
     "provides": {
       "colony": {
-        "build_speed": 1.25
+        "build_speed": 1.25,
+        "tool_uses": 1.5
       }
     }
   },
