@@ -40,12 +40,13 @@
     "cooldown_days": 2
   },
   "decision": {
-    "brain": "laya",
+    "brain": "utility",
     "pick": "argmax",
     "hesitate_minutes_on_fail": 5,
     "max_lag_minutes": 15,
     "max_social_candidates": 6,
-    "_brain_doc": "laya = Laya over HTTP (brain_server/run.sh must be running); utility = hand-made baseline. Override with -- --brain utility."
+    "_brain_doc": "laya = Laya over HTTP (brain_server/run.sh must be running); utility = hand-made baseline. Override with -- --brain utility.",
+    "_brain_note": "utility until Laya v5 (trained on the tools/fishing state text v7) is in; Laya v4 doesn't know tools are needed. Set back to laya after."
   },
   "log": {
     "dir": "res://logs/decisions",

@@ -9,9 +9,9 @@ const AMOUNTS := [["Sparse", 0.6], ["Normal", 1.0], ["Thick", 1.5]]
 const HILLS := [["Flat", 0.0], ["Gentle", 1.0], ["Hilly", 1.8]]
 const PONDS := [["None", 0], ["A few", 2], ["Many", 5]]
 const SETTLERS := [["3", 3], ["5", 5], ["8", 8]]
-const BRAINS := [["Laya (learned AI)", "laya"], ["Hand-made rules", "utility"]]
+const BRAINS := [["Hand-made rules", "utility"], ["Laya (learned AI)", "laya"]]
 
-var opts := {"seed": 0, "size": 60, "forests": 1.0, "rocks": 1.0, "hills": 1.0, "ponds": 2, "river": true, "settlers": 5, "brain": "laya"}
+var opts := {"seed": 0, "size": 60, "forests": 1.0, "rocks": 1.0, "hills": 1.0, "ponds": 2, "river": true, "settlers": 5, "brain": String(Content.get_instance().cfg("decision.brain", "laya"))}
 var _preview: Node3D
 var _cam: IsoCamera
 var _rebuild_t := -1.0
