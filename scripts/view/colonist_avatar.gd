@@ -31,7 +31,7 @@ var _skel: Skeleton3D
 var _kid_head := -1.0              # head scale currently applied (children get a bigger head)
 const KID_HEAD := 1.3
 var _tool := ""
-const TOOL_FOR_ACTION := {"gather_wood": "axe", "gather_stone": "pickaxe", "build": "hammer",
+const TOOL_FOR_ACTION := {"gather_wood": "axe", "gather_stone": "pickaxe", "build": "hammer", "fish": "rod",
 	"farm": "hoe", "fetch_water": "bucket"}
 const WOOD := Color(0.55, 0.38, 0.22)
 const METAL := Color(0.62, 0.64, 0.68)
@@ -156,7 +156,7 @@ func _update_tool(c: Colonist) -> void:
 		return
 	var want := ""
 	var a := c.action
-	if a != null and a.phase == "working":
+	if a != null and (a.phase == "working" or a.phase == "fishing"):
 		want = String(TOOL_FOR_ACTION.get(String(a.def.get("id", "")), ""))
 		# Picking up sticks and pebbles is done by hand: the axe and pick are for trees and rocks.
 		var src: Variant = a.get("source")
@@ -176,7 +176,7 @@ func _update_tool(c: Colonist) -> void:
 static func _make_tool(kind: String) -> Node3D:
 	var root := Node3D.new()
 	root.position = Vector3(0, 0.03, 0)
-	var handle_len: float = {"axe": 0.40, "pickaxe": 0.40, "hammer": 0.26, "hoe": 0.52, "bucket": 0.0}[kind]
+	var handle_len: float = {"axe": 0.40, "pickaxe": 0.40, "hammer": 0.26, "hoe": 0.52, "bucket": 0.0, "rod": 0.95}[kind]
 	if handle_len > 0.0:
 		var h := _part(CylinderMesh.new(), WOOD)
 		(h.mesh as CylinderMesh).top_radius = 0.016
@@ -203,6 +203,15 @@ static func _make_tool(kind: String) -> Node3D:
 			(head.mesh as BoxMesh).size = Vector3(0.045, 0.1, 0.045)
 			head.position = Vector3(0, 0, tip)
 			root.add_child(head)
+		"rod":
+			# A thin line hanging from the tip.
+			var line := _part(CylinderMesh.new(), Color(0.9, 0.9, 0.85))
+			(line.mesh as CylinderMesh).top_radius = 0.003
+			(line.mesh as CylinderMesh).bottom_radius = 0.003
+			(line.mesh as CylinderMesh).height = 0.5
+			(line.mesh as CylinderMesh).radial_segments = 3
+			line.position = Vector3(0, -0.25, handle_len * 0.78)
+			root.add_child(line)
 		"hoe":
 			var head := _part(BoxMesh.new(), METAL)
 			(head.mesh as BoxMesh).size = Vector3(0.02, 0.09, 0.06)

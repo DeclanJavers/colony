@@ -705,6 +705,21 @@ func exploration_target(c: Colonist, distance: int) -> Vector2i:
 	return Vector2i(-1, -1)
 
 
+## The nearest bit of river bank `c` has seen, or (-1, -1).
+func seen_shore(c: Colonist) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for s: Vector2i in map.shore_cells:
+		var i := s.y * map.size + s.x
+		if i >= c.knowledge.seen.size() or c.knowledge.seen[i] == 0:
+			continue
+		var d := Vector2(s - c.cell).length_squared()
+		if d < best_d:
+			best_d = d
+			best = s
+	return best
+
+
 ## Has `c` seen this spot with their own eyes?
 func _seen_by(c: Colonist, cell: Vector2i) -> bool:
 	var i := cell.y * map.size + cell.x

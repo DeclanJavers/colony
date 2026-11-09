@@ -113,6 +113,18 @@
     ]
   },
   {
+    "id": "make_rod",
+    "type": "craft",
+    "label": "make a fishing rod",
+    "description": "a long stick with a line: needed to fish in the river",
+    "params": {
+      "tool": "rod"
+    },
+    "for": [
+      "adult"
+    ]
+  },
+  {
     "id": "gather_food",
     "type": "gather",
     "label": "pick berries",
@@ -126,6 +138,24 @@
         "node:berry_bush"
       ]
     }
+  },
+  {
+    "id": "fish",
+    "type": "fish",
+    "label": "go fishing",
+    "description": "fish from the river bank for an hour or so and bring the catch to the stores (needs a rod)",
+    "params": {
+      "resource": "food",
+      "minutes": 60,
+      "catch_every": 12,
+      "catch_chance": 0.35,
+      "per_catch": 5,
+      "skill": "fishing",
+      "tool": "rod"
+    },
+    "for": [
+      "adult"
+    ]
   },
   {
     "id": "fetch_water",

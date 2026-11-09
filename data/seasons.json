@@ -1,20 +1,88 @@
 {
-  "_doc": "Seasons and weather. The year cycles through 'order', each season lasting days_per_season. Each day rolls a weather from the season's odds. cold (0..~1.3) = season cold + weather cold + night_cold at night; it drains warmth and makes occupied houses burn firewood.",
+  "_doc": "Seasons and weather. The year cycles through 'order', each season lasting days_per_season. Each day rolls a weather from the season's odds. cold (0..~1.3) = season cold + weather cold + night_cold at night; it drains warmth and makes occupied houses burn firewood. fish: how well fish bite in each season.",
   "days_per_season": 4,
-  "order": ["spring", "summer", "autumn", "winter"],
+  "order": [
+    "spring",
+    "summer",
+    "autumn",
+    "winter"
+  ],
   "night_cold": 0.25,
   "heating_from_cold": 0.3,
   "firewood_per_house_hour": 0.4,
   "seasons": {
-    "spring": {"crop_growth": 1.2, "regrow": 1.2, "cold": 0.1, "weather": {"clear": 0.5, "rain": 0.4, "storm": 0.1}},
-    "summer": {"crop_growth": 1.0, "regrow": 1.0, "cold": 0.0, "weather": {"clear": 0.75, "rain": 0.2, "storm": 0.05}},
-    "autumn": {"crop_growth": 0.7, "regrow": 0.5, "cold": 0.35, "weather": {"clear": 0.45, "rain": 0.45, "storm": 0.1}},
-    "winter": {"crop_growth": 0.0, "regrow": 0.0, "cold": 0.9, "weather": {"clear": 0.5, "snow": 0.5}}
+    "spring": {
+      "crop_growth": 1.2,
+      "regrow": 1.2,
+      "cold": 0.1,
+      "weather": {
+        "clear": 0.5,
+        "rain": 0.4,
+        "storm": 0.1
+      },
+      "fish": 1.1
+    },
+    "summer": {
+      "crop_growth": 1.0,
+      "regrow": 1.0,
+      "cold": 0.0,
+      "weather": {
+        "clear": 0.75,
+        "rain": 0.2,
+        "storm": 0.05
+      },
+      "fish": 1.0
+    },
+    "autumn": {
+      "crop_growth": 0.7,
+      "regrow": 0.5,
+      "cold": 0.35,
+      "weather": {
+        "clear": 0.45,
+        "rain": 0.45,
+        "storm": 0.1
+      },
+      "fish": 1.0
+    },
+    "winter": {
+      "crop_growth": 0.0,
+      "regrow": 0.0,
+      "cold": 0.9,
+      "weather": {
+        "clear": 0.5,
+        "snow": 0.5
+      },
+      "fish": 0.35
+    }
   },
   "weather": {
-    "clear": {"label": "clear", "cold": 0.0, "crop": 1.0, "work": 1.0, "rain_water_per_well_hour": 0.0},
-    "rain": {"label": "rain", "cold": 0.15, "crop": 1.3, "work": 0.9, "rain_water_per_well_hour": 1.5},
-    "storm": {"label": "a storm", "cold": 0.3, "crop": 1.1, "work": 0.7, "rain_water_per_well_hour": 2.5},
-    "snow": {"label": "snow", "cold": 0.3, "crop": 0.0, "work": 0.8, "rain_water_per_well_hour": 0.0}
+    "clear": {
+      "label": "clear",
+      "cold": 0.0,
+      "crop": 1.0,
+      "work": 1.0,
+      "rain_water_per_well_hour": 0.0
+    },
+    "rain": {
+      "label": "rain",
+      "cold": 0.15,
+      "crop": 1.3,
+      "work": 0.9,
+      "rain_water_per_well_hour": 1.5
+    },
+    "storm": {
+      "label": "a storm",
+      "cold": 0.3,
+      "crop": 1.1,
+      "work": 0.7,
+      "rain_water_per_well_hour": 2.5
+    },
+    "snow": {
+      "label": "snow",
+      "cold": 0.3,
+      "crop": 0.0,
+      "work": 0.8,
+      "rain_water_per_well_hour": 0.0
+    }
   }
 }

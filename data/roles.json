@@ -59,6 +59,13 @@
         "make_pickaxe",
         "make_rod"
       ]
+    },
+    "fishing": {
+      "role": "fisher",
+      "good_at": "fishing",
+      "jobs": [
+        "fish"
+      ]
     }
   }
 }

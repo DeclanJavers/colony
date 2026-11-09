@@ -40,3 +40,5 @@ signal meeting_held(plan: Dictionary)
 signal week_summarized(week: Dictionary)
 ## Someone made a tool (data/tools.json).
 signal tool_made(c: Colonist, tool: String)
+## A fish was caught at this bit of shore.
+signal fish_caught(c: Colonist, shore: Vector2i)

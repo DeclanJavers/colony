@@ -17,7 +17,7 @@ func tools_phrase(sim: Sim, c: Colonist) -> String:
 		if c.has_tool(t):
 			var left := float(c.tools[t]) / maxf(1.0, float(d.get("uses", 30)) * sim.colony_mult("tool_uses"))
 			have.append("a %s%s" % [d.get("label", t), " (nearly worn out)" if left < 0.25 else (" (well used)" if left < 0.6 else "")])
-		elif t in ["hatchet", "pickaxe"]:
+		elif t in ["hatchet", "pickaxe"]:   # (no rod is nothing to remark on)
 			lack.append("no %s" % String(d.get("label", t)).replace("stone ", ""))
 	var out := "%s has %s" % [c.name, " and ".join(have) if not have.is_empty() else "no tools"]
 	if not lack.is_empty() and not have.is_empty():

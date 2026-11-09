@@ -7,7 +7,7 @@ const RESOURCE_TARGETS := {"food": 80.0, "water": 40.0, "wood": 60.0, "stone": 5
 const KIND_OF := {
 	"gather_wood": "gather", "gather_stone": "gather", "gather_food": "gather", "fetch_water": "gather",
 	"farm": "work", "build": "build", "socialize": "socialize", "have_child": "socialize",
-	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize", "make_hatchet": "work", "make_pickaxe": "work",
+	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize", "make_hatchet": "work", "make_pickaxe": "work", "make_rod": "work", "fish": "gather",
 }
 
 var temperature: float = 0.12
@@ -98,6 +98,8 @@ func _plenty(sim: Sim, c: Colonist, res: String) -> float:
 func _knows_source(sim: Sim, c: Colonist, res: String) -> bool:
 	if res == "food" and sim.count_of("farm_plot", false) > 0 and float(sim.season_def().get("crop_growth", 1.0)) > 0.0:
 		return true
+	if res == "food" and c.has_tool("rod"):
+		return true     # the river
 	for t in sim.content.nodes:
 		var d: Dictionary = sim.content.nodes[t]
 		if String(d.get("resource", "")) == res and not c.knowledge.usable_places_of(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0).is_empty():
@@ -244,6 +246,13 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			var res := "wood" if aid == "make_hatchet" else "stone"
 			var no_tool_source := not _knows_source(sim, c, res)
 			s = 0.5 + 0.9 * _scarcity(sim, c, res) + (0.4 if no_tool_source else 0.0) - _recently(c, sim, [aid], 6.0)
+		"make_rod":
+			# A rod is worth making when food is short and they've seen the river to fish in.
+			s = (0.2 + 0.9 * _scarcity(sim, c, "food") if sim.seen_shore(c).x >= 0 else -1.0) - _recently(c, sim, [aid], 12.0)
+		"fish":
+			# Like picking berries: more worth it the shorter food is, and the better fish bite.
+			# (They made the rod for this, so a little more than berries when food isn't short.)
+			s = (0.42 + 1.0 * _scarcity(sim, c, "food")) * float(sim.season_def().get("fish", 1.0)) - 0.6 * _plenty(sim, c, "food")
 		"attend_meeting":
 			# The weekly meeting is where news and plans are shared: worth going to unless something
 			# urgent comes first (needs score up to ~3). The bell's request adds to this below.
