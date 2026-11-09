@@ -80,7 +80,7 @@ func report() -> Dictionary:
 		"homeless_share": snappedf(homeless_hours / maxf(person_hours, 1.0), 0.01),
 		"critical_share": snappedf(critical_hours / maxf(person_hours, 1.0), 0.001),
 		"cold_share": snappedf(cold_hours / maxf(person_hours, 1.0), 0.001), "winter_wood": winter_wood,
-		"explored_share": snappedf(sim.explored_share(), 0.01),
+		"explored_share": snappedf(sim.explored_share(), 0.01), "roles": _roles(),
 		"famine_share": snappedf(float(famine_hours) / maxf(hours, 1.0), 0.01),
 		"max_farms_per_person": snappedf(max_farms_per_person, 0.01),
 		"max_glut_days": {}, "failed_share": snappedf(float(sim.stats.get("failed_decisions", 0)) / maxf(decisions, 1.0), 0.001),
@@ -118,3 +118,13 @@ static func flags(r: Dictionary) -> Array:
 	if float(r["critical_share"]) > 0.05:
 		f.append("people often in danger")
 	return f
+
+
+## Who is known for what at the end: {"woodcutter": 3, ..., "none": 5} (adults only).
+func _roles() -> Dictionary:
+	var out := {}
+	for c: Colonist in sim.colonists.values():
+		if c.is_adult():
+			var r := sim.role_name(c.role) if c.role != "" else "none"
+			out[r] = int(out.get(r, 0)) + 1
+	return out

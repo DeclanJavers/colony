@@ -321,6 +321,8 @@ func _refresh() -> void:
 	for t in c.traits:
 		traits.append(t)
 	_title.text = "[b]%s[/b]  [color=#aaaaaa]%s, %.1f days · %s[/color]" % [c.name, c.life_stage(), c.age_days(), ", ".join(traits)]
+	if c.role != "":
+		_title.text += "\n[color=#d8c79a]the colony's %s[/color]" % runner.sim.role_name(c.role)
 
 	var lines: PackedStringArray = []
 	if not c.alive():

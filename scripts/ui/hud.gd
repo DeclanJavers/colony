@@ -160,6 +160,9 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 			_log("[color=#c9b6e4]%s asked %s to %s.[/color]" % [InspectText.link(a), InspectText.link(b), lbl])
 		elif conv["intent"] == "news":
 			_log("[color=#c9b6e4]%s told %s the news.[/color]" % [InspectText.link(a), InspectText.link(b)]))
+	ev.role_changed.connect(func(c: Colonist, role: String) -> void:
+		if role != "":
+			_log("[color=#d8c79a]%s has become the colony's %s.[/color]" % [InspectText.link(c), runner.sim.role_name(role)]))
 	ev.season_changed.connect(func(season: String) -> void:
 		var msg := {"spring": "Spring has come.", "summer": "Summer is here.",
 			"autumn": "Autumn: winter is coming, time to stock firewood.", "winter": "Winter has come."}

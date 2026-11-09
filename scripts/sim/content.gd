@@ -18,6 +18,7 @@ var actions_by_id: Dictionary = {}
 var traits: Dictionary = {}
 var names: Array = []
 var seasons: Dictionary = {}
+var roles: Dictionary = {}
 
 
 static func get_instance() -> Content:
@@ -44,6 +45,7 @@ func load_all() -> void:
 	traits = _strip_doc(_load("traits.json"))
 	names = _load("names.json")
 	seasons = _load("seasons.json")
+	roles = _load("roles.json")
 	actions_by_id.clear()
 	for a in actions:
 		actions_by_id[a["id"]] = a

@@ -116,7 +116,8 @@
         "tile:water"
       ],
       "per_trip": 10,
-      "work_minutes": 10
+      "work_minutes": 10,
+      "skill": "water_carrying"
     }
   },
   {

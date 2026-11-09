@@ -1,0 +1,13 @@
+{
+  "_doc": "Roles are not assigned: someone becomes known as the colony's woodcutter by chopping a lot of wood. A colonist's role is their best skill here once it reaches min_level and leads their next-best by `lead` times. `jobs` are the actions that train it (and that a skilled person is better at).",
+  "min_level": 1.5,
+  "lead": 1.3,
+  "skills": {
+    "woodcutting":    {"role": "woodcutter",    "good_at": "chopping wood",    "jobs": ["gather_wood"]},
+    "mining":         {"role": "stonecutter",   "good_at": "cutting stone",    "jobs": ["gather_stone"]},
+    "foraging":       {"role": "forager",       "good_at": "finding berries",  "jobs": ["gather_food"]},
+    "water_carrying": {"role": "water carrier", "good_at": "carrying water",   "jobs": ["fetch_water"]},
+    "farming":        {"role": "farmer",        "good_at": "farming",          "jobs": ["farm"]},
+    "building":       {"role": "builder",       "good_at": "building",         "jobs": ["build"]}
+  }
+}

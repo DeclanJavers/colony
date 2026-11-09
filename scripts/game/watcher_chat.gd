@@ -113,6 +113,8 @@ func snapshot(c: Colonist) -> Dictionary:
 	var traits: Array = []
 	for t in c.traits:
 		traits.append(String(sim.content.traits.get(t, {}).get("text", t)))
+	if c.role != "":
+		traits.append("the colony's %s" % sim.role_name(c.role))
 	var mems: Array = []
 	for m in c.top_memories(sim.clock, 8):
 		mems.append(String(m["text"]))

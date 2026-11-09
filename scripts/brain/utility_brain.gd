@@ -231,6 +231,18 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 		if r["action"] == aid:
 			var fresh := 1.0 - clampf((sim.clock - float(r["t"])) / Sim.REQUEST_TTL, 0.0, 1.0)
 			s += 0.9 * float(r["trust"]) * fresh
+	# Doing what you're good at: people lean towards work they've practised (relative to their own
+	# other skills), a little more if it's what they're known for. Practice makes them better at
+	# it, so a division of labour can grow by itself; colony needs above still outweigh it.
+	var sk := sim.skill_for_action(aid)
+	if sk != "":
+		var lvl := float(c.skills.get(sk, 0.0))
+		var tot := 0.0
+		for k in sim.role_skills():
+			tot += float(c.skills.get(k, 0.0))
+		var avg := tot / maxf(1.0, float(sim.role_skills().size()))
+		# Only among work worth doing: being a good builder is no reason to build what nobody needs.
+		s += (0.12 * clampf(lvl - avg, -2.0, 3.0) + (0.15 if c.role == sk else 0.0)) * clampf(s, 0.0, 1.0)
 	# Trait biases (data/traits.json "utility")
 	var kind: String = KIND_OF.get(aid, "need")
 	for t in c.traits:

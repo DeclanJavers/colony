@@ -30,16 +30,25 @@ func available() -> bool:
 
 
 func begin() -> bool:
+	if params.get("intent", "news") == "ask":
+		topic = String(Sim.GATHER_FOR.get(sim.believed_shortage(c), ""))
+		if topic == "":
+			return false
 	other = sim.colonists.get(int(extra.get("with_whom", -1))) as Colonist
 	if other == null or other == c or not other.alive():
 		var cands := sim.social_candidates(c)
 		if cands.is_empty():
 			return false
 		other = cands[0]
-	if params.get("intent", "news") == "ask":
-		topic = String(Sim.GATHER_FOR.get(sim.believed_shortage(c), ""))
-		if topic == "":
-			return false
+		# Asking for help: go to someone they know is good at it, if they know such a person
+		# (and they're not much further than a day's stroll).
+		var sk := sim.skill_for_action(topic)
+		if topic != "" and sk != "":
+			for o: Colonist in cands:
+				if o.role == sk and (c.affection.has(o.id) or c.partner_id == o.id or c.parent_ids.has(o.id)) \
+						and o.pos.distance_to(c.pos) < 30.0:
+					other = o
+					break
 	phase = "walking"
 	go_to(sim.map.access_cell([other.cell], c.cell))
 	repath = 10.0

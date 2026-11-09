@@ -120,7 +120,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 
 static func _colonist(c: Colonist) -> Dictionary:
 	return {"id": c.id, "name": c.name, "age": c.age_minutes, "lifespan": c.lifespan_days, "traits": Array(c.traits),
-		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(),
+		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(), "role": c.role,
 		"memories": c.memories.duplicate(true), "recent": c.recent.duplicate(true),
 		"knowledge": c.knowledge.facts.duplicate(true), "places": c.knowledge.places.duplicate(true), "seen": c.knowledge.seen, "requests": c.requests.duplicate(true),
 		"conversations": c.conversations.duplicate(true), "affection": c.affection.duplicate(),
@@ -134,6 +134,12 @@ static func _restore(d: Dictionary, sim: Sim) -> Colonist:
 	c.id = int(d["id"]); c.name = d["name"]; c.age_minutes = float(d["age"]); c.lifespan_days = float(d["lifespan"])
 	c.traits.assign(d["traits"])
 	c.needs = d["needs"].duplicate(); c.zero_minutes = d["zero"].duplicate(); c.skills = d["skills"].duplicate()
+	c.role = String(d.get("role", ""))
+	if c.skills.has("gathering"):   # saves from before skills were split per job
+		var g := float(c.skills["gathering"])
+		c.skills.erase("gathering")
+		for sk in ["woodcutting", "mining", "foraging"]:
+			c.skills[sk] = float(c.skills.get(sk, 0.0)) + g / 3.0
 	c.memories = d["memories"].duplicate(true); c.recent = d["recent"].duplicate(true)
 	c.knowledge = Knowledge.new(c.id)
 	c.knowledge.facts = d["knowledge"].duplicate(true)

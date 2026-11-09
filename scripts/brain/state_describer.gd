@@ -4,8 +4,36 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v4"   # v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
+const VERSION := "v5"   # v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
 const MAX_MEMORIES := 3
+
+
+## What they're good at and who they know is good at what, e.g. "Zed is the colony's woodcutter
+## (best at chopping wood, also building). Known for their work: Pia (farmer), Theo (builder)."
+func work_phrase(sim: Sim, c: Colonist) -> String:
+	var rs := sim.role_skills()
+	var mine: Array = []
+	for sk in rs:
+		if float(c.skills.get(sk, 0.0)) >= 0.5:
+			mine.append(sk)
+	mine.sort_custom(func(a, b) -> bool: return float(c.skills[a]) > float(c.skills[b]))
+	var out := ""
+	if c.role != "":
+		out = "%s is the colony's %s" % [c.name, sim.role_name(c.role)]
+		var also := mine.filter(func(sk) -> bool: return sk != c.role).slice(0, 1)
+		out += " (also handy at %s)." % rs[also[0]]["good_at"] if not also.is_empty() else "."
+	elif not mine.is_empty():
+		out = "%s is getting good at %s." % [c.name, " and ".join(mine.slice(0, 2).map(func(sk) -> String: return String(rs[sk]["good_at"])))]
+	# People they know (have feelings about, or family) who are known for their work.
+	var known: PackedStringArray = []
+	for o: Colonist in sim.colonists.values():
+		if o != c and o.role != "" and (c.affection.has(o.id) or c.parent_ids.has(o.id) or c.partner_id == o.id):
+			known.append("%s (%s)" % [o.name, sim.role_name(o.role)])
+		if known.size() >= 4:
+			break
+	if not known.is_empty():
+		out += (" " if out != "" else "") + "Known for their work: %s." % ", ".join(known)
+	return out
 
 
 ## What they know about where resources are, e.g. "Knows where to find: wood (5 places, nearest
@@ -46,6 +74,9 @@ func describe(sim: Sim, c: Colonist) -> String:
 	for t in c.traits:
 		trait_texts.append(str(sim.content.traits.get(t, {}).get("text", t)))
 	parts.append("%s is a%s %s colonist, %s." % [c.name, "n" if c.is_adult() else "", c.life_stage(), ", ".join(trait_texts)])
+	var work := work_phrase(sim, c)
+	if work != "":
+		parts.append(work)
 	parts.append("It is day %d, %s, %s%s." % [sim.day(), _part_of_day(sim), _season_phrase(sim),
 		(", " + String(sim.weather_def().get("label", sim.weather))) if sim.weather != "clear" else ""])
 	if sim.cold() >= float(sim.content.seasons.get("heating_from_cold", 0.3)):

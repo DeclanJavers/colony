@@ -198,7 +198,62 @@ func _step_on(p: Vector2, dt: float) -> void:
 		footfall[y * map.size + x] += dt
 
 
+## ---- Roles ------------------------------------------------------------------
+## Nobody is assigned a job. People get better at what they do (skills), and someone whose best
+## skill is well ahead of their others becomes known for it: "the colony's woodcutter".
+
+func role_skills() -> Dictionary:
+	return content.roles.get("skills", {})
+
+
+## The skill id `c` is known for right now, or "".
+func role_for(c: Colonist) -> String:
+	if not c.is_adult():
+		return ""
+	var best := ""
+	var best_l := 0.0
+	var second := 0.0
+	for sk in role_skills():
+		var l := float(c.skills.get(sk, 0.0))
+		if l > best_l:
+			second = best_l
+			best_l = l
+			best = sk
+		elif l > second:
+			second = l
+	if best_l >= float(content.roles.get("min_level", 1.5)) and best_l >= second * float(content.roles.get("lead", 1.3)):
+		return best
+	return ""
+
+
+func role_name(skill_id: String) -> String:
+	return String(role_skills().get(skill_id, {}).get("role", ""))
+
+
+## The skill an action trains / benefits from ("" if none).
+func skill_for_action(action_id: String) -> String:
+	for sk in role_skills():
+		if Array(role_skills()[sk].get("jobs", [])).has(action_id):
+			return sk
+	return ""
+
+
+func _update_roles() -> void:
+	for c: Colonist in colonists.values():
+		var r := role_for(c)
+		if r == c.role:
+			continue
+		var was := c.role
+		c.role = r
+		if r != "":
+			add_memory(c, "People have started calling me the colony's %s." % role_name(r), 3.5)
+		elif was != "":
+			add_memory(c, "I don't do much %s any more." % String(role_skills().get(was, {}).get("good_at", "of that work")), 1.5)
+		events.role_changed.emit(c, r)
+
+
 func _on_hour() -> void:
+	_update_roles()
 	for i in footfall.size():
 		footfall[i] *= FOOTFALL_FADE_PER_HOUR
 	for n: ResNode in nodes.values():

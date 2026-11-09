@@ -28,3 +28,5 @@ signal weather_changed(weather: String)
 signal delivered(c: Colonist, resource: String, amount: float)   # a colonist dropped goods at storage
 signal conversation_started(conv: Dictionary)    # {id, t, a, b, intent, topic}
 signal conversation_finished(conv: Dictionary)   # + lines, facts, requests, learned
+## Someone has become known for a kind of work (data/roles.json). role = skill id, "" = none.
+signal role_changed(c: Colonist, role: String)
