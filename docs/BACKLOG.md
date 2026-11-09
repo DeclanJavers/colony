@@ -17,7 +17,9 @@ Order: v4 scoreboard first, then features, then the v5 training data last, so it
 
 **Next:**
 - **Hunting pack:** rabbits and deer become huntable (spear), herds thin if over-hunted.
-- **Laya v5:** retrain on the new state text (v7: tools; fishing; terrain) with DAgger data from v4.
+- **Laya v5 (ready to train):** `colony_laya/data_v5` in Drive has 21,450 rows on state text v7: ten clean teacher colonies (tools, fishing, terrain, meetings) plus v4's own mistakes in six colonies, labelled by the teacher and counted twice. Open `colony_laya/train_v5.ipynb` in Colab, Run all, and allow Drive access (about 2 hours on a T4; it continues from v4 and releases the GPU at the end). Then copy `laya_colony_v5` (without `checkpoint_latest/`) to `models/`, restart `brain_server/run.sh`, run `tools/eval/run_eval.py --brains laya utility --label v5`, and if v5 holds up set `decision.brain` back to `laya` in data/config.json.
+- **Why v4 isn't used:** v4 (79% held-out agreement on state text v6) was trained before tools existed; in the tools world it never makes a hatchet and colonies die of thirst on day 1 (scoreboard: 1.7 people left on average after 12 days, 10 deaths). The game defaults to the hand-made brain until v5.
+- **Explore is rare in the teacher's data now** (12 of 21k rows): with tools and fishing it seldom needs to. Worth a look if v5 never explores.
 
 ## Next big Laya training run (v2)
 
