@@ -23,11 +23,14 @@ var selected_target: Variant = null    # whatever is inspected
 var _hover_t := 0.0
 
 var _models: Dictionary = {}       # type -> PackedScene (or null)
+var _variants: Dictionary = {}     # type -> [PackedScene] (type_2, type_3, ...)
 var _nodes: Dictionary = {}        # ResNode id -> Node3D
 var _buildings: Dictionary = {}    # Building id -> {root, model, frame, crops, light}
 var _colonists: Dictionary = {}    # Colonist id -> {root, model, label, ring}
 var _fire_lights: Array[OmniLight3D] = []
 var _hover: Variant = null              # thing under the mouse
+var ground_material: StandardMaterial3D = null   # (old flat ground; Ground replaces it)
+var ground: Ground                       # SeasonView recolours it
 var _intent := MeshInstance3D.new()     # dotted line from the selected colonist to their target
 var _node_t := 0.0
 var _nudge: Dictionary = {}             # colonist id -> small visual offset so nobody overlaps
@@ -41,6 +44,7 @@ var _select_ring: MeshInstance3D
 func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	sim = p_sim
 	camera = p_camera
+	camera.add_child(PixelPass.new(camera))
 	_build_terrain()
 	for n: ResNode in sim.nodes.values():
 		_add_node(n)
@@ -76,7 +80,7 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	torus.inner_radius = 0.38
 	torus.outer_radius = 0.48
 	_select_ring.mesh = torus
-	_select_ring.material_override = _flat_mat(Color(1.0, 0.9, 0.2), true)
+	_select_ring.material_override = _flat_mat(Color("#E8C468"), true)   # STYLE.md: warm, not neon
 	_select_ring.visible = false
 	add_child(_select_ring)
 
@@ -88,50 +92,34 @@ static func to_world(p: Vector2) -> Vector3:
 ## ---- Terrain ---------------------------------------------------------------
 
 func _build_terrain() -> void:
-	var n := sim.map.size
-	var img := Image.create_empty(n, n, false, Image.FORMAT_RGB8)
-	for y in n:
-		for x in n:
-			var t := sim.map.tile(Vector2i(x, y))
-			var col := GRASS
-			if t == WorldMap.Tile.WATER:
-				col = WATER
-			elif t == WorldMap.Tile.FORD:
-				col = FORD
-			else:
-				# Gentle checker + hash variation so tiles read as a grid without noise.
-				var h := float(((x * 73856093) ^ (y * 19349663)) & 255) / 255.0
-				col = col.darkened(0.04 * h + (0.03 if (x + y) % 2 == 0 else 0.0))
-			img.set_pixel(x, y, col)
-	var tex := ImageTexture.create_from_image(img)
-	var ground := MeshInstance3D.new()
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(n, n)
-	ground.mesh = plane
-	var m := StandardMaterial3D.new()
-	m.albedo_texture = tex
-	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	m.roughness = 1.0
-	ground.material_override = m
-	ground.position = Vector3(n / 2.0 - 0.5, 0.0, n / 2.0 - 0.5)
+	ground = Ground.new()
 	add_child(ground)
-	# A dark slab under the map so the edge reads as an edge.
-	var slab := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(n + 0.6, 1.0, n + 0.6)
-	slab.mesh = bm
-	slab.material_override = _flat_mat(Color(0.22, 0.16, 0.10))
-	slab.position = ground.position + Vector3(0, -0.52, 0)
-	add_child(slab)
+	ground.setup(sim)
 
 
 ## ---- Models ----------------------------------------------------------------
 
-func _model(type: String) -> Node3D:
+## A model by type. Variants (<type>_2.glb, <type>_3.glb...) are picked by `key` (an object id),
+## so the same tree or house always looks the same.
+func _model(type: String, key: int = 0) -> Node3D:
 	if not _models.has(type):
 		var path := MODEL_DIR + type + ".glb"
 		_models[type] = load(path) if ResourceLoader.exists(path) else null
+		var variants: Array = []
+		var i := 2
+		while ResourceLoader.exists(MODEL_DIR + "%s_%d.glb" % [type, i]):
+			variants.append(load(MODEL_DIR + "%s_%d.glb" % [type, i]))
+			i += 1
+		_variants[type] = variants
 	var ps: PackedScene = _models[type]
+	var vs: Array = _variants.get(type, [])
+	if ps != null and not vs.is_empty():
+		var k := int(_hash01(key * 97 + 13) * (vs.size() + 1)) % (vs.size() + 1)
+		if k > 0:
+			ps = vs[k - 1]
+		var inst := ps.instantiate() as Node3D
+		inst.set_meta("variant", k + 1)
+		return inst
 	if ps != null:
 		return ps.instantiate() as Node3D
 	# Fallback: a box with the type name, so new data-only content still shows up.
@@ -174,13 +162,13 @@ func _make_label(text: String, size: int = 40) -> Label3D:
 
 
 func _hash01(i: int) -> float:
-	return float((i * 2654435761) & 0xFFFF) / 65535.0
+	return float(hash(i) & 0xFFFF) / 65535.0
 
 
 ## ---- Resource nodes ---------------------------------------------------------
 
 func _add_node(n: ResNode) -> void:
-	var m := _model(n.type)
+	var m := _model(n.type, n.id)
 	m.position = to_world(Vector2(n.cell))
 	m.rotation.y = _hash01(n.id) * TAU
 	var s := 0.85 + 0.3 * _hash01(n.id * 7)
@@ -205,8 +193,11 @@ func _add_building(b: Building) -> void:
 	var root := Node3D.new()
 	root.position = to_world(b.center())
 	add_child(root)
-	var model := _model(b.type)
+	var model := _model(b.type, b.id)
 	root.add_child(model)
+	# Square buildings face different ways (STYLE.md: variety), picked per building.
+	if b.size.x == b.size.y and b.size.x > 1 and b.provides("farm") == null and b.type != "stockpile":
+		model.rotation.y = float(int(_hash01(b.id * 31 + 7) * 4.0) % 4) * PI / 2.0
 	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null, "pct": null, "goods": null,
 		"window": model.find_child("window", true, false), "lit": false, "smoke": null}
 	if b.provides("farm") != null:
@@ -217,7 +208,7 @@ func _add_building(b: Building) -> void:
 	if b.provides("rest_spot") != null:
 		var light := OmniLight3D.new()
 		light.light_color = Color(1.0, 0.6, 0.25)
-		light.omni_range = 6.0
+		light.omni_range = 5.0
 		light.position.y = 0.6
 		light.light_energy = 0.0
 		root.add_child(light)
@@ -229,13 +220,16 @@ func _add_building(b: Building) -> void:
 		root.add_child(frame)
 		entry["frame"] = frame
 		var pct := _make_label("", 26)
-		pct.modulate = Color(1.0, 0.85, 0.5)
+		pct.modulate = Color(1.0, 0.88, 0.6)
+		pct.font_size = 30
 		pct.position.y = 1.2 + 0.25 * b.size.x
 		root.add_child(pct)
 		entry["pct"] = pct
 	_buildings[b.id] = entry
+	_snow_roof(model, _roofs_snowy)
 	if b.complete:
 		_add_smoke(b, entry)
+		_add_lamp(b, entry)
 	_update_building(b)
 
 
@@ -250,6 +244,7 @@ func _on_building_completed(b: Building) -> void:
 		(e["pct"] as Node3D).queue_free()
 		e["pct"] = null
 	_add_smoke(b, e)
+	_add_lamp(b, e)
 	_update_building(b)
 
 
@@ -260,6 +255,7 @@ func _update_building(b: Building) -> void:
 	var model: Node3D = e["model"]
 	# Sites rise out of the ground as work progresses.
 	model.scale = Vector3.ONE if b.complete else Vector3(1.0, maxf(0.04, b.progress()), 1.0)
+	model.visible = b.complete or b.progress() > 0.03     # a fresh site is just its frame
 	var crops: Node3D = e["crops"]
 	if crops != null:
 		crops.visible = b.complete and b.farm_stage != "empty"
@@ -374,7 +370,13 @@ func _process(delta: float) -> void:
 		# Tip the model over to sleep unless it has a real lie-down animation.
 		var tip := sleeping and not (avatar != null and avatar.lies_down())
 		model.rotation.x = lerpf(model.rotation.x, -PI / 2.0 if tip else 0.0, follow)
-		model.position.y = 0.12 if tip else 0.0
+		var lift := 0.0
+		if sleeping:
+			# Lying on a stockpile deck or farm plot: on top of it, not inside it.
+			var under := sim.building_at_cell(Vector2i(roundi(c.pos.x), roundi(c.pos.y)))
+			if under != null and under.type != "house":
+				lift = 0.35 if under.type == "stockpile" else 0.12
+		model.position.y = (0.12 if tip else 0.0) + lift
 		var s := 1.0 if c.is_adult() else 0.65
 		model.scale = Vector3(s, s, s)
 		var over: Overhead = e["over"]
@@ -389,7 +391,7 @@ func _process(delta: float) -> void:
 			_update_building(b)
 	var night := 1.0 if sim.is_night() else 0.0
 	for l in _fire_lights:
-		l.light_energy = lerpf(l.light_energy, 0.4 + 2.2 * night, follow)
+		l.light_energy = lerpf(l.light_energy, 0.3 + 1.4 * night, follow)
 	if selected_target != null:
 		_place_ring()
 	_update_intent_line()
@@ -453,6 +455,7 @@ func _update_carry(c: Colonist, carry: MeshInstance3D) -> void:
 			carry.mesh = m
 			carry.rotation = Vector3.ZERO
 	carry.material_override = _flat_mat(RES_COLORS.get(res, Color.WHITE))
+	carry.scale = Vector3.ONE * 1.5     # big enough to read at normal zoom
 
 
 func _emote(c: Colonist, clip: String) -> void:
@@ -556,7 +559,12 @@ func _update_nudges() -> void:
 	_nudge = out
 
 
-const CHIMNEYS := {"kitchen": Vector3(-0.55, 1.95, -0.45), "workshop": Vector3(0.55, 1.95, -0.45)}
+## Chimney tops (from tools/blender/make_models.py). Houses only smoke while heated.
+const CHIMNEYS := {"kitchen": Vector3(-0.45, 2.35, -0.35), "workshop": Vector3(0.50, 2.25, -0.42),
+	"house": Vector3(0.42, 2.35, -0.30)}
+## Lamp posts that come with some buildings: offset from the building's centre.
+## (in the model's own frame, so they turn with it; placed clear of the props by the door)
+const LAMPS := {"town_hall": [Vector3(-0.62, 0, 1.58), Vector3(0.62, 0, 1.58)], "kitchen": [Vector3(0.98, 0, 0.25)]}
 
 
 ## A thin wisp of smoke from chimneys: quiet signs of life.
@@ -593,8 +601,23 @@ func _add_smoke(b: Building, e: Dictionary) -> void:
 	grad.set_color(0, Color(1, 1, 1, 0.55))
 	grad.set_color(1, Color(1, 1, 1, 0.0))
 	p.color_ramp = grad
-	(e["root"] as Node3D).add_child(p)
+	(e["model"] as Node3D).add_child(p)
 	e["smoke"] = p
+	if b.type == "house":
+		p.emitting = b.heated
+
+
+func _add_lamp(b: Building, e: Dictionary) -> void:
+	if not LAMPS.has(b.type) or e.get("lamp") != null:
+		return
+	var lit: Array = []
+	for pos in LAMPS[b.type]:
+		var lamp := _model("lamp_post")
+		lamp.position = pos
+		(e["model"] as Node3D).add_child(lamp)
+		lit.append(lamp.find_child("lamp", true, false))
+	e["lamp"] = lit
+	e["lamp_lit"] = true
 
 
 ## ---- Stored goods ------------------------------------------------------------
@@ -690,8 +713,9 @@ static func _goods_item_mesh(res: String) -> Mesh:
 			w.radial_segments = 8
 			m = w
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = {"wood": Color(0.55, 0.38, 0.22), "stone": Color(0.62, 0.63, 0.66),
-		"food": Color(0.80, 0.62, 0.40), "water": Color(0.36, 0.55, 0.80)}[res]
+	# STYLE.md palette: plank logs, light stone, sacking, and barrels with a blue tint so water reads.
+	mat.albedo_color = {"wood": Color("#9C6B3F"), "stone": Color("#B8B3AA"),
+		"food": Color("#D2B48C"), "water": Color("#557FAE")}[res]
 	mat.roughness = 0.85
 	m.material = mat
 	_goods_mesh[res] = m
@@ -701,30 +725,98 @@ static func _goods_item_mesh(res: String) -> Mesh:
 ## Houses glow warm in the evening and at night while someone is home.
 func _update_windows() -> void:
 	var h := sim.time_of_day()
-	var evening := h >= 18.5 or h < 6.0
+	var dark := h >= 18.5 or h < 6.0
+	# Lamps burn all night; windows glow in the evening and before dawn wherever someone lives
+	# (and in the kitchen and town hall), then go dark while everyone sleeps.
+	var evening := (h >= 18.5 and h < 23.5) or (h >= 5.0 and h < 6.5)
 	var home := {}
-	if evening:
-		for c: Colonist in sim.colonists.values():
-			if c.action != null and c.action.phase == "sleeping" and c.home_id >= 0:
-				home[c.home_id] = true
+	for c: Colonist in sim.colonists.values():
+		if c.home_id >= 0:
+			home[c.home_id] = true
 	for bid in _buildings:
 		var e: Dictionary = _buildings[bid]
+		var bb := sim.buildings.get(bid) as Building
+		var smoke := e.get("smoke") as CPUParticles3D
+		if smoke != null and bb != null and bb.type == "house":
+			smoke.emitting = bb.heated
+		var lamps: Variant = e.get("lamp")
+		if lamps is Array and bool(e.get("lamp_lit", false)) != dark:
+			e["lamp_lit"] = dark
+			for lamp: MeshInstance3D in lamps:
+				if lamp != null:
+					lamp.material_override = _glow_mat() if dark else _dim_lamp_mat()
 		var w := e.get("window") as MeshInstance3D
 		if w == null:
 			continue
-		var lit := evening and home.has(bid)
+		var lit := evening and (home.has(bid) or (bb != null and bb.type in ["kitchen", "town_hall"]))
 		if lit == bool(e["lit"]):
 			continue
 		e["lit"] = lit
-		if lit:
-			var m := StandardMaterial3D.new()
-			m.albedo_color = Color(1.0, 0.78, 0.4)
-			m.emission_enabled = true
-			m.emission = Color(1.0, 0.7, 0.3)
-			m.emission_energy_multiplier = 2.2
-			w.material_override = m
-		else:
-			w.material_override = null
+		w.material_override = _glow_mat() if lit else null
+
+
+var _glow: StandardMaterial3D
+var _dim_lamp: StandardMaterial3D
+
+
+## Warm window / lamp light (STYLE.md "Fire, window glow").
+func _glow_mat() -> StandardMaterial3D:
+	if _glow == null:
+		_glow = StandardMaterial3D.new()
+		_glow.albedo_color = Color("#FFB040")
+		_glow.emission_enabled = true
+		_glow.emission = Color("#FFA030")
+		_glow.emission_energy_multiplier = 2.4
+	return _glow
+
+
+func _dim_lamp_mat() -> StandardMaterial3D:
+	if _dim_lamp == null:
+		_dim_lamp = StandardMaterial3D.new()
+		_dim_lamp.albedo_color = Color("#C8A060")
+	return _dim_lamp
+
+
+var _roofs_snowy := false
+var _snow_mat: StandardMaterial3D
+
+
+## Snow on every roof in winter (roof parts are named after their roof material).
+func snow_roofs(on: bool) -> void:
+	_roofs_snowy = on
+	for bid in _buildings:
+		_snow_roof(_buildings[bid]["model"], on)
+
+
+func _snow_roof(model: Node3D, on: bool) -> void:
+	if _snow_mat == null:
+		_snow_mat = _flat_mat(Color(0.97, 0.98, 1.0))   # brighter than the ground snow so roofs stand out
+	for mi in model.find_children("roof_*", "MeshInstance3D", true, false):
+		var n := String(mi.name)
+		if n.ends_with("_dark"):      # ridge and eaves stay dark so the roof shape still reads
+			continue
+		(mi as MeshInstance3D).material_override = _snow_mat if on else null
+
+
+## Seasonal tree tops: autumn colours (picked per tree), snow-dusted in winter, natural otherwise.
+func tint_trees(season: String, autumn: Array, winter: Color) -> void:
+	for nid in _nodes:
+		var n := sim.nodes.get(nid) as ResNode
+		var m: Node3D = _nodes[nid]
+		if n == null or m == null or not (n.type == "tree" or n.type == "berry_bush"):
+			continue
+		var col: Variant = null
+		if season == "autumn" and n.type == "tree" and int(m.get_meta("variant", 1)) != 3:   # pines stay green
+			col = autumn[int(_hash01(nid * 3) * autumn.size()) % autumn.size()]
+		elif season == "winter":
+			col = winter
+		for leaf in ["leaves1", "leaves2"]:
+			var mi := m.find_child(leaf, true, false) as MeshInstance3D
+			if mi != null:
+				var c2: Variant = col
+				if col != null and leaf == "leaves2":
+					c2 = (col as Color).lightened(0.18)
+				mi.material_override = _flat_mat(c2) if c2 != null else null
 
 
 ## Trees and rocks shrink as they're used up.

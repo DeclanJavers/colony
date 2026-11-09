@@ -227,6 +227,16 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 	for k in deaths:
 		death_parts.append("%d %s" % [int(deaths[k]), k])
 	L.append("[b]Day %d[/b], %s. Tier %d." % [sim.day(), "night" if sim.is_night() else "day", sim.unlocked_tier])
+	var heated := 0
+	var houses := 0
+	for b: Building in sim.buildings.values():
+		if b.complete and b.provides("heated_warmth") != null:
+			houses += 1
+			heated += 1 if b.heated else 0
+	var winter_in := sim.days_until("winter")
+	L.append("%s, %s%s. %s" % [sim.season().capitalize(), String(sim.weather_def().get("label", sim.weather)),
+		(" · winter in %d days" % winter_in) if sim.season() != "winter" and winter_in <= 4 else "",
+		("Houses heated: %d of %d." % [heated, houses]) if sim.cold() >= 0.3 else ""])
 	L.append("%d people: %d adults, %d children, %d couples. %d births, %s." % [
 		sim.alive_count(), adults, sim.alive_count() - adults, couples / 2, int(sim.stats.get("births", 0)),
 		("deaths: " + ", ".join(death_parts)) if not death_parts.is_empty() else "no deaths"])

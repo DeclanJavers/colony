@@ -18,6 +18,8 @@ func begin() -> bool:
 			source = s
 			phase = "walking"
 			return true
+		if s.get("kind") == "node":
+			(s["ref"] as ResNode).unreachable_until = sim.clock + 12.0 * 60.0   # cut off: skip it for a while
 	return false
 
 

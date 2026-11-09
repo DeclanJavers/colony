@@ -36,19 +36,28 @@ func _ready() -> void:
 	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	root.add_child(bar)
 	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 22)
+	hb.add_theme_constant_override("separation", 16)
 	bar.add_child(hb)
 	for l in [_time, _pop, _stock, _tier]:
 		l.add_theme_font_size_override("font_size", 17)
 		hb.add_child(l)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hb.add_child(spacer)
+	# Status text takes whatever room is left and is cut short rather than pushing the buttons off.
+	var status := HBoxContainer.new()
+	status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status.alignment = BoxContainer.ALIGNMENT_END
+	status.add_theme_constant_override("separation", 12)
+	hb.add_child(status)
 	_lag.add_theme_color_override("font_color", Color(1, 0.8, 0.3))
-	hb.add_child(_lag)
+	_lag.add_theme_font_size_override("font_size", 13)
+	_lag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	status.add_child(_lag)
 	_brain.add_theme_font_size_override("font_size", 13)
 	_brain.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hb.add_child(_brain)
+	_brain.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_brain.clip_text = true
+	_brain.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_brain.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	status.add_child(_brain)
 	var settings_btn := Button.new()
 	settings_btn.text = "Settings"
 	settings_btn.focus_mode = Control.FOCUS_NONE
@@ -93,15 +102,22 @@ func _ready() -> void:
 	var help := Label.new()
 	help.text = "click anything to inspect · Tab next colonist · F follow · C colony · Space pause · 1/2/3 speed"
 	help.add_theme_font_size_override("font_size", 12)
-	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
-	help.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
-	help.add_theme_constant_override("outline_size", 4)
-	help.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	help.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	help.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	help.offset_bottom = -8
+	help.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
 	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(help)
+	# On a soft dark strip so it reads on snow as well as grass.
+	var help_panel := PanelContainer.new()
+	var hs := _panel_style()
+	hs.bg_color.a *= 0.7
+	hs.content_margin_top = 2
+	hs.content_margin_bottom = 2
+	help_panel.add_theme_stylebox_override("panel", hs)
+	help_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	help_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	help_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	help_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	help_panel.offset_bottom = -6
+	help_panel.add_child(help)
+	root.add_child(help_panel)
 
 	# --- hover tooltip (follows the mouse)
 	_tooltip.add_theme_font_size_override("font_size", 13)
@@ -144,6 +160,13 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 			_log("[color=#c9b6e4]%s asked %s to %s.[/color]" % [InspectText.link(a), InspectText.link(b), lbl])
 		elif conv["intent"] == "news":
 			_log("[color=#c9b6e4]%s told %s the news.[/color]" % [InspectText.link(a), InspectText.link(b)]))
+	ev.season_changed.connect(func(season: String) -> void:
+		var msg := {"spring": "Spring has come.", "summer": "Summer is here.",
+			"autumn": "Autumn: winter is coming, time to stock firewood.", "winter": "Winter has come."}
+		_log("[color=#c5d8e8]%s[/color]" % msg.get(season, season.capitalize())))
+	ev.weather_changed.connect(func(w: String) -> void:
+		if w == "storm" or w == "snow":
+			_log("[color=#c5d8e8]%s[/color]" % ("A storm rolls in." if w == "storm" else "Snow is falling.")))
 	ev.tier_unlocked.connect(func(t: int) -> void: _log("[color=#80d8ff]Tier %d unlocked![/color]" % t))
 	runner.speed_changed.connect(func(_s: int) -> void: _refresh_speed())
 	view.target_selected.connect(func(t: Variant) -> void: inspector.show_target(t))
@@ -211,6 +234,7 @@ func _build_settings(root: Control) -> void:
 	_settings.add_child(grid)
 	_add_choice(grid, "Conversations", "talk_mode", [["all", "Chat model writes all"], ["near", "Only ones on screen"], ["quick", "Quick (no chat model)"]])
 	_add_choice(grid, "Names", "names", [["auto", "When zoomed in"], ["always", "Always"], ["never", "Never"]])
+	_add_choice(grid, "Pixels", "pixels", [["fine", "Fine pixel art"], ["chunky", "Chunky pixel art"], ["off", "Smooth (no pixels)"]])
 	var lbl := Label.new()
 	lbl.text = "Speech bubbles"
 	grid.add_child(lbl)
@@ -278,7 +302,8 @@ func _process(_delta: float) -> void:
 		return
 	var sim := runner.sim
 	var t := sim.time_of_day()
-	_time.text = "Day %d   %02d:%02d %s" % [sim.day(), int(t), int(fmod(t, 1.0) * 60.0), "(night)" if sim.is_night() else ""]
+	_time.text = "Day %d   %02d:%02d %s  ·  %s%s" % [sim.day(), int(t), int(fmod(t, 1.0) * 60.0), "(night)" if sim.is_night() else "",
+		sim.season().capitalize(), (", " + String(sim.weather_def().get("label", sim.weather))) if sim.weather != "clear" else ""]
 	var adults := 0
 	for c: Colonist in sim.colonists.values():
 		if c.is_adult():

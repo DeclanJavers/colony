@@ -22,6 +22,9 @@ func begin() -> bool:
 			sim.reserve_source(source, 1)
 			phase = "walking"
 			return true
+		if s.get("kind") == "node":
+			# No way there (cut off by water or buildings): don't keep offering it for a while.
+			(s["ref"] as ResNode).unreachable_until = sim.clock + 12.0 * 60.0
 	return false
 
 

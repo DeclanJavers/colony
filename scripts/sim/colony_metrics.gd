@@ -9,6 +9,8 @@ var hours := 0
 var homeless_hours := 0.0          # colonist-hours without a bed
 var person_hours := 0.0
 var critical_hours := 0.0          # colonist-hours with thirst/hunger < 15
+var cold_hours := 0.0              # colonist-hours with warmth < 30
+var winter_wood := -1.0            # wood in stock when the first winter starts
 var famine_hours := 0              # hours with less than a day of food in storage
 var max_glut := {}                 # resource -> max days of supply in storage
 var max_farms_per_person := 0.0
@@ -50,11 +52,15 @@ func _on_hour(_d: int, _h: int) -> void:
 			homeless_hours += 1.0
 		if float(c.needs.get("thirst", 100)) < 15.0 or float(c.needs.get("hunger", 100)) < 15.0:
 			critical_hours += 1.0
+		if float(c.needs.get("warmth", 100)) < 30.0:
+			cold_hours += 1.0
 		for k in Knowledge.STOCK_KEYS:
 			if c.knowledge != null and c.knowledge.knows(k, sim.clock):
 				var truth := float(sim.stock.get(k, 0.0))
 				belief_err_sum += absf(c.knowledge.recall(k, sim.clock) - truth) / maxf(truth, 20.0)
 				belief_err_n += 1
+	if winter_wood < 0.0 and sim.season() == "winter":
+		winter_wood = float(sim.stock.get("wood", 0.0))
 	if float(sim.stock.get("food", 0.0)) < pop * float(daily_use.get("food", 6.0)):
 		famine_hours += 1
 	for k in daily_use:
@@ -73,6 +79,7 @@ func report() -> Dictionary:
 		"houses": sim.count_of("house", false), "farms": sim.count_of("farm_plot", false),
 		"homeless_share": snappedf(homeless_hours / maxf(person_hours, 1.0), 0.01),
 		"critical_share": snappedf(critical_hours / maxf(person_hours, 1.0), 0.001),
+		"cold_share": snappedf(cold_hours / maxf(person_hours, 1.0), 0.001), "winter_wood": winter_wood,
 		"famine_share": snappedf(float(famine_hours) / maxf(hours, 1.0), 0.01),
 		"max_farms_per_person": snappedf(max_farms_per_person, 0.01),
 		"max_glut_days": {}, "failed_share": snappedf(float(sim.stats.get("failed_decisions", 0)) / maxf(decisions, 1.0), 0.001),
@@ -92,6 +99,10 @@ static func flags(r: Dictionary) -> Array:
 	var d: Dictionary = r["deaths"]
 	if int(d.get("starvation", 0)) + int(d.get("thirst", 0)) > 0:
 		f.append("starvation/thirst deaths")
+	if int(d.get("freezing", 0)) > 0:
+		f.append("people froze to death")
+	if float(r.get("cold_share", 0.0)) > 0.1:
+		f.append("people often cold (%d%% of the time)" % int(100 * float(r["cold_share"])))
 	if float(r["homeless_share"]) > 0.25:
 		f.append("many people without beds (%d%% of the time)" % int(100 * float(r["homeless_share"])))
 	if float(r["max_farms_per_person"]) > 1.0:

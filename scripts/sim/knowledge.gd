@@ -22,6 +22,7 @@ const STOCK_KEYS := ["food", "water", "wood", "stone"]
 
 var owner_id: int = 0
 var facts: Dictionary = {}     # key -> {v: float, t: float, src: "seen"|"heard", from: String}
+var places: Dictionary = {}    # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from}
 
 
 func _init(p_owner: int = 0) -> void:
@@ -90,6 +91,39 @@ func uncertainty(now: float) -> float:
 	for k in STOCK_KEYS:
 		u += 1.0 if not knows(k, now) else clampf(age_h(k, now) / 24.0, 0.0, 1.0)
 	return u / STOCK_KEYS.size()
+
+
+## ---- Places: where resources are --------------------------------------------------
+
+func see_place(node_id: int, type: String, cell: Vector2i, now: float) -> void:
+	places[node_id] = {"type": type, "cell": cell, "t": now, "src": "seen", "from": ""}
+
+
+## Told where something is. Only adds places they didn't know (their own sighting wins).
+func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, from: String) -> bool:
+	if places.has(node_id):
+		return false
+	places[node_id] = {"type": type, "cell": cell, "t": t_source, "src": "heard", "from": from}
+	return true
+
+
+func forget_place(node_id: int) -> void:
+	places.erase(node_id)
+
+
+func knows_place(node_id: int) -> bool:
+	return places.has(node_id)
+
+
+## Known places of a type, nearest first: [{id, cell, d}].
+func places_of(type: String, from: Vector2i) -> Array:
+	var out := []
+	for nid in places:
+		var p: Dictionary = places[nid]
+		if p["type"] == type:
+			out.append({"id": nid, "cell": p["cell"], "d": Vector2(p["cell"] - from).length()})
+	out.sort_custom(func(a, b) -> bool: return a["d"] < b["d"])
+	return out
 
 
 func to_dict() -> Dictionary:

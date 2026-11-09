@@ -23,6 +23,8 @@ signal building_completed(b: Building)
 signal node_depleted(n: ResNode)
 signal tier_unlocked(tier: int)
 signal stock_changed(stock: Dictionary)
+signal season_changed(season: String)
+signal weather_changed(weather: String)
 signal delivered(c: Colonist, resource: String, amount: float)   # a colonist dropped goods at storage
 signal conversation_started(conv: Dictionary)    # {id, t, a, b, intent, topic}
 signal conversation_finished(conv: Dictionary)   # + lines, facts, requests, learned

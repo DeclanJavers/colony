@@ -18,6 +18,7 @@ var completed_at: float = -1.0
 var placed_by: String = ""         # colonist name ("" = there from the start)
 var work_by: Dictionary = {}       # colonist name -> minutes of building work put in
 var harvests: int = 0              # farms: times harvested
+var heated: bool = false           # houses: burning firewood right now
 
 
 func def() -> Dictionary:

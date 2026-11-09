@@ -12,6 +12,7 @@ signal reply_received(c: Colonist, text: String)
 signal memory_saved(c: Colonist, text: String)
 signal failed(c: Colonist, message: String)
 signal busy_changed(c: Colonist, busy: bool)
+signal request_heard(c: Colonist, action_id: String)
 
 const MEMORY_EVERY := 6          # messages (both sides) before a memory is saved mid-conversation
 const MEMORY_IMPORTANCE := 7.0   # same league as "became a couple" (8) and "was born" (5)
@@ -22,6 +23,7 @@ var base_url: String = "http://127.0.0.1:8765"
 var histories: Dictionary = {}   # colonist id -> [{role, content}]
 var _saved_upto: Dictionary = {} # colonist id -> index into history already turned into memory
 var _busy: Dictionary = {}       # colonist id -> true while waiting for a reply
+var _asked_now: Dictionary = {}  # colonist id -> {action: true} requested via /intent since the last memory
 
 
 func _init(p_sim: Sim, url: String = "") -> void:
@@ -46,6 +48,15 @@ func send(c: Colonist, message: String) -> void:
 	var body := {"colonist": snapshot(c), "history": h.slice(maxi(0, h.size() - 10)), "message": message}
 	h.append({"role": "user", "content": message})
 	histories[c.id] = h
+	# Asked for a job? It becomes a request right away (not only when the conversation ends).
+	_post("/intent", {"colonist": c.name, "message": message}, func(ok: bool, data: Dictionary) -> void:
+		var req := String(data.get("request", "none")) if ok else "none"
+		if req != "none" and sim.content.actions_by_id.has(req) and c.alive():
+			var asked: Dictionary = _asked_now.get(c.id, {})
+			asked[req] = true
+			_asked_now[c.id] = asked
+			sim.add_request(c, "the Watcher", req, 0.8, true)
+			request_heard.emit(c, req))
 	_set_busy(c, true)
 	_post("/chat", body, func(ok: bool, data: Dictionary) -> void:
 		_set_busy(c, false)
@@ -86,7 +97,10 @@ func save_memory(c: Colonist) -> void:
 		sim.add_memory(c, text, MEMORY_IMPORTANCE)
 		c.memories[-1]["source"] = "watcher"
 		var req := String(data.get("request", "none"))
-		if req != "none" and sim.content.actions_by_id.has(req):
+		var asked: Dictionary = _asked_now.get(c.id, {})
+		_asked_now.erase(c.id)
+		# Usually already registered message-by-message (/intent); only add one that was missed.
+		if req != "none" and sim.content.actions_by_id.has(req) and not asked.has(req):
 			sim.add_request(c, "the Watcher", req, 0.8)   # the voice they hear is fairly persuasive
 		memory_saved.emit(c, text))
 

@@ -17,6 +17,10 @@ var graveyard: Array[Colonist] = []
 var buildings: Dictionary = {}          # id -> Building
 var nodes: Dictionary = {}              # id -> ResNode
 var stock: Dictionary = {}              # resource -> amount (shared by everyone)
+## Minutes spent walking on each tile (y * size + x), fading slowly: the view wears paths into the
+## grass where people actually go.
+var footfall := PackedFloat32Array()
+const FOOTFALL_FADE_PER_HOUR := 0.995
 var unlocked_tier: int = 0
 
 var brains: Dictionary = {}             # brain id -> Brain
@@ -30,6 +34,8 @@ var action_types: Dictionary = {}       # type name -> Script
 
 var stats := {"births": 0, "deaths": {}, "decisions": 0, "failed_decisions": 0, "requests_made": 0, "requests_followed": 0}
 
+var weather: String = "clear"
+var _last_season: String = ""
 var _next_id: int = 1
 var _next_request_id: int = 1
 var _last_hour: int = -1
@@ -46,6 +52,7 @@ func setup(p_seed: int) -> void:
 	_load_action_types()
 	map.setup(int(content.cfg("map_size", 60)))
 	map.generate(rng, self)
+	footfall.resize(map.size * map.size)
 	clock = 6.0 * 60.0  # start at 06:00 on day 0
 	_last_hour = hour()
 	_last_day = day()
@@ -66,6 +73,10 @@ func setup(p_seed: int) -> void:
 		observe_stock(c)   # the founders packed the stores themselves
 	_update_tier(true)
 	_assign_beds()
+	_roll_weather()
+	_last_season = season()
+	_heat_houses()
+	_rain_water()
 
 
 func register_brain(brain: Brain, make_default: bool = false) -> void:
@@ -142,7 +153,10 @@ func tick(dt: float = 1.0) -> void:
 			to_bury.append(c)
 			continue
 		if c.state == "acting" and c.action != null:
+			var was := c.pos
 			var st := c.action.tick(dt)
+			if c.pos != was:
+				_step_on(c.pos, dt)
 			if st != ActionBase.RUNNING:
 				_finish_action(c, st == ActionBase.DONE)
 		if c.state == "idle" and clock >= c.hesitate_until:
@@ -161,23 +175,38 @@ func tick(dt: float = 1.0) -> void:
 		events.hour_passed.emit(day(), hour())
 	if day() != _last_day:
 		_last_day = day()
+		_roll_weather()
+		if season() != _last_season:
+			_last_season = season()
+			events.season_changed.emit(_last_season)
 		events.day_passed.emit(day())
 	events.ticked.emit(clock)
 
 
+func _step_on(p: Vector2, dt: float) -> void:
+	var x := roundi(p.x)
+	var y := roundi(p.y)
+	if x >= 0 and y >= 0 and x < map.size and y < map.size:
+		footfall[y * map.size + x] += dt
+
+
 func _on_hour() -> void:
+	for i in footfall.size():
+		footfall[i] *= FOOTFALL_FADE_PER_HOUR
 	for n: ResNode in nodes.values():
-		var regrow := float(n.def().get("regrow_per_hour", 0))
+		var regrow := float(n.def().get("regrow_per_hour", 0)) * float(season_def().get("regrow", 1.0))
 		if regrow > 0.0:
 			n.amount = minf(n.max_amount, n.amount + regrow)
 	_assign_beds()
+	_heat_houses()
+	_rain_water()
 
 
 func _world_tick(dt: float) -> void:
 	for b: Building in buildings.values():
 		if b.complete and b.farm_stage == "growing":
 			var f: Dictionary = b.provides("farm", {})
-			b.farm_growth += dt / (float(f.get("grow_hours", 36)) * 60.0)
+			b.farm_growth += dt / (float(f.get("grow_hours", 36)) * 60.0) * crop_mult()
 			if b.farm_growth >= 1.0:
 				b.farm_growth = 1.0
 				b.farm_stage = "ripe"
@@ -188,6 +217,111 @@ func _world_tick(dt: float) -> void:
 
 ## ---- Needs, aging, death ---------------------------------------------------
 
+## ---- Seasons, weather, cold ---------------------------------------------------
+
+func season() -> String:
+	var order: Array = content.seasons.get("order", ["spring"])
+	var per := int(content.seasons.get("days_per_season", 4))
+	return String(order[(day() / maxi(per, 1)) % order.size()])
+
+
+func season_def() -> Dictionary:
+	return content.seasons.get("seasons", {}).get(season(), {})
+
+
+func weather_def() -> Dictionary:
+	return content.seasons.get("weather", {}).get(weather, {})
+
+
+## Day within the season (0-based) and days left until `which` starts (0 = it's that season now).
+func season_day() -> int:
+	return day() % maxi(int(content.seasons.get("days_per_season", 4)), 1)
+
+
+func days_until(which: String) -> int:
+	var order: Array = content.seasons.get("order", [])
+	var per := int(content.seasons.get("days_per_season", 4))
+	var i := order.find(season())
+	var j := order.find(which)
+	if i < 0 or j < 0 or i == j:
+		return 0
+	return ((j - i + order.size()) % order.size()) * per - season_day()
+
+
+## How cold it is right now (0 = mild, ~1+ = bitter): season + weather + night.
+func cold() -> float:
+	var k := float(season_def().get("cold", 0.0)) + float(weather_def().get("cold", 0.0))
+	if is_night() and k > 0.0:
+		k += float(content.seasons.get("night_cold", 0.25))
+	return k
+
+
+func crop_mult() -> float:
+	return float(season_def().get("crop_growth", 1.0)) * float(weather_def().get("crop", 1.0))
+
+
+func weather_work_mult() -> float:
+	return float(weather_def().get("work", 1.0))
+
+
+func _roll_weather() -> void:
+	var odds: Dictionary = season_def().get("weather", {"clear": 1.0})
+	var r := rng.randf()
+	var acc := 0.0
+	var pick := "clear"
+	for w in odds:
+		acc += float(odds[w])
+		if r <= acc:
+			pick = w
+			break
+	if pick != weather:
+		weather = pick
+		events.weather_changed.emit(weather)
+
+
+## Warmth per hour a colonist gets right now: near a fire, or asleep in a heated home.
+func warmth_gain(c: Colonist) -> float:
+	var g := 0.0
+	for b: Building in buildings.values():
+		if not b.complete:
+			continue
+		var w := float(b.provides("warmth", 0.0))
+		if w > 0.0 and c.pos.distance_to(b.center()) <= float(b.provides("warm_radius", 2.0)) + b.size.x * 0.5:
+			g = maxf(g, w)
+	if c.action != null and c.action.phase == "sleeping" and c.home_id >= 0:
+		var home := buildings.get(c.home_id) as Building
+		if home != null and home.heated:
+			g = maxf(g, float(home.provides("heated_warmth", 0.0)))
+	return g
+
+
+## When it's cold, occupied houses burn firewood (wood from the shared stock) to stay heated.
+func _heat_houses() -> void:
+	var need_heat := cold() >= float(content.seasons.get("heating_from_cold", 0.3))
+	var per := float(content.seasons.get("firewood_per_house_hour", 0.4))
+	for b: Building in buildings.values():
+		if not (b.complete and b.provides("heated_warmth") != null):
+			continue
+		var occupied := b.beds.any(func(x) -> bool: return int(x) >= 0)
+		b.heated = false
+		if need_heat and occupied and float(stock.get("wood", 0.0)) >= per:
+			stock["wood"] = float(stock["wood"]) - per
+			b.heated = true
+
+
+## Rain and storms fill the stores a little (rain caught at the wells).
+func _rain_water() -> void:
+	var per := float(weather_def().get("rain_water_per_well_hour", 0.0))
+	if per <= 0.0:
+		return
+	var wells := 0
+	for b: Building in buildings.values():
+		if b.complete and b.provides("water_source") != null:
+			wells += 1
+	if wells > 0:
+		deposit("water", per * wells)
+
+
 func _update_needs(c: Colonist, dt: float) -> void:
 	var child_mult := 1.0 if c.is_adult() else float(content.cfg("child_need_decay_mult", 0.7))
 	for need_id in content.needs:
@@ -196,7 +330,14 @@ func _update_needs(c: Colonist, dt: float) -> void:
 		rate *= c.trait_mod(need_id + "_decay")
 		if c.action != null:
 			rate *= c.action.need_decay_mult(need_id)
-		var v := maxf(0.0, float(c.needs.get(need_id, 100.0)) - rate)
+		if nd.get("decay_scale", "") == "cold":
+			# Drains only when it's cold; recovers slowly when mild; fires and heated homes warm.
+			var k := cold()
+			rate *= k
+			if k <= 0.05:
+				rate -= float(nd.get("recover_per_hour_when_mild", 0.0)) / 60.0 * dt
+			rate -= warmth_gain(c) / 60.0 * dt
+		var v := clampf(float(c.needs.get(need_id, 100.0)) - rate, 0.0, 100.0)
 		c.needs[need_id] = v
 		if v <= 0.0:
 			var was := float(c.zero_minutes.get(need_id, 0.0))
@@ -373,7 +514,7 @@ func trust(c: Colonist, from: Colonist) -> float:
 
 
 ## Someone asked `c` to do an action. Kept as a dated request (and a memory) that brains read.
-func add_request(c: Colonist, from_name: String, action_id: String, trust_v: float) -> void:
+func add_request(c: Colonist, from_name: String, action_id: String, trust_v: float, reconsider: bool = false) -> void:
 	var def: Dictionary = content.actions_by_id.get(action_id, {})
 	if def.is_empty():
 		return
@@ -383,9 +524,29 @@ func add_request(c: Colonist, from_name: String, action_id: String, trust_v: flo
 	if c.requests.size() > 3:
 		c.requests.pop_front()
 	add_memory(c, "%s asked me to %s." % [from_name, def.get("label", action_id)], 3.0 + 4.0 * trust_v)
+	# Being asked makes them stop and think again now (the brain still decides). Not while asleep,
+	# not while already doing what was asked, and not while seeing to an urgent need (eating when
+	# starving): they'd only pick it again, having lost the progress.
+	if reconsider and c.state == "acting" and c.action != null and c.action.phase != "sleeping" \
+			and String(c.action.def.get("id", "")) != action_id and not _urgent_need_action(c):
+		_finish_action(c, false)
+		c.hesitate_until = clock
+	elif reconsider and c.state == "thinking":
+		c.pending_request_id = -1   # the answer in flight was for a state without this request: ignore it
+		c.state = "idle"
+		c.hesitate_until = clock
 
 
 const REQUEST_TTL := 24.0 * 60.0
+
+
+## True if their current action is tending a need that is down in its two worst bands.
+func _urgent_need_action(c: Colonist) -> bool:
+	var need := String(c.action.params.get("need", ""))
+	if need == "" or not content.needs.has(need):
+		return false
+	var th: Array = content.needs[need].get("thresholds", [10, 30])
+	return float(c.needs.get(need, 100.0)) < float(th[1]) if th.size() > 1 else false
 
 
 ## Starting a job someone asked for fulfils that request (so it stops nagging them).
@@ -923,7 +1084,7 @@ func find_sources(specs: Array, resource: String, from: Vector2i, amount: float,
 		elif spec.begins_with("node:"):
 			var t := spec.substr(5)
 			for n: ResNode in nodes.values():
-				if n.type == t and n.amount >= 1.0 and (not for_gather or n.workers < 2):
+				if n.type == t and n.amount >= 1.0 and (not for_gather or n.workers < 2) and clock >= n.unreachable_until:
 					cands.append({"kind": "node", "ref": n, "cells": [n.cell], "d": Vector2(n.cell - from).length_squared()})
 		elif spec.begins_with("building:"):
 			var t := spec.substr(9)

@@ -117,6 +117,8 @@ func _on_completed(result: int, code: int, _headers: PackedStringArray, body: Pa
 			push_warning("Laya error for request %d: %s" % [rid, r["error"]])
 		else:
 			answered += 1
+			if String(r.get("model", "")) != "":
+				model_name = short_model_name(String(r["model"]))
 			avg_latency_ms = lerpf(avg_latency_ms, float(r.get("latency_ms", 0.0)), 0.1 if answered > 1 else 1.0)
 		(it["done"] as Callable).call(r)
 

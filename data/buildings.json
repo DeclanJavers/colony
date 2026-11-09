@@ -14,7 +14,9 @@
     "max_count": 1,
     "description": "a warm gathering place; better to rest and sleep near",
     "provides": {
-      "rest_spot": 1.25
+      "rest_spot": 1.25,
+      "warmth": 24.0,
+      "warm_radius": 3.0
     }
   },
   "stockpile": {
@@ -91,7 +93,8 @@
     "description": "two beds; good sleep and needed to raise children",
     "provides": {
       "beds": 2,
-      "sleep_quality": 1.8
+      "sleep_quality": 1.8,
+      "heated_warmth": 28.0
     }
   },
   "storehouse": {
@@ -149,7 +152,9 @@
     "provides": {
       "colony": {
         "food_yield": 1.3
-      }
+      },
+      "warmth": 12.0,
+      "warm_radius": 2.5
     }
   },
   "town_hall": {

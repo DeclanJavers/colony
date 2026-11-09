@@ -220,5 +220,21 @@
       "adult",
       "child"
     ]
+  },
+  {
+    "id": "warm_up",
+    "type": "rest",
+    "label": "warm up by the fire",
+    "description": "sit by the fire to get warm",
+    "params": {
+      "minutes": 45,
+      "energy_per_hour": 2.0,
+      "warmth_per_hour": 30.0,
+      "needs_fire": true
+    },
+    "for": [
+      "adult",
+      "child"
+    ]
   }
 ]

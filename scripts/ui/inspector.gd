@@ -58,6 +58,9 @@ func setup(p_runner: SimRunner, p_view: WorldView, p_chat: WatcherChat, style: S
 		if c == colonist:
 			_chat_status.text = "%s will remember: \"%s\"" % [c.name, text]
 			_refresh())
+	chat.request_heard.connect(func(c: Colonist, action_id: String) -> void:
+		if c == colonist:
+			_chat_status.text = "%s is thinking about your request: %s." % [c.name, runner.sim.content.actions_by_id[action_id].get("label", action_id)])
 	chat.failed.connect(func(c: Colonist, msg: String) -> void:
 		if c == colonist:
 			_chat_status.text = "Couldn't reach %s: %s (is brain_server/run.sh running?)" % [c.name, msg]

@@ -8,6 +8,7 @@ var cell: Vector2i
 var amount: float
 var max_amount: float
 var workers: int = 0   # how many colonists are currently targeting it
+var unreachable_until: float = -1.0   # sim clock: someone found no way there (cut off), skip until then
 
 
 func def() -> Dictionary:

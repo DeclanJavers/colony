@@ -109,4 +109,5 @@ func walk(dt: float) -> bool:
 
 
 func work_rate(skill: String) -> float:
-	return c.skill_mult(skill) * c.trait_mod("work_speed") * sim.night_mult() * sim.exhaustion_mult(c, "work_speed")
+	return c.skill_mult(skill) * c.trait_mod("work_speed") * sim.night_mult() * sim.exhaustion_mult(c, "work_speed") \
+		* sim.weather_work_mult()

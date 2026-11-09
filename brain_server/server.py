@@ -221,7 +221,7 @@ def remember(req: RememberRequest) -> dict:
         request = json.loads(out).get("request", "none")
         # Only if the Watcher's own words ask for that job (small models over-extract).
         said = [{"who": "Watcher", "text": m["content"]} for m in req.transcript if m["role"] == "user"]
-        if request != "none" and not _asked_in_words("Watcher", request, said):
+        if request != "none" and not _asked_in_words("Watcher", request, said, WATCHER_CUES):
             request = "none"
     except Exception:
         pass
@@ -320,17 +320,30 @@ NUM_WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy"
 
 ASK_CUES = re.compile(r"\b(could you|can you|would you|will you|please|help me|help us|we need you|you should|"
                       r"why don't you|let's|go and|need someone)\b", re.I)
+# The Watcher gives instructions, so plain imperatives ("go chop wood") count as asking too. Only
+# used for the Watcher's own words, never colonist-to-colonist talk ("I'll go get water" isn't a request).
+WATCHER_CUES = re.compile(ASK_CUES.pattern[:-4] + r"|go|get|grab|bring|fetch|chop|cut|gather|pick|mine|build|"
+                          r"farm|plant|harvest|warm up|rest|take a break|count|check)\b", re.I)
 JOB_WORDS = {
-    "gather_food": r"berr|food|pick|fruit", "fetch_water": r"water|bucket|well|river",
-    "gather_wood": r"wood|chop|log|tree|timber", "gather_stone": r"stone|rock|mine|quarry",
-    "farm": r"farm|plant|harvest|crop|field|sow", "build": r"build|construct|house|finish the",
-    "check_stores": r"check|count|look at the stores|see what",
+    "gather_food": r"\b(berr\w*|food|pick\w*|fruit)",
+    "fetch_water": r"\bwater\b|\bbucket|\b(the|a|from the|to the) well\b|\briver",
+    "gather_wood": r"\b(wood|chop\w*|logs?|trees?|timber|firewood)\b(?! smoke)",
+    "gather_stone": r"\b(stones?|rocks?|mine|mining|quarry)\b",
+    "farm": r"\b(farm\w*|plant\w*|harvest\w*|crops?|fields?|sow\w*)\b",
+    "build": r"\b(build\w*|construct\w*|house|finish the)\b",
+    "check_stores": r"\b(check|count|look at|see what)\b.*\b(stores?|stock\w*|supplies|storehouse)\b|\bhow much\b.*\b(left|have|got)\b",
+    "warm_up": r"\b(warm (yourself |you )?up|by the fire|get warm|campfire)\b",
+    "rest": r"\b(rest|take a break|sit down|have a break|catch your breath)\b",
 }
+# Clear signs a message is NOT asking for a job now: negations, questions about the past, thanks.
+NOT_ASKING = re.compile(r"\b(don'?t|do not|never mind|nevermind|no need|stop|quit|forget about|leave the|"
+                        r"thanks?|thank you|yesterday|earlier|last night|did you|have you|were you|"
+                        r"i love|i like)\b", re.I)
 
 
-def _asked_in_words(name: str, action: str, lines: list[dict]) -> bool:
+def _asked_in_words(name: str, action: str, lines: list[dict], cues: re.Pattern = ASK_CUES) -> bool:
     for l in lines:
-        if l["who"] == name and ASK_CUES.search(l["text"]) and re.search(JOB_WORDS[action], l["text"], re.I):
+        if l["who"] == name and cues.search(l["text"]) and re.search(JOB_WORDS[action], l["text"], re.I):
             return True
     return False
 
@@ -399,6 +412,58 @@ def converse(req: ConverseRequest) -> dict:
     if req.intent == "ask" and req.topic_id and req.a["name"] not in asked:
         reqs.append({"from": req.a["name"], "to": req.b["name"], "action": req.topic_id})   # why they came
     return {"lines": lines, "facts": facts, "requests": reqs, "llm": True, "latency_ms": (time.time() - t) * 1000.0}
+
+
+class IntentRequest(BaseModel):
+    colonist: str = ""
+    message: str
+
+
+@app.post("/intent")
+def intent(req: IntentRequest) -> dict:
+    """Is the Watcher asking for a job right now, in this one message? A job has to be named in the
+    words (fast check). The model then judges whether it's really being asked for now, rather than
+    refused, asked about, thanked for or just mentioned. Obvious negations skip the model."""
+    text = req.message.strip()
+    hits = [job for job, pat in JOB_WORDS.items() if re.search(pat, text, re.I)]
+    if not hits:
+        return {"request": "none", "why": "no job named"}
+    neg = NOT_ASKING.search(text)
+    cue = WATCHER_CUES.search(text)
+    if neg and not cue:
+        return {"request": "none", "why": "not asking"}
+    if text.endswith("?") and not ASK_CUES.search(text):
+        return {"request": "none", "why": "a question, not a request"}   # "what about the river?"
+    # Narrow to the jobs named in the instruction itself ("we need food, go work the farm" -> farm).
+    parts = [p for p in re.split(r",|;|\.|\bbut\b|\band\b|\bthen\b", text, flags=re.I) if p.strip()]
+    told = [j for j in hits if any(WATCHER_CUES.search(p) and not NOT_ASKING.search(p)
+                                   and re.search(JOB_WORDS[j], p, re.I) for p in parts)]
+    if told:
+        hits = told
+    try:
+        out = llm([{"role": "system", "content": "You decide whether a message gives someone a job to do now. Answer in JSON."},
+                   {"role": "user", "content":
+                    f"The Watcher says to {req.colonist or 'a villager'}: \"{text}\"\n\n"
+                    "Is the Watcher telling or asking them to do one of these jobs NOW? "
+                    f"Jobs: {', '.join(hits)}.\n"
+                    "Answer none if the job is refused or cancelled (\"don't\", \"no need\", \"never mind\"), "
+                    "only asked about (\"did you...?\"), thanked for, or just mentioned in passing.\n"
+                    "Examples: \"go chop some wood\" -> gather_wood. \"can you fetch water\" -> fetch_water. "
+                    "\"don't chop wood\" -> none. \"did you fetch water?\" -> none. "
+                    "\"thanks for the wood\" -> none. \"stop farming and get water\" -> fetch_water. "
+                    "When a reason and a job are both mentioned, pick the job they are told to do: "
+                    "\"we're hungry, go harvest the fields\" -> farm."}],
+                  max_tokens=30, temperature=0.0,
+                  schema={"type": "object", "properties": {"request": {"enum": hits + ["none"]}}, "required": ["request"]})
+        r = json.loads(out).get("request", "none")
+    except Exception:
+        r = hits[0] if (cue and not neg) else "none"   # model unreachable: only clear instructions count
+    if r != "none" and neg:
+        # Keep it only if the job is named in a part of the message that isn't negated
+        # ("stop farming and get water" asks for water; "please don't fetch water" asks for nothing).
+        if not any(re.search(JOB_WORDS[r], p, re.I) and not NOT_ASKING.search(p) for p in parts):
+            r = "none"
+    return {"request": r}
 
 
 # ---------------------------------------------------------------------------- health

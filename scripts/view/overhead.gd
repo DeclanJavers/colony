@@ -32,8 +32,8 @@ func _ready() -> void:
 	name_label.render_priority = 1
 	name_label.pixel_size = 0.0009
 	name_label.font_size = 32
-	name_label.outline_size = 10
-	name_label.outline_modulate = Color(0, 0, 0, 0.75)
+	name_label.outline_size = 14
+	name_label.outline_modulate = Color("#2A1E1A")   # STYLE.md outline colour; reads on snow too
 	name_label.position.y = -0.0
 	add_child(name_label)
 	bubble.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -95,7 +95,16 @@ func update_for(c: Colonist, show_name: bool, delta: float) -> void:
 	name_label.text = c.name
 	name_label.visible = show_name
 	name_label.modulate = Color(1, 0.75, 0.7) if key.begins_with("danger") else Color(1, 1, 1, 0.95)
-	# Badge sits above the name when both show.
+	# Badge sits above the name when both show. Gaps are kept in screen pixels (the camera is
+	# orthographic, so world units per pixel = camera size / viewport height), so the badge never
+	# slides down over the name when zoomed out.
+	var cam := get_viewport().get_camera_3d()
+	var per_px := 0.02
+	if cam != null:
+		per_px = cam.size / maxf(get_viewport().get_visible_rect().size.y, 1.0)
+		# Zoomed far out, only danger badges show: a calm overview, and icons don't pile up.
+		if cam.size > 32.0 and not key.begins_with("danger"):
+			badge.visible = false
 	name_label.position.y = 0.0
-	badge.position.y = 0.42 if show_name else 0.0
-	bubble.position.y = badge.position.y + 0.42
+	badge.position.y = 30.0 * per_px if show_name else 0.0
+	bubble.position.y = badge.position.y + 30.0 * per_px

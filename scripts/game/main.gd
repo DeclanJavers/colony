@@ -8,6 +8,7 @@ extends Node3D
 ##   --time H            jump to hour H of the current day before showing (e.g. 21 for night)
 ##   --zoom S            camera ortho size
 ##   --inspect what     open the inspector on: colony | building:<type> | node:<type> | colonist:<name> | tile
+##   --day D            start on day D (skips ahead with the baseline brain; e.g. 13 = winter)
 ##   --talk [intent]    the first two colonists start a conversation (chat | news | ask) right away
 ##   --say "text"        with --select: say this to the selected colonist, then save the chat as a memory
 ##   --load             continue from the saved game (user://save.tres)
@@ -35,6 +36,8 @@ func _ready() -> void:
 	runner.start(seed_v, String(args.get("brain", "")), saved)
 	if args.has("prewarm"):
 		runner.prewarm(float(args["prewarm"]))
+	if args.has("day"):
+		runner.prewarm(maxf(0.0, float(args["day"]) - runner.sim.clock / 1440.0))
 	if args.has("time"):
 		var target := float(args["time"]) * 60.0
 		while fmod(runner.sim.clock, 1440.0) < target - 0.5 or fmod(runner.sim.clock, 1440.0) > target + 0.5:
@@ -52,6 +55,9 @@ func _ready() -> void:
 		cam.camera.size = cam._size_target
 	add_child(view)
 	view.bind(runner.sim, cam.camera)
+	var seasons_view := SeasonView.new()
+	add_child(seasons_view)
+	seasons_view.setup(runner.sim, view, cam.camera, view.ground_material)
 	talks = ConversationLLM.new(runner.sim, String(content.cfg("brain_server_url", "http://127.0.0.1:8765")))
 	talks.name = "ConversationLLM"
 	add_child(talks)
@@ -75,6 +81,10 @@ func _ready() -> void:
 		var first: Colonist = runner.sim.colonists.values()[0]
 		view.select(first)
 		if args.has("say"):
+			chat.request_heard.connect(func(c: Colonist, a: String) -> void: print("REQUEST_HEARD ", c.name, " ", a, " reqs=", runner.sim.active_requests(c).size()))
+			chat.failed.connect(func(c: Colonist, m: String) -> void: print("CHAT_FAILED ", m))
+			runner.sim.events.decision_made.connect(func(c: Colonist, ctx: Dictionary, d: Dictionary, _b: bool) -> void:
+				if c == first: print("DECISION ", c.name, " -> ", d.get("action"), " | ", String(ctx["state_text"]).contains("Watcher asked")))
 			chat.reply_received.connect(func(c: Colonist, _r: String) -> void: chat.save_memory(c), CONNECT_ONE_SHOT)
 			chat.send(first, String(args["say"]))
 

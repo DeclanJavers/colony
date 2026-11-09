@@ -4,7 +4,7 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v2"   # v2: stock is what the colonist believes (seen/heard, with age); requests
+const VERSION := "v3"   # v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
 const MAX_MEMORIES := 3
 
 
@@ -14,7 +14,12 @@ func describe(sim: Sim, c: Colonist) -> String:
 	for t in c.traits:
 		trait_texts.append(str(sim.content.traits.get(t, {}).get("text", t)))
 	parts.append("%s is a%s %s colonist, %s." % [c.name, "n" if c.is_adult() else "", c.life_stage(), ", ".join(trait_texts)])
-	parts.append("It is day %d, %s." % [sim.day(), _part_of_day(sim)])
+	parts.append("It is day %d, %s, %s%s." % [sim.day(), _part_of_day(sim), _season_phrase(sim),
+		(", " + String(sim.weather_def().get("label", sim.weather))) if sim.weather != "clear" else ""])
+	if sim.cold() >= float(sim.content.seasons.get("heating_from_cold", 0.3)):
+		var home := sim.buildings.get(c.home_id) as Building
+		if home != null:
+			parts.append("Home is heated." if home.heated else "Home is cold (no firewood).")
 
 	var need_words: PackedStringArray = []
 	for need_id in sim.content.needs:
@@ -84,6 +89,16 @@ func relation_text(sim: Sim, c: Colonist, o: Colonist) -> String:
 		rel = "a close friend" if a >= 60 else "a friend" if a >= 30 else "an acquaintance" if a >= 10 else "someone you dislike" if a <= -20 else "someone you barely know"
 	var dist := c.pos.distance_to(o.pos)
 	return "%s, %s" % [rel, "nearby" if dist < 8.0 else "far away"]
+
+
+func _season_phrase(sim: Sim) -> String:
+	var per := int(sim.content.seasons.get("days_per_season", 4))
+	var d := sim.season_day()
+	var when := "early" if d < per / 3.0 else ("late" if d >= per * 2 / 3.0 else "mid")
+	var p := "%s %s" % [when, sim.season()]
+	if sim.season() != "winter" and sim.days_until("winter") <= per:
+		p += " (winter in %d day%s)" % [sim.days_until("winter"), "" if sim.days_until("winter") == 1 else "s"]
+	return p
 
 
 func _part_of_day(sim: Sim) -> String:
