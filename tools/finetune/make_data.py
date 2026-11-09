@@ -59,12 +59,16 @@ def main() -> None:
     ap.add_argument("--eval-seeds", default="")
     ap.add_argument("--brain", default="utility", help="only use decisions made by this brain")
     ap.add_argument("--max-train", type=int, default=0, help="subsample train rows (0 = all)")
+    ap.add_argument("--mistakes", type=float, default=-1.0,
+                    help="with --teacher: keep every state where the learner's choice differed from the "
+                         "teacher's, plus this fraction of the ones where they agreed (e.g. 0.25)")
     ap.add_argument("--teacher", action="store_true",
                     help="use the logged teacher's answer as the target (relabel a learner's own states); "
                          "with this, --brain selects whose states (e.g. laya)")
     a = ap.parse_args()
     eval_seeds = {int(s) for s in a.eval_seeds.split(",") if s}
 
+    random.seed(0)
     train, evals, seen = [], [], set()
     for path in a.logs:
         for line in open(path):
@@ -74,6 +78,10 @@ def main() -> None:
             k = key(r)
             if k in seen:
                 continue
+            if a.teacher and a.mistakes >= 0.0 and r.get("teacher"):
+                agreed = r.get("chosen") == r["teacher"].get("chosen")
+                if agreed and random.random() > a.mistakes:
+                    continue
             seen.add(k)
             row = to_row(r, a.teacher)
             if row:
