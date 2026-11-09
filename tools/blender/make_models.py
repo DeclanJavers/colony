@@ -671,6 +671,13 @@ def rock_2():
     blob("rock", 0.22, (-0.2, 0.1, 0.1), M("stone"), sub=1)
 
 
+def rock_3():
+    """Mossy boulder."""
+    blob("rock", 0.32, (0, 0, 0.22), M("stone_dark"), sub=1, scale=(1.0, 0.9, 1.05))
+    blob("moss", 0.2, (0.02, -0.04, 0.42), M("leaf"), sub=1, scale=(1.3, 1.2, 0.35))
+    blob("rock", 0.14, (0.26, 0.12, 0.08), M("stone"), sub=1)
+
+
 def berry_bush():
     leaves = [blob("leaves1", r, (x, y, r * 0.85), M("leaf"), sub=2) for x, y, r in [(0, 0, 0.3), (0.2, 0.1, 0.22), (-0.17, 0.12, 0.21)]]
     join_named("leaves1", leaves)
@@ -779,7 +786,7 @@ MODELS = {
     "house_3": lambda: house("blue", 3, "shutter"), "house_4": lambda: house("red", 4, "shutter"),
     "storehouse": storehouse, "workshop": workshop, "kitchen": kitchen, "town_hall": town_hall,
     "site_frame": site_frame, "tree": tree, "tree_2": tree_2, "tree_3": tree_3,
-    "rock": rock, "rock_2": rock_2, "berry_bush": berry_bush,
+    "rock": rock, "rock_2": rock_2, "rock_3": rock_3, "berry_bush": berry_bush,
     "sticks": sticks, "pebbles": pebbles,
     "rabbit": lambda: rabbit("#9C8064"), "rabbit_2": lambda: rabbit("#B7A58C"), "rabbit_3": lambda: rabbit("#6E5A4A"),
     "deer": lambda: deer(True), "deer_2": lambda: deer(False), "deer_3": lambda: deer(False),

@@ -11,6 +11,7 @@ const SEASONS := {
 	"winter": {"grass": Color("#6F8A5C"), "grass_dark": Color("#5A7449"), "grass_light": Color("#86A06E"), "snow": 0.85},
 }
 const DEPTH := 3.0
+const H := 0.5                   # metres per hill level (WorldMap.height)
 const WEAR_HALF := 60.0          # minutes walked on a tile for it to be half worn
 
 var sim: Sim
@@ -19,6 +20,7 @@ var _img: Image
 var _tex: ImageTexture
 var _mat := ShaderMaterial.new()
 var _edge_mat := ShaderMaterial.new()
+var _cliff_mat := ShaderMaterial.new()
 var _near := PackedFloat32Array()
 var _push_t := 0.0
 
@@ -33,18 +35,19 @@ func setup(p_sim: Sim) -> void:
 			_write(x, y)
 	_tex = ImageTexture.create_from_image(_img)
 
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(_n, _n)
-	plane.subdivide_width = 0
 	var g := MeshInstance3D.new()
-	g.mesh = plane
+	g.mesh = _top_mesh()
 	_mat.shader = preload("res://scripts/view/ground.gdshader")
 	_mat.set_shader_parameter("tiles", _tex)
 	_mat.set_shader_parameter("tiles_smooth", _tex)
 	_mat.set_shader_parameter("map_size", float(_n))
 	g.material_override = _mat
-	g.position = Vector3(_n / 2.0 - 0.5, 0.0, _n / 2.0 - 0.5)
 	add_child(g)
+	var cliffs := MeshInstance3D.new()
+	cliffs.mesh = _cliff_mesh()
+	_cliff_mat.shader = preload("res://scripts/view/cliff.gdshader")
+	cliffs.material_override = _cliff_mat
+	add_child(cliffs)
 
 	var slab := MeshInstance3D.new()
 	var bm := BoxMesh.new()
@@ -55,7 +58,7 @@ func setup(p_sim: Sim) -> void:
 	_edge_mat.set_shader_parameter("tiles", _tex)
 	_edge_mat.set_shader_parameter("map_size", float(_n))
 	slab.material_override = _edge_mat
-	slab.position = g.position + Vector3(0, -DEPTH / 2.0 - 0.001, 0)
+	slab.position = Vector3(_n / 2.0 - 0.5, -DEPTH / 2.0 - 0.001, _n / 2.0 - 0.5)
 	add_child(slab)
 
 	sim.events.building_completed.connect(func(_b: Building) -> void: _refresh_near())
@@ -63,12 +66,74 @@ func setup(p_sim: Sim) -> void:
 	set_season(sim.season() if sim.has_method("season") else "spring")
 
 
+## Ground height at a point (tiles are flat steps).
+func y_at(p: Vector2) -> float:
+	return float(sim.map.height_at(Vector2i(roundi(p.x), roundi(p.y)))) * H
+
+
+## One flat quad per tile at its height.
+func _top_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_normal(Vector3.UP)
+	for y in _n:
+		for x in _n:
+			var h := float(sim.map.height_at(Vector2i(x, y))) * H
+			var a := Vector3(x - 0.5, h, y - 0.5)
+			var b := Vector3(x + 0.5, h, y - 0.5)
+			var c := Vector3(x + 0.5, h, y + 0.5)
+			var d := Vector3(x - 0.5, h, y + 0.5)
+			for v in [a, b, c, a, c, d]:
+				st.set_uv(Vector2(v.x, v.z))
+				st.add_vertex(v)
+	return st.commit()
+
+
+## The earth sides where a tile stands higher than its neighbour (or the map's edge).
+func _cliff_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var any := false
+	for y in _n:
+		for x in _n:
+			var c := Vector2i(x, y)
+			var h := sim.map.height_at(c)
+			if h == 0:
+				continue
+			for dvec: Vector2i in dirs:
+				var nb := c + dvec
+				var hn := sim.map.height_at(nb) if sim.map.in_bounds(nb) else 0
+				if hn >= h:
+					continue
+				any = true
+				var top := float(h) * H
+				var bot := float(hn) * H
+				var n := Vector3(dvec.x, 0, dvec.y)
+				var side := Vector3(-dvec.y, 0, dvec.x) * 0.5
+				var mid := Vector3(x, 0, y) + n * 0.5
+				var p0 := mid - side
+				var p1 := mid + side
+				var along0 := float(x + y) * 1.0
+				var quad := [[p0 + Vector3(0, top, 0), Vector2(along0, 0)], [p1 + Vector3(0, top, 0), Vector2(along0 + 1, 0)],
+					[p1 + Vector3(0, bot, 0), Vector2(along0 + 1, top - bot)], [p0 + Vector3(0, bot, 0), Vector2(along0, top - bot)]]
+				st.set_normal(n)
+				for k in [0, 2, 1, 0, 3, 2]:
+					st.set_uv(quad[k][1])
+					st.add_vertex(quad[k][0])
+	if not any:
+		return ArrayMesh.new()
+	return st.commit()
+
+
 func set_season(s: String) -> void:
 	var p: Dictionary = SEASONS.get(s, SEASONS["spring"])
 	for k in ["grass", "grass_dark", "grass_light"]:
 		_mat.set_shader_parameter(k, p[k])
 	_mat.set_shader_parameter("snow", p["snow"])
+	_mat.set_shader_parameter("flowers", {"spring": 1.0, "summer": 0.85, "autumn": 0.3, "winter": 0.0}.get(s, 1.0))
 	_edge_mat.set_shader_parameter("lip", Color(0.90, 0.93, 0.97) if s == "winter" else p["grass"])
+	_cliff_mat.set_shader_parameter("lip", Color(0.90, 0.93, 0.97) if s == "winter" else p["grass"])
 
 
 func _write(x: int, y: int) -> void:

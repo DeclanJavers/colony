@@ -1,11 +1,12 @@
 {
-  "_doc": "The weekly meeting. The bell rings at `hour` on every `every_days`-th day; adults come if nothing urgent keeps them away. People talk for `length_hours`; what they agree becomes the colony plan (at most `plan_items` things), which lasts until the next meeting. Without a meeting hall they meet at the campfire. Before there is a hall, the campfire seats meeting_seats (data/buildings.json); a gathering that doesn't fit is what makes people want a hall. Each plan item gets about volunteer_share of the people there (at least 1, at most max_volunteers), one job each.",
+  "_doc": "The weekly meeting. The bell rings at `hour` on every `every_days`-th day; adults come if nothing urgent keeps them away. They start talking once most of those on their way have arrived (or after arrive_within_hours at the latest) and talk for talk_hours; what they agree becomes the colony plan (at most `plan_items` things), which lasts until the next meeting. Without a meeting hall they meet at the campfire. Before there is a hall, the campfire seats meeting_seats (data/buildings.json); a gathering that doesn't fit is what makes people want a hall. Each plan item gets about volunteer_share of the people there (at least 1, at most max_volunteers), one job each.",
   "every_days": 7,
   "first_day": 7,
   "hour": 17,
-  "length_hours": 2.5,
+  "length_hours": 4.0,
   "plan_items": 3,
-  "arrive_within_hours": 1.5,
+  "arrive_within_hours": 2.5,
   "volunteer_share": 0.25,
-  "max_volunteers": 3
+  "max_volunteers": 3,
+  "talk_hours": 1.0
 }

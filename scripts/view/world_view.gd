@@ -98,6 +98,11 @@ static func to_world(p: Vector2) -> Vector3:
 	return Vector3(p.x, 0.0, p.y)
 
 
+## A point on the ground, at the terrain's height (hills).
+func at(p: Vector2) -> Vector3:
+	return Vector3(p.x, ground.y_at(p) if ground != null else 0.0, p.y)
+
+
 ## ---- Terrain ---------------------------------------------------------------
 
 func _build_terrain() -> void:
@@ -183,7 +188,7 @@ func _hash01(i: int) -> float:
 
 func _add_node(n: ResNode) -> void:
 	var m := _model(n.type, n.id)
-	m.position = to_world(Vector2(n.cell))
+	m.position = at(Vector2(n.cell))
 	m.rotation.y = _hash01(n.id) * TAU
 	var s := 0.85 + 0.3 * _hash01(n.id * 7)
 	m.scale = Vector3(s, s, s)
@@ -205,7 +210,7 @@ func _add_building(b: Building) -> void:
 	if _buildings.has(b.id):
 		return
 	var root := Node3D.new()
-	root.position = to_world(b.center())
+	root.position = at(b.center())
 	add_child(root)
 	# Buildings that grow (the meeting hall) have a model per level: <type>_lv2, <type>_lv3...
 	var mtype := b.type if b.level <= 1 else "%s_lv%d" % [b.type, b.level]
@@ -298,7 +303,7 @@ func _add_colonist(c: Colonist) -> void:
 	if _colonists.has(c.id):
 		return
 	var root := Node3D.new()
-	root.position = to_world(c.pos)
+	root.position = at(c.pos)
 	add_child(root)
 	var model: Node3D
 	if ColonistAvatar.available():
@@ -337,7 +342,7 @@ func _add_grave(c: Colonist) -> void:
 	bm.size = Vector3(0.3, 0.45, 0.1)
 	g.mesh = bm
 	g.material_override = _flat_mat(Color(0.55, 0.55, 0.58))
-	g.position = to_world(c.pos) + Vector3(0, 0.22, 0)
+	g.position = at(c.pos) + Vector3(0, 0.22, 0)
 	add_child(g)
 
 
@@ -364,7 +369,7 @@ func _process(delta: float) -> void:
 		var e: Dictionary = _colonists[cid]
 		var root: Node3D = e["root"]
 		var model: Node3D = e["model"]
-		var target: Vector3 = to_world(c.pos) + (_nudge.get(cid, Vector3.ZERO) as Vector3)
+		var target: Vector3 = at(c.pos) + (_nudge.get(cid, Vector3.ZERO) as Vector3)
 		var move := target - root.position
 		var before := root.position
 		root.position = root.position.lerp(target, follow)
@@ -531,7 +536,7 @@ func _update_meeting_label() -> void:
 	var inside := (m["inside"] as Array).size()
 	var outside := (m["present"] as Array).size() - inside
 	_meeting_label.text = "Meeting · %d inside%s" % [inside, (" · %d outside" % outside) if outside > 0 else ""]
-	_meeting_label.position = to_world(place.center()) + Vector3(0, 3.2 + 0.4 * place.level, 0)
+	_meeting_label.position = at(place.center()) + Vector3(0, 3.2 + 0.4 * place.level, 0)
 	_meeting_label.visible = true
 
 
@@ -947,13 +952,13 @@ func target_position(t: Variant) -> Variant:
 	if t is Colonist:
 		var c := t as Colonist
 		var e: Dictionary = _colonists.get(c.id, {})
-		return (e["root"] as Node3D).position if not e.is_empty() else to_world(c.pos)
+		return (e["root"] as Node3D).position if not e.is_empty() else at(c.pos)
 	if t is Building:
-		return to_world((t as Building).center())
+		return at((t as Building).center())
 	if t is ResNode:
-		return to_world(Vector2((t as ResNode).cell))
+		return at(Vector2((t as ResNode).cell))
 	if t is Vector2i:
-		return to_world(Vector2(t))
+		return at(Vector2(t))
 	return null
 
 
@@ -998,6 +1003,11 @@ func pick(screen_pos: Vector2) -> Variant:
 		return null
 	var hit := from + dir * (-from.y / dir.y)
 	var cell := Vector2i(roundi(hit.x), roundi(hit.z))
+	# On hills the ground is higher: step the ray up to the height of the tile it lands on.
+	for k in 3:
+		var hy := ground.y_at(Vector2(cell)) if ground != null else 0.0
+		hit = from + dir * ((hy - from.y) / dir.y)
+		cell = Vector2i(roundi(hit.x), roundi(hit.z))
 	if not sim.map.in_bounds(cell):
 		return null
 	for g in sim.graveyard:

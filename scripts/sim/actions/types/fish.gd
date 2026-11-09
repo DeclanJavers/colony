@@ -22,11 +22,13 @@ func _shore() -> Vector2i:
 
 
 func begin() -> bool:
-	spot = _shore()
-	if spot.x < 0 or not go_to(spot):
-		return false
-	phase = "walking"
-	return true
+	# The nearest bit of bank they've seen that they can actually walk to (not across the river).
+	for s: Vector2i in sim.seen_shores(c, 6):
+		if go_to(s, false):
+			spot = s
+			phase = "walking"
+			return true
+	return false
 
 
 func describe() -> String:

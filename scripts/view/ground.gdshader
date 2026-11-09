@@ -3,7 +3,7 @@
 //   r: water (1) / ford (0.5) / land (0)     g: footstep wear 0..1     b: near a building 0..1
 // Grass wears to dirt where people walk; busy ground near buildings becomes cobblestone.
 shader_type spatial;
-render_mode diffuse_lambert, specular_disabled;
+render_mode diffuse_lambert, specular_disabled, cull_disabled;
 
 uniform sampler2D tiles : filter_nearest;
 uniform sampler2D tiles_smooth : filter_linear;
@@ -19,6 +19,7 @@ uniform vec3 water : source_color = vec3(0.24, 0.50, 0.75);
 uniform vec3 water_light : source_color = vec3(0.50, 0.72, 0.90);
 uniform vec3 shore : source_color = vec3(0.80, 0.72, 0.50);
 uniform float snow = 0.0;              // 0..1: winter covers grass, paths stay darker
+uniform float flowers = 1.0;           // 1 in spring and summer, fewer in autumn, none in winter
 
 varying vec3 wpos;
 
@@ -65,6 +66,20 @@ void fragment() {
 	vec2 d = T - B;
 	bool blade = hash(G) > 0.45 && ((d.y == 0.0 && d.x <= 0.0 && d.x >= -2.0) || (d.x == 0.0 && d.y <= 0.0 && d.y >= -2.0));
 	if (blade) col = mix(col, grass_dark * 0.82, 0.85);
+
+	// Meadow patches: taller, darker grass with flowers dotted through it (purple, yellow, white,
+	// red), in soft-edged patches from a slow noise.
+	float meadow = smoothstep(0.72, 0.8, vnoise(t * 0.18 + 17.0));
+	if (meadow > 0.0) {
+		col = mix(col, grass_dark * 0.95, 0.25 * meadow);
+		vec2 F = floor(w * 16.0 / 2.0);
+		float fh = hash(F + 11.0);
+		if (fh > 1.0 - 0.06 * meadow * flowers) {
+			float pick = hash(F + 5.0);
+			vec3 fc = pick < 0.35 ? vec3(0.55, 0.40, 0.80) : (pick < 0.7 ? vec3(0.96, 0.78, 0.22) : (pick < 0.85 ? vec3(0.86, 0.30, 0.30) : vec3(0.95, 0.93, 0.88)));
+			col = fc;
+		}
+	}
 
 	// Snow over the grass in winter (thin where clumps are dark, so it isn't flat white).
 	vec3 snow_col = mix(vec3(0.74, 0.79, 0.86), vec3(0.84, 0.88, 0.93), smoothstep(0.3, 0.7, clump));

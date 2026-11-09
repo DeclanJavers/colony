@@ -23,6 +23,7 @@ var footfall := PackedFloat32Array()
 const FOOTFALL_FADE_PER_HOUR := 0.995
 ## Land anyone in the colony has seen (y * size + x: 1 = seen). Resources are only used where a
 ## colonist knows about them (Knowledge.places); the rest of the map has to be explored.
+var map_options: Dictionary = {}   # map generation options (WorldMap.DEFAULT_OPTIONS); set before setup()
 var discovered := PackedByteArray()
 var discovered_count := 0
 const LOOK := 6.0            # tiles a colonist sees around them
@@ -703,6 +704,20 @@ func exploration_target(c: Colonist, distance: int) -> Vector2i:
 		if cand["cell"] == c.cell or not map.find_path(c.cell, cand["cell"]).is_empty():
 			return cand["cell"]
 	return Vector2i(-1, -1)
+
+
+## Up to `n` bits of bank `c` has seen, nearest first.
+func seen_shores(c: Colonist, n: int) -> Array[Vector2i]:
+	var cands: Array = []
+	for s: Vector2i in map.shore_cells:
+		var i := s.y * map.size + s.x
+		if i < c.knowledge.seen.size() and c.knowledge.seen[i] > 0:
+			cands.append([Vector2(s - c.cell).length_squared(), s])
+	cands.sort_custom(func(a, b) -> bool: return a[0] < b[0])
+	var out: Array[Vector2i] = []
+	for e in cands.slice(0, n):
+		out.append(e[1])
+	return out
 
 
 ## The nearest bit of river bank `c` has seen, or (-1, -1).
@@ -1605,10 +1620,31 @@ func max_footprint_of(type: String) -> Vector2i:
 	return fp
 
 
+## How much land to keep for a building that grows: its biggest size if that fits near the
+## village, else the biggest size that does (a hall far from everyone is no use).
+const NEAR_VILLAGE := 14.0
+
+
+func room_for(type: String) -> Vector2i:
+	var base := footprint_of(type)
+	var levels: Array = content.buildings.get(type, {}).get("levels", [])
+	var sizes: Array[Vector2i] = []
+	for lv in levels:
+		var f: Array = lv.get("footprint", [base.x, base.y])
+		sizes.append(Vector2i(int(f[0]), int(f[1])))
+	sizes.reverse()
+	for sz in sizes:
+		for origin in _spots(sz):
+			if Vector2(origin + sz / 2 - map.center).length() <= NEAR_VILLAGE:
+				return sz
+			break
+	return base
+
+
 func find_build_spot(type: String, from: Vector2i) -> Vector2i:
 	## First free spot (spiralling out from the centre) that `from` can actually walk to. For
-	## buildings that grow, there must be room for their biggest size.
-	var size := max_footprint_of(type)
+	## buildings that grow, there must be room for the size they'll grow to (room_for).
+	var size := room_for(type) if content.buildings.get(type, {}).has("levels") else footprint_of(type)
 	var checked := 0
 	for origin in _spots(size):
 		var cells: Array[Vector2i] = []
@@ -1651,7 +1687,7 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	if d.is_empty() or (not free and not affordable(d.get("cost", {}))):
 		return null
 	var size := footprint_of(type)
-	var room := max_footprint_of(type)
+	var room := room_for(type) if d.has("levels") else size
 	if spot.x < 0:
 		spot = _find_spot(room)
 	if spot.x < 0:
@@ -1732,6 +1768,8 @@ func _fits_except(origin: Vector2i, size: Vector2i, b: Building) -> bool:
 				return false
 			var inside := x >= 0 and y >= 0 and x < size.x and y < size.y
 			if inside and map.tile(cell) != WorldMap.Tile.GRASS and not map.building_at.has(cell):
+				return false
+			if inside and map.height_at(cell) != map.height_at(b.cell):
 				return false
 	for o: Building in buildings.values():
 		var land := o.land()
@@ -1831,6 +1869,8 @@ func _fits(origin: Vector2i, size: Vector2i) -> bool:
 			var inside := x >= 0 and y >= 0 and x < size.x and y < size.y
 			if inside and map.tile(cell) != WorldMap.Tile.GRASS:
 				return false
+			if inside and map.height_at(cell) != map.height_at(origin):
+				return false     # buildings need flat ground
 	# Walkable farm plots also must not overlap other walkable sites, nor land kept to grow into.
 	for b: Building in buildings.values():
 		var land := b.land()

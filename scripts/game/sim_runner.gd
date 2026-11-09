@@ -16,6 +16,7 @@ var laya: LayaClient                 # set when brain_id == "laya"
 var loaded := false                  # true when this run continued from a save
 var history: Array = []
 var chronicle: Array = []            # everything the event feed showed: {t, text (BBCode with links)}              # hourly snapshots {clock, stock, pop}, newest last (3 days kept)
+var map_options: Dictionary = {}     # for a new game: map generation options (WorldMap.DEFAULT_OPTIONS)
 var speed_index: int = 1
 var minutes_per_second: float = 12.0
 var lag_paused: bool = false     # true while waiting on a slow brain (sim slows rather than skips)
@@ -40,6 +41,8 @@ func start(p_seed: int, brain_override: String = "", saved: Dictionary = {}) -> 
 		add_child(laya)
 		sim.register_brain(LayaBrain.new(laya, pick), true)
 		sim.teacher_id = "utility"   # log what the baseline would do in Laya's shoes, for retraining
+	# Saves keep the map they were made on: older ones (no options saved) have no hills or ponds.
+	sim.map_options = saved.get("map_options", {"legacy": true}) if not saved.is_empty() else map_options.duplicate()
 	sim.setup(p_seed)
 	if not saved.is_empty():
 		SaveGame.apply(sim, saved)

@@ -233,7 +233,7 @@ func _update_animal(a: Dictionary, delta: float, people: Array[Vector2]) -> void
 					if wn != null:
 						wn.rotation.y = 0.0
 	a["y"] = lerpf(float(a["y"]), y, clampf(delta * 6.0, 0.0, 1.0)) if kind == "bird" else y
-	node.position = Vector3(a["pos"].x, a["y"], a["pos"].y)
+	node.position = Vector3(a["pos"].x, a["y"] + (view.ground.y_at(a["pos"]) if view.ground != null else 0.0), a["pos"].y)
 
 
 func _walkable_toward(p: Vector2, flying: bool) -> Vector2:

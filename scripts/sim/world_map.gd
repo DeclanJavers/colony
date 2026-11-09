@@ -12,6 +12,10 @@ var litter_at: Dictionary = {}      # Vector2i -> ResNode id (sticks, pebbles: w
 var building_at: Dictionary = {}    # Vector2i -> Building id
 var shore_cells: Array[Vector2i] = []   # walkable cells next to water (drink/fetch spots)
 var center: Vector2i
+var height := PackedByteArray()     # terrain level per tile (0 = lowland, 1-2 = hills); walkable either way
+## Map generation options (the New Game screen; saved with the game). Defaults in DEFAULT_OPTIONS.
+## "legacy": a save from before hills and ponds keeps its flat map.
+const DEFAULT_OPTIONS := {"forests": 1.0, "rocks": 1.0, "berries": 1.0, "hills": 1.0, "ponds": 2, "river": true}
 
 
 func setup(map_size: int) -> void:
@@ -19,6 +23,8 @@ func setup(map_size: int) -> void:
 	center = Vector2i(size / 2, size / 2)
 	tiles = PackedByteArray()
 	tiles.resize(size * size)
+	height = PackedByteArray()
+	height.resize(size * size)
 	astar.region = Rect2i(0, 0, size, size)
 	astar.cell_size = Vector2.ONE
 	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
@@ -55,13 +61,21 @@ func refresh_cell(c: Vector2i) -> void:
 
 ## --- Generation -------------------------------------------------------------
 
+func height_at(c: Vector2i) -> int:
+	return height[c.y * size + c.x] if in_bounds(c) else 0
+
+
 func generate(rng: RandomNumberGenerator, sim: Sim) -> void:
+	var opt: Dictionary = DEFAULT_OPTIONS.duplicate()
+	opt.merge(sim.map_options, true)
 	# River: meandering band running top to bottom, with shallow fords to cross.
 	var noise := FastNoiseLite.new()
 	noise.seed = rng.randi()
 	noise.frequency = 0.05
 	var river_x := size * 0.22 + rng.randf_range(-2, 2)
 	for y in size:
+		if not bool(opt["river"]):
+			break
 		var cx := int(round(river_x + sin(y * 0.13) * 3.0 + noise.get_noise_1d(y) * 4.0))
 		for dx in range(-1, 2):
 			var c := Vector2i(cx + dx, y)
@@ -83,11 +97,11 @@ func generate(rng: RandomNumberGenerator, sim: Sim) -> void:
 			var d := Vector2(c - center).length()
 			if d < 7.0:
 				continue
-			if forest.get_noise_2d(x, y) > 0.22 and rng.randf() < 0.55:
+			if forest.get_noise_2d(x, y) > 0.22 and rng.randf() < 0.55 * float(opt["forests"]):
 				sim.spawn_node("tree", c)
-			elif rocks.get_noise_2d(x, y) > 0.42 and rng.randf() < 0.5:
+			elif rocks.get_noise_2d(x, y) > 0.42 and rng.randf() < 0.5 * float(opt["rocks"]):
 				sim.spawn_node("rock", c)
-			elif rng.randf() < 0.012:
+			elif rng.randf() < 0.012 * float(opt["berries"]):
 				sim.spawn_node("berry_bush", c)
 
 	# Guarantee a few of each within reach of the start, so a seed can't be unwinnable.
@@ -95,6 +109,9 @@ func generate(rng: RandomNumberGenerator, sim: Sim) -> void:
 	_scatter_ring(rng, sim, "rock", 6, 9.0, 17.0)
 	_scatter_ring(rng, sim, "berry_bush", 8, 6.0, 13.0)
 	_scatter_litter(rng, sim)
+	if not opt.get("legacy", false):
+		_make_ponds(sim, int(opt["ponds"]))
+		_make_hills(sim, float(opt["hills"]))
 	rebuild_shore()
 
 
@@ -136,6 +153,64 @@ func _scatter_litter(rng: RandomNumberGenerator, sim: Sim) -> void:
 			if in_bounds(c) and tile(c) == Tile.GRASS and is_walkable(c) and not litter_at.has(c):
 				sim.spawn_node(t, c)
 				placed += 1
+
+
+## Small ponds away from the camp and the river (their own random sequence, so a seed keeps its
+## forests and rocks). Anything that was growing where the water goes is gone.
+func _make_ponds(sim: Sim, count: int) -> void:
+	var trng := RandomNumberGenerator.new()
+	trng.seed = sim.seed_value * 31 + 7
+	var made := 0
+	for tries in count * 60:
+		if made >= count:
+			break
+		var c := Vector2i(trng.randi_range(4, size - 5), trng.randi_range(4, size - 5))
+		var r := trng.randf_range(1.4, 2.6)
+		if Vector2(c - center).length() < 11.0 + r or _near_water(c, int(ceil(r)) + 3):
+			continue
+		for dy in range(-3, 4):
+			for dx in range(-3, 4):
+				var p := c + Vector2i(dx, dy)
+				var squash := Vector2(dx, dy * 1.3).length() + trng.randf_range(-0.3, 0.3)
+				if in_bounds(p) and squash <= r:
+					_clear_cell(sim, p)
+					set_tile(p, Tile.WATER)
+		made += 1
+
+
+func _near_water(c: Vector2i, r: int) -> bool:
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if in_bounds(c + Vector2i(dx, dy)) and tile(c + Vector2i(dx, dy)) != Tile.GRASS:
+				return true
+	return false
+
+
+func _clear_cell(sim: Sim, p: Vector2i) -> void:
+	for d in [node_at, litter_at]:
+		if d.has(p):
+			sim.nodes.erase(d[p])
+			d.erase(p)
+
+
+## Gentle hills: raised plateaus (1-2 levels) from noise, flat around the camp and by water so
+## the colony has room to build and the banks stay low. Everyone can walk up and down them.
+func _make_hills(sim: Sim, amount: float) -> void:
+	if amount <= 0.0:
+		return
+	var hn := FastNoiseLite.new()
+	hn.seed = sim.seed_value * 13 + 5
+	hn.frequency = 0.045
+	hn.fractal_octaves = 2
+	for y in size:
+		for x in size:
+			var c := Vector2i(x, y)
+			if tile(c) != Tile.GRASS or _near_water(c, 2):
+				continue
+			var flat := clampf((Vector2(c - center).length() - 11.0) / 6.0, 0.0, 1.0)
+			var v := (hn.get_noise_2d(x, y) + 0.15 * (amount - 1.0)) * flat
+			var lv := 2 if v > 0.42 else (1 if v > 0.18 else 0)
+			height[y * size + x] = lv
 
 
 func rebuild_shore() -> void:

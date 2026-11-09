@@ -30,8 +30,9 @@ func setup(p_sim: Sim, p_view: WorldView) -> void:
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 	m.render_priority = -1
+	m.no_depth_test = true          # over hills too (nothing of the colony is under unseen land)
 	_mesh.material_override = m
-	_mesh.position = Vector3(n / 2.0 - 0.5, 0.02, n / 2.0 - 0.5)
+	_mesh.position = Vector3(n / 2.0 - 0.5, 1.2, n / 2.0 - 0.5)
 	_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_mesh)
 	_refresh()

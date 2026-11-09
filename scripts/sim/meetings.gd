@@ -84,8 +84,18 @@ func on_hour() -> void:
 func update() -> void:
 	if current.is_empty():
 		return
-	if not bool(current["talked"]) and sim.clock >= float(current["talk_at"]):
-		_hold_talk()
+	if not bool(current["talked"]):
+		# Start talking once most of the people on their way are here (after a short wait), or
+		# at the latest when the bell's time is up.
+		var walking := 0
+		for c: Colonist in sim.colonists.values():
+			if c.action != null and String(c.action.def.get("id", "")) == "attend_meeting" and c.action.phase == "walking":
+				walking += 1
+		var here := (current["present"] as Array).size()
+		var settled := here >= 2 and here >= 0.8 * float(here + walking) and sim.clock >= float(current["start"]) + 30.0
+		if settled or sim.clock >= float(current["talk_at"]):
+			_hold_talk()
+			current["end"] = sim.clock + float(cfg("talk_hours", 1.0)) * 60.0
 	if sim.clock >= float(current["end"]):
 		current = {}
 
