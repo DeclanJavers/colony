@@ -80,16 +80,27 @@ func snapshot_hours_ago(hours: float) -> Dictionary:
 	return {} if history.is_empty() else history[0]
 
 
+## Save to this game's slot (a new one the first time), with a thumbnail of the screen.
 func save_game() -> Error:
-	return SaveGame.save(sim, history, SaveGame.PATH, chronicle)
+	if GameStart.slot_id == "" or GameStart.slot_id == "autosave" or GameStart.slot_id == "legacy":
+		GameStart.slot_id = SaveSlots.new_id()
+	return SaveSlots.save(GameStart.slot_id, sim, history, chronicle, get_viewport())
 
 
-## Reload the scene and continue from the save (a clean restart of view, HUD and brains).
-func load_game() -> bool:
-	var data := SaveGame.read()
+func autosave() -> Error:
+	return SaveSlots.save("autosave", sim, history, chronicle, get_viewport())
+
+
+## Reload the scene and continue from a save (a clean restart of view, HUD and brains).
+## "" = the most recent save.
+func load_game(id: String = "") -> bool:
+	if id == "":
+		id = String(SaveSlots.latest().get("id", ""))
+	var data := SaveSlots.read(id) if id != "" else {}
 	if data.is_empty():
 		return false
 	SaveGame.pending = data
+	GameStart.slot_id = id
 	get_tree().reload_current_scene()
 	return true
 

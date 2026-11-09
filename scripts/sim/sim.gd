@@ -58,7 +58,7 @@ func setup(p_seed: int) -> void:
 	seed_value = p_seed
 	rng.seed = p_seed
 	_load_action_types()
-	map.setup(int(content.cfg("map_size", 60)))
+	map.setup(int(map_options.get("size", content.cfg("map_size", 60))))
 	map.generate(rng, self)
 	footfall.resize(map.size * map.size)
 	discovered.resize(map.size * map.size)
@@ -75,7 +75,7 @@ func setup(p_seed: int) -> void:
 	for r in start.get("stock", {}):
 		stock[r] = float(start["stock"][r])
 	var ages: Array = content.cfg("founder_age_days", [5.0, 12.0])
-	for i in int(start.get("colonists", 5)):
+	for i in int(map_options.get("settlers", start.get("colonists", 5))):
 		var cell := map.nearest_walkable(map.center + Vector2i(rng.randi_range(-3, 3), rng.randi_range(-3, 3)))
 		spawn_colonist(cell, rng.randf_range(float(ages[0]), float(ages[1])), [])
 	for c: Colonist in colonists.values():

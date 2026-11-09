@@ -134,9 +134,14 @@ func _ready() -> void:
 	root.add_child(inspector)
 
 
+var pause_menu: PauseMenu
+
+
 func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 	runner = p_runner
 	view = p_view
+	pause_menu = PauseMenu.new(runner)
+	_root.add_child(pause_menu)
 	inspector.setup(runner, view, chat, _panel_style())
 	var ev := runner.sim.events
 	ev.colonist_born.connect(func(c: Colonist) -> void:
@@ -280,8 +285,8 @@ func _save() -> void:
 
 
 func _load() -> void:
-	if not runner.load_game():
-		_log("[color=#ff8a80]No saved game yet.[/color]")
+	pause_menu.open()
+	pause_menu._show_load()
 
 
 func _add_choice(grid: GridContainer, title: String, key: String, opts: Array) -> void:
@@ -353,14 +358,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F5:
 				_save()
 			KEY_F9:
-				_load()
+				if not runner.load_game():
+					_log("[color=#ff8a80]No saved game yet.[/color]")
 			KEY_F:
 				if cam != null and view.selected != null:
 					cam.follow_node = null if cam.follow_node != null else view.colonist_root(view.selected)
 			KEY_TAB:
 				_cycle_colonist(-1 if event.shift_pressed else 1)
 			KEY_ESCAPE:
-				view.select_target(null)
+				if view.selected_target != null:
+					view.select_target(null)
+				else:
+					pause_menu.toggle()
 
 
 func _panel_style() -> StyleBoxFlat:

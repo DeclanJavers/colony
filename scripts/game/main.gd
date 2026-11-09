@@ -27,13 +27,22 @@ func _ready() -> void:
 	var args := _parse(OS.get_cmdline_user_args())
 	var content := Content.get_instance()
 	var seed_v := int(args.get("seed", str(content.cfg("default_seed", 1234))))
+	var brain := String(args.get("brain", ""))
+	# A new game from the menu: its seed, map options and brain.
+	if not GameStart.new_game.is_empty() and SaveGame.pending.is_empty():
+		seed_v = int(GameStart.new_game.get("seed", seed_v))
+		runner.map_options = GameStart.new_game.get("map_options", {}).duplicate()
+		if brain == "":
+			brain = String(GameStart.new_game.get("brain", ""))
+		GameStart.new_game = {}
+		GameStart.slot_id = ""
 
 	add_child(runner)
 	if args.has("load") and SaveGame.pending.is_empty():
 		SaveGame.pending = SaveGame.read()
 	var saved := SaveGame.pending
 	SaveGame.pending = {}
-	runner.start(seed_v, String(args.get("brain", "")), saved)
+	runner.start(seed_v, brain, saved)
 	if args.has("prewarm"):
 		runner.prewarm(float(args["prewarm"]))
 	if args.has("day"):
@@ -94,6 +103,12 @@ func _ready() -> void:
 			view.select_target(people[0])
 			cam.focus(view.target_position(people[0]), true)
 			runner.sim.converse(people[0], people[1], String(args["talk"]) if args["talk"] != "1" else "chat")
+
+	# Autosave every morning (not in automated screenshot runs).
+	if not args.has("shot"):
+		runner.sim.events.hour_passed.connect(func(_d: int, h: int) -> void:
+			if h == 7:
+				runner.autosave())
 
 	if args.has("save"):   # test hook: save right away (e.g. after --prewarm)
 		print("saved: ", runner.save_game() == OK)
