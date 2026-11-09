@@ -96,6 +96,7 @@ func report() -> Dictionary:
 		"decisions": decisions, "talks": talks,
 		"requests_made": int(sim.stats.get("requests_made", 0)), "requests_followed": int(sim.stats.get("requests_followed", 0)),
 		"belief_error": snappedf(belief_err_sum / maxf(belief_err_n, 1.0), 0.01), "choices": choices,
+		"wildlife": _wildlife(),
 	}
 	for k in max_glut:
 		r["max_glut_days"][k] = snappedf(float(max_glut[k]), 0.1)
@@ -126,6 +127,10 @@ static func flags(r: Dictionary) -> Array:
 		f.append("many failed decisions")
 	if float(r["critical_share"]) > 0.05:
 		f.append("people often in danger")
+	var w: Dictionary = r.get("wildlife", {})
+	for k in w.get("left", {}):
+		if int(w["left"][k]) == 0 and int(w.get("kills", {}).get(k, 0)) > 0:
+			f.append("%s hunted out" % k)
 	return f
 
 
@@ -144,3 +149,15 @@ func _hall_seats() -> int:
 		if b.provides("meeting_place") != null and b.complete:
 			return b.seats()
 	return 0
+
+
+## Game animals: how many are left of each kind (and the land's capacity), and the hunting.
+func _wildlife() -> Dictionary:
+	var w := sim.wildlife
+	var left := {}
+	for k in w.kinds():
+		left[k] = w.count(k)
+	return {"left": left, "capacity": w.capacity.duplicate(), "kills": w.stats["kills"].duplicate(),
+		"hunts": int(w.stats["hunts"]), "misses": int(w.stats["misses"]), "born": w.stats["born"].duplicate(),
+		"arrived": w.stats["arrived"].duplicate()}
+

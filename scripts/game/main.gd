@@ -97,6 +97,9 @@ func _ready() -> void:
 			chat.reply_received.connect(func(c: Colonist, _r: String) -> void: chat.save_memory(c), CONNECT_ONE_SHOT)
 			chat.send(first, String(args["say"]))
 
+	if args.has("hunt"):   # test hook: the first adult takes a spear and stalks the nearest deer, camera on them
+		_hunt_for_test()
+
 	if args.has("talk"):   # test hook: the first two colonists start a conversation now
 		var people := runner.sim.colonists.values()
 		if people.size() >= 2:
@@ -121,6 +124,35 @@ func _ready() -> void:
 
 	if args.has("shot"):
 		_take_shot(String(args["shot"]), float(args.get("shot-delay", "2.0")))
+
+
+## Test hook (--hunt): the first adult gets a spear, stands a few tiles from a deer, and starts
+## hunting it; the land around is uncovered and the camera follows them.
+func _hunt_for_test() -> void:
+	var sim := runner.sim
+	var deer: Array = sim.wildlife.animals.values().filter(func(a: Dictionary) -> bool: return a["kind"] == "deer")
+	var hunter: Colonist = null
+	for c: Colonist in sim.colonists.values():
+		if c.is_adult():
+			hunter = c
+			break
+	if deer.is_empty() or hunter == null:
+		return
+	var d: Dictionary = deer[0]
+	var spot := sim.map.nearest_walkable(Vector2i((d["pos"] + Vector2(5, 2)).round()))
+	hunter.pos = Vector2(spot)
+	hunter.cell = spot
+	sim.give_tool(hunter, "spear")
+	if hunter.action != null:
+		hunter.action.end(false)
+	sim.look_around(hunter, 12.0)
+	hunter.knowledge.see_game("deer", Vector2i(d["pos"].round()), sim.clock, 1)
+	var a := sim.make_action(hunter, sim.content.actions_by_id["hunt"])
+	if a.available() and a.begin():
+		hunter.action = a
+		hunter.state = "acting"
+	view.select(hunter)
+	cam.follow_node = view.colonist_root(hunter)
 
 
 ## Test hook: select something by kind so screenshots can show each inspector page.

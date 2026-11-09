@@ -17,7 +17,7 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 		"format": FORMAT, "seed": sim.seed_value, "clock": sim.clock, "stock": sim.stock.duplicate(),
 		"tier": sim.unlocked_tier, "stats": sim.stats.duplicate(true), "next_id": sim._next_id,
 		"next_request_id": sim._next_request_id, "used_names": sim._used_names.duplicate(),
-		"conv_id": sim._conv_id, "weather": sim.weather, "map_options": sim.map_options.duplicate(), "meetings": sim.meetings.to_dict(), "story": sim.story.to_dict(), "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
+		"conv_id": sim._conv_id, "weather": sim.weather, "map_options": sim.map_options.duplicate(), "meetings": sim.meetings.to_dict(), "story": sim.story.to_dict(), "wildlife": sim.wildlife.to_dict(), "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
 		"nodes": [], "buildings": [], "colonists": [], "graveyard": [],
 	}
 	for n: ResNode in sim.nodes.values():
@@ -62,6 +62,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 	sim._conv_id = int(data.get("conv_id", 0))
 	sim.weather = String(data.get("weather", "clear"))
 	sim.story.from_dict(data.get("story", {}))
+	sim.wildlife.from_dict(data.get("wildlife", {}))
 	var ff: Variant = data.get("footfall")
 	if ff is PackedFloat32Array and (ff as PackedFloat32Array).size() == sim.footfall.size():
 		sim.footfall = ff
@@ -132,7 +133,7 @@ static func _colonist(c: Colonist) -> Dictionary:
 	return {"id": c.id, "name": c.name, "age": c.age_minutes, "lifespan": c.lifespan_days, "traits": Array(c.traits),
 		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(), "role": c.role, "tools": c.tools.duplicate(), "practice": c.practice.duplicate(), "known_roles": c.knowledge.roles.duplicate(), "plan_day": c.plan_day,
 		"memories": c.memories.duplicate(true), "recent": c.recent.duplicate(true),
-		"knowledge": c.knowledge.facts.duplicate(true), "places": c.knowledge.places.duplicate(true), "seen": c.knowledge.seen, "requests": c.requests.duplicate(true),
+		"knowledge": c.knowledge.facts.duplicate(true), "places": c.knowledge.places.duplicate(true), "game": c.knowledge.game.duplicate(true), "seen": c.knowledge.seen, "requests": c.requests.duplicate(true),
 		"conversations": c.conversations.duplicate(true), "affection": c.affection.duplicate(),
 		"partner": c.partner_id, "parents": c.parent_ids.duplicate(), "home": c.home_id, "pos": c.pos, "cell": c.cell,
 		"dead": not c.alive(), "brain": c.brain_id, "pregnant_until": c.pregnant_until, "last_child_at": c.last_child_at,
@@ -162,6 +163,7 @@ static func _restore(d: Dictionary, sim: Sim) -> Colonist:
 	c.knowledge.facts = d["knowledge"].duplicate(true)
 	c.knowledge.places = d.get("places", {}).duplicate(true)
 	c.knowledge.roles = d.get("known_roles", {}).duplicate()
+	c.knowledge.game = d.get("game", {}).duplicate(true)
 	var seen: Variant = d.get("seen")
 	if seen is PackedByteArray:
 		c.knowledge.seen = seen

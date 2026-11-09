@@ -42,5 +42,11 @@ signal week_summarized(week: Dictionary)
 signal tool_made(c: Colonist, tool: String)
 ## A fish was caught at this bit of shore.
 signal fish_caught(c: Colonist, shore: Vector2i)
+## A hunter killed a rabbit or a deer here.
+signal animal_killed(c: Colonist, kind: String, cell: Vector2i)
+## A hunter's spear missed and the animal got away.
+signal hunt_missed(c: Colonist, kind: String, cell: Vector2i)
+## A few animals of this kind moved in from the edge of the map (game was scarce).
+signal animals_arrived(kind: String, home: Vector2i)
 ## A building was taken down (an old hall replaced by a bigger one).
 signal building_removed(b: Building)

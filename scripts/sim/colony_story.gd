@@ -52,6 +52,11 @@ func watch(p_sim: Sim) -> void:
 		var text := "Meeting: %d came%s; they agreed: %s." % [(plan["present"] as Array).size(), crowd, sim.meetings.plan_summary(plan)]
 		_add("meeting", text)
 		_w["meeting"] = text)
+	ev.animal_killed.connect(func(c: Colonist, kind: String, _cell: Vector2i) -> void:
+		if kind == "deer":       # (rabbits are everyday; a deer is worth telling)
+			_add("hunt", "%s hunted a deer." % c.name))
+	ev.animals_arrived.connect(func(kind: String, home: Vector2i) -> void:
+		_add("wildlife", "%s moved into the land %s." % [String(sim.wildlife.kind_def(kind).get("plural", kind)).capitalize(), sim.direction_word(home)]))
 	ev.action_finished.connect(func(c: Colonist, a: ActionBase, ok: bool) -> void:
 		if not ok or a == null:
 			return
@@ -73,6 +78,7 @@ func watch(p_sim: Sim) -> void:
 const WORK_WORDS := {
 	"gather_wood": "chopped wood", "gather_stone": "cut stone", "gather_food": "picked berries",
 	"fetch_water": "fetched water", "farm": "worked the farms", "build": "built", "explore": "went exploring",
+	"fish": "went fishing", "hunt": "went hunting",
 }
 
 

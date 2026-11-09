@@ -57,7 +57,8 @@
       "jobs": [
         "make_hatchet",
         "make_pickaxe",
-        "make_rod"
+        "make_rod",
+        "make_spear"
       ]
     },
     "fishing": {
@@ -65,6 +66,13 @@
       "good_at": "fishing",
       "jobs": [
         "fish"
+      ]
+    },
+    "hunting": {
+      "role": "hunter",
+      "good_at": "hunting",
+      "jobs": [
+        "hunt"
       ]
     }
   }

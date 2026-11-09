@@ -25,5 +25,14 @@
     },
     "minutes": 25,
     "uses": 25
+  },
+  "spear": {
+    "label": "spear",
+    "cost": {
+      "wood": 3,
+      "stone": 1
+    },
+    "minutes": 35,
+    "uses": 20
   }
 }

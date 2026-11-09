@@ -186,6 +186,10 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 		if w == "storm" or w == "snow":
 			_log("[color=#c5d8e8]%s[/color]" % ("A storm rolls in." if w == "storm" else "Snow is falling.")))
 	ev.tier_unlocked.connect(func(t: int) -> void: _log("[color=#80d8ff]Tier %d unlocked![/color]" % t))
+	ev.animal_killed.connect(func(c: Colonist, kind: String, _cell: Vector2i) -> void:
+		_log("[color=#d7b98c]%s hunted a %s.[/color]" % [InspectText.link(c), runner.sim.wildlife.kind_def(kind).get("label", kind)]))
+	ev.animals_arrived.connect(func(kind: String, home: Vector2i) -> void:
+		_log("[color=#d7b98c]%s have moved into the land %s.[/color]" % [String(runner.sim.wildlife.kind_def(kind).get("plural", kind)).capitalize(), runner.sim.direction_word(home)]))
 	runner.speed_changed.connect(func(_s: int) -> void: _refresh_speed())
 	view.target_selected.connect(func(t: Variant) -> void: inspector.show_target(t))
 	view.hovered.connect(_on_hover)

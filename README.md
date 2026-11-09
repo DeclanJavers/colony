@@ -34,14 +34,21 @@ LFM3 GGUF at `~/.lmstudio/models/LiquidAI/LFM3-1.7B-GGUF/LFM3-1.7B-QAD-Q4_0.gguf
 - **Exploration:** colonists only use resources they've seen or been told about; unexplored land
   is under fog. They explore, and news of places spreads in conversation.
 - **Tools** (`data/tools.json`): sticks and pebbles are picked up by hand; trees need a stone
-  hatchet and big rocks a pickaxe, which people make and wear out. A rod lets them fish the river.
+  hatchet and big rocks a pickaxe, which people make and wear out. A rod lets them fish the river,
+  and a spear lets them hunt.
 - **Roles** (`data/roles.json`): nobody is assigned a job; people who've done a lot of something
   lately, and are among the best at it, become known for it (woodcutter, fisher, toolmaker...).
 - **The weekly meeting** (`data/meetings.json`): the bell rings every 7th day; people gather at
   the meeting hall (or the campfire), share news, and agree a plan with volunteers. The hall is
   enlarged when people had to stand outside.
 - **Terrain** (map options in `WorldMap.DEFAULT_OPTIONS`): a river, ponds, gentle hills, meadows.
-- **Wildlife** (scenery only): rabbits, deer, birds, fish, butterflies, fireflies.
+- **Game animals** (`data/animals.json`, `scripts/sim/wildlife.gd`): rabbits in warrens and deer in
+  herds live in the sim. They graze around a home spot that drifts, bolt from people who come close,
+  and have young in spring and summer up to what the land carries. People remember where they saw
+  game and pass it on in talk and at meetings. Hunters creep up and throw from close; a hit brings
+  meat home. Every kill makes that kind warier for a while and moves the herd away, and hunted-out
+  land slowly refills from the map's edge.
+- **Scenery:** birds, fish jumping, butterflies, fireflies, falling leaves, rain ripples.
 - **The story:** the Colony page keeps a timeline and a short summary of every week.
 - **Look:** a pixel-art diorama; every new asset follows [docs/STYLE.md](docs/STYLE.md).
 

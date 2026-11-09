@@ -1,23 +1,22 @@
 class_name WildlifeView
 extends Node3D
-## Scenery that makes the world feel alive (docs/STYLE.md). Nothing here touches the sim:
-##   * rabbits graze and hop about, and bolt when people come near,
-##   * deer wander in small herds near the woods (warier: they flee from further off),
-##   * birds peck about in little flocks, take off when disturbed and fly to another spot,
+## Makes the world feel alive (docs/STYLE.md):
+##   * rabbits and deer are the sim's game animals (Sim.wildlife): drawn here where the sim has them,
+##     hopping or trotting as they go, and falling over when a hunter gets one,
+##   * birds peck about in little flocks, take off when disturbed and fly to another spot (scenery),
 ##   * fish jump in the river now and then (and when someone lands one),
 ##   * butterflies by day in spring and summer, fireflies on warm nights, falling leaves in
 ##     autumn, ripples on the water when it rains.
 ## Animals stay hidden in unexplored fog.
 
-const RABBITS_PER_100_TILES := 0.55
-const DEER_HERDS := 3
 const BIRD_FLOCKS := 4
 
 var sim: Sim
 var view: WorldView
 var camera: Camera3D
 var rng := RandomNumberGenerator.new()
-var _animals: Array = []      # {kind, node, pos: Vector2, target: Vector2, state, timer, speed, flee, phase, y}
+var _animals: Array = []      # birds: {kind, node, pos: Vector2, target: Vector2, state, timer, speed, flee, phase, y}
+var _game: Dictionary = {}    # sim animal id -> {node, pos: Vector2 (as drawn), phase}
 var _fish_t := 3.0
 var _ripple_t := 0.0
 var _ripples: Array[MeshInstance3D] = []
@@ -31,17 +30,6 @@ func setup(p_sim: Sim, p_view: WorldView, p_camera: Camera3D) -> void:
 	view = p_view
 	camera = p_camera
 	rng.seed = sim.seed_value * 7 + 3
-	var n := sim.map.size
-	for i in int(n * n / 100.0 * RABBITS_PER_100_TILES):
-		var c := _random_cell(8.0)
-		if c.x >= 0:
-			_spawn("rabbit", c, i)
-	for h in DEER_HERDS:
-		var c := _random_cell(12.0, true)
-		for k in rng.randi_range(2, 4):
-			var cc := _near_walkable(c, 2)
-			if cc.x >= 0:
-				_spawn("deer", cc, h * 10 + k)
 	for f in BIRD_FLOCKS:
 		var c := _random_cell(6.0, true)
 		for k in rng.randi_range(3, 5):
@@ -197,7 +185,51 @@ func _process(delta: float) -> void:
 		people.append(c.pos)
 	for a in _animals:
 		_update_animal(a, delta, people)
+	_update_game(delta)
 	_update_ambient(delta)
+
+
+## Rabbits and deer follow the sim: glide to where it has them, face the way they go, hop.
+func _update_game(delta: float) -> void:
+	var live: Dictionary = sim.wildlife.animals
+	for id in _game.keys():
+		if not live.has(id):
+			_fall(_game[id]["node"])      # hunted (or, rarely, gone some other way)
+			_game.erase(id)
+	for id in live:
+		var a: Dictionary = live[id]
+		var g: Dictionary = _game.get(id, {})
+		if g.is_empty():
+			var node := view.make_model(String(a["kind"]), int(id))
+			node.scale = Vector3.ONE * rng.randf_range(0.9, 1.1)
+			node.rotation.y = rng.randf() * TAU
+			add_child(node)
+			g = {"node": node, "pos": a["pos"], "phase": rng.randf() * TAU}
+			_game[id] = g
+		var node: Node3D = g["node"]
+		var was: Vector2 = g["pos"]
+		var to: Vector2 = a["pos"] - was
+		var now: Vector2 = a["pos"] if to.length() > 4.0 else was + to * clampf(delta * 10.0, 0.0, 1.0)
+		g["pos"] = now
+		var step := now - was
+		var moving := step.length() > 0.0005
+		if moving:
+			# Models face +Z (make_models.py), so turn +Z toward where it's going.
+			node.rotation.y = lerp_angle(node.rotation.y, atan2(step.x, step.y), clampf(delta * 10.0, 0.0, 1.0))
+		g["phase"] = float(g["phase"]) + delta * (2.0 if a["state"] == "flee" else 1.0)
+		var y := 0.0
+		if moving:
+			y = absf(sin(float(g["phase"]) * 9.0)) * 0.12 if a["kind"] == "rabbit" else absf(sin(float(g["phase"]) * 5.0)) * 0.03
+		node.visible = sim.is_discovered(Vector2i(now.round()))
+		node.position = Vector3(now.x, y + (view.ground.y_at(now) if view.ground != null else 0.0), now.y)
+
+
+func _fall(node: Node3D) -> void:
+	var tw := create_tween()
+	tw.tween_property(node, "rotation:z", PI * 0.5, 0.35).set_ease(Tween.EASE_IN)
+	tw.tween_interval(2.0)
+	tw.tween_property(node, "scale", Vector3.ONE * 0.01, 0.4)
+	tw.tween_callback(node.queue_free)
 
 
 func _update_animal(a: Dictionary, delta: float, people: Array[Vector2]) -> void:
@@ -256,7 +288,8 @@ func _update_animal(a: Dictionary, delta: float, people: Array[Vector2]) -> void
 				a["timer"] = rng.randf_range(2.0, 7.0) if kind != "bird" else rng.randf_range(1.0, 4.0)
 			else:
 				a["pos"] += to.normalized() * step
-				node.rotation.y = lerp_angle(node.rotation.y, atan2(-to.x, -to.y), clampf(delta * 8.0, 0.0, 1.0))
+				# Models face +Z (docs/STYLE.md / make_models.py), so turn +Z toward where it's going.
+				node.rotation.y = lerp_angle(node.rotation.y, atan2(to.x, to.y), clampf(delta * 8.0, 0.0, 1.0))
 	a["phase"] = float(a["phase"]) + delta
 	var moving: bool = a["state"] != "idle"
 	var y := 0.0
@@ -350,7 +383,7 @@ func _fish_jump(cell: Vector2i, caught: bool) -> void:
 	var start := Vector3(cell.x + rng.randf_range(-0.3, 0.3), 0.0, cell.y + rng.randf_range(-0.3, 0.3))
 	var dir := Vector3.FORWARD.rotated(Vector3.UP, rng.randf() * TAU) * 0.5
 	f.position = start
-	f.look_at_from_position(start, start + dir, Vector3.UP)
+	f.look_at_from_position(start, start + dir, Vector3.UP, true)   # head (+Z) first
 	add_child(f)
 	_ripple(start + Vector3(0, 0.03, 0), 0.6)
 	var tw := create_tween()

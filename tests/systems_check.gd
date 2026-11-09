@@ -1,6 +1,7 @@
 extends SceneTree
 ## Checks the colony's newer systems behave as designed: tools and litter, fishing, terrain and
-## map options, roles, the weekly meeting and the hall, the story, and saving mid-meeting.
+## map options, roles, the weekly meeting and the hall, the story, saving mid-meeting, and
+## game animals and hunting.
 ##   godot --headless --path . -s res://tests/systems_check.gd
 ## Prints one line per check and RESULT PASS / FAIL.
 
@@ -27,6 +28,7 @@ func _initialize() -> void:
 	_terrain()
 	_roles()
 	_meetings_and_story()
+	_hunting()
 	print("RESULT %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -135,12 +137,14 @@ func _meetings_and_story() -> void:
 	var weeks := []
 	sim.events.week_summarized.connect(func(w: Dictionary) -> void: weeks.append(w))
 	var saved_mid := {}
-	while sim.clock < 8.5 * 1440.0:
+	# (Two weeks: a meeting nobody can come to, say everyone's asleep, isn't held; the next one is.)
+	while sim.clock < 15.5 * 1440.0 and (held.is_empty() or saved_mid.is_empty()):
 		sim.tick(1.0)
 		if saved_mid.is_empty() and not sim.meetings.current.is_empty() and not bool(sim.meetings.current["talked"]):
 			SaveGame.save(sim, [], "user://test_mid_meeting.tres")
 			saved_mid = SaveGame.read("user://test_mid_meeting.tres")
-	check("a meeting is held on day 7", not held.is_empty() and int(held[0]["day"]) == 7)
+	check("a meeting is held on a meeting day", not held.is_empty() and int(held[0]["day"]) % int(sim.content.meetings.get("every_days", 7)) == 0,
+		"day %d" % int(held[0]["day"]) if not held.is_empty() else "none")
 	if not held.is_empty():
 		var p: Dictionary = held[0]
 		check("people came", (p["present"] as Array).size() >= 2, "%d" % (p["present"] as Array).size())
@@ -184,4 +188,95 @@ func _meetings_and_story() -> void:
 			cells_ok = cells_ok and sim.map.building_at.get(cell, -1) == hall.id
 		check("the hall can be enlarged and seats more", e != null and hall.seats() > before and cells_ok, "%d -> %d" % [before, hall.seats()])
 	else:
-		check("the hall can be enlarged and seats more", false, "no hall by day 8")
+		check("the hall can be enlarged and seats more", false, "no hall yet")
+
+
+func _hunting() -> void:
+	var sim := _fresh(1234)
+	var w := sim.wildlife
+	check("rabbits and deer live on the land", w.count("rabbit") >= 6 and w.count("deer") >= 4, "%d rabbits, %d deer" % [w.count("rabbit"), w.count("deer")])
+	check("they stand on open ground", w.animals.values().all(func(a: Dictionary) -> bool: return sim.map.is_walkable(Vector2i(a["pos"].round()))))
+	var few := _fresh(1234, {"game": 0.5})
+	check("fewer deer and rabbits when asked", few.wildlife.animals.size() < w.animals.size(), "%d vs %d" % [few.wildlife.animals.size(), w.animals.size()])
+	# A deer bolts from someone walking up; a hunter creeping up gets closer first.
+	var c: Colonist = sim.colonists.values()[0]
+	var deer: Dictionary = w.animals.values().filter(func(a: Dictionary) -> bool: return a["kind"] == "deer")[0]
+	var spot := Vector2(sim.map.nearest_walkable(Vector2i((deer["pos"] + Vector2(3.5, 0)).round())))
+	c.pos = spot
+	c.cell = Vector2i(spot)
+	deer["state"] = "idle"
+	deer["timer"] = 999.0
+	w.update(1.0)
+	check("a deer bolts when someone comes close", deer["state"] == "flee")
+	deer["state"] = "idle"
+	deer["timer"] = 999.0
+	c.set_meta("stalking", true)
+	w.update(1.0)
+	check("a hunter creeping up gets closer before it bolts", deer["state"] == "idle")
+	c.set_meta("stalking", false)
+	# Hunting end to end: a spear, a sighting, and off they go.
+	sim.give_tool(c, "spear")
+	c.knowledge.game.clear()
+	var hunt := sim.make_action(c, sim.content.actions_by_id["hunt"])
+	check("no sighting: can't hunt", not hunt.available())
+	var food0 := float(sim.stock["food"])
+	var kills0 := w.animals.size()
+	var got := false
+	for attempt in 12:
+		var rab: Array = w.animals.values().filter(func(a: Dictionary) -> bool: return a["kind"] == "rabbit")
+		if rab.is_empty():
+			break
+		var r: Dictionary = rab[attempt % rab.size()]
+		c.knowledge.see_game("rabbit", Vector2i(r["pos"].round()), sim.clock, 1)
+		var act := sim.make_action(c, sim.content.actions_by_id["hunt"])
+		if not act.available() or not act.begin():
+			continue
+		for m in 400:
+			sim.clock += 1.0
+			w.update(1.0)
+			if act.tick(1.0) != ActionBase.RUNNING:
+				break
+		act.end(true)
+		if float(sim.stock["food"]) > food0:
+			got = true
+			break
+	check("a hunter can bring meat home", got, "food %d -> %d" % [food0, sim.stock["food"]])
+	check("the hunted animal is gone", w.animals.size() < kills0 or not got)
+	# Over-hunting: kill every deer. They grow wary, and in time a few move back in.
+	var hunter: Colonist = sim.colonists.values()[1]
+	for a: Dictionary in w.animals.values().filter(func(x: Dictionary) -> bool: return x["kind"] == "deer"):
+		w.kill(a, hunter)
+	check("hunting deer out leaves none", w.count("deer") == 0)
+	check("hunted animals grow warier", float(w.fear["deer"]) > 0.3, "%.2f" % float(w.fear["deer"]))
+	for d in 40:
+		sim.clock += 1440.0
+		w.on_day()
+	check("hunted-out land recovers in time", w.count("deer") > 0, "%d deer after 40 days" % w.count("deer"))
+	check("the fear fades", float(w.fear["deer"]) < 0.05)
+	# What people know: they see game, tell each other, and Laya's state text mentions it.
+	var other: Colonist = sim.colonists.values()[2]
+	var any_a: Dictionary = w.animals.values()[0]
+	hunter.pos = any_a["pos"] + Vector2(1, 0)
+	hunter.cell = Vector2i(hunter.pos.round())
+	hunter.knowledge.game.clear()
+	sim._see_game(hunter)
+	check("people remember game they see", not hunter.knowledge.fresh_game(sim.clock).is_empty())
+	other.knowledge.game.clear()
+	for k in 10:
+		sim.share_game(hunter, other)
+	check("sightings are passed on in talk", not other.knowledge.fresh_game(sim.clock).is_empty())
+	check("the state text mentions game", sim.describer.describe(sim, hunter).contains("Game: "))
+	# Saving keeps the animals where they are.
+	SaveGame.save(sim, [], "user://test_wildlife.tres")
+	var data := SaveGame.read("user://test_wildlife.tres")
+	var b := Sim.new()
+	b.register_brain(UtilityBrain.new(), true)
+	b.map_options = data.get("map_options", {})
+	b.setup(int(data["seed"]))
+	SaveGame.apply(b, data)
+	var same := b.wildlife.animals.size() == w.animals.size()
+	for id in w.animals:
+		same = same and b.wildlife.animals.has(id) and (b.wildlife.animals[id]["pos"] as Vector2).is_equal_approx(w.animals[id]["pos"])
+	check("saving keeps the animals", same, "%d vs %d" % [b.wildlife.animals.size(), w.animals.size()])
+	check("saving keeps what people saw", not b.find_colonist(other.id).knowledge.fresh_game(b.clock).is_empty())
+

@@ -23,8 +23,9 @@ const STOCK_KEYS := ["food", "water", "wood", "stone"]
 var owner_id: int = 0
 var facts: Dictionary = {}     # key -> {v: float, t: float, src: "seen"|"heard", from: String}
 var places: Dictionary = {}    # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from, amt}
-var seen := PackedByteArray()
-var roles: Dictionary = {}     # colonist id -> skill id they're known for (as last heard or seen)  # land this colonist has seen with their own eyes (y * size + x)
+var seen := PackedByteArray()  # land this colonist has seen with their own eyes (y * size + x)
+var roles: Dictionary = {}     # colonist id -> skill id they're known for (as last heard or seen)
+var game: Dictionary = {}      # animal kind -> last sighting {cell: Vector2i, t, src: "seen"|"heard", from, n}
 
 
 func _init(p_owner: int = 0) -> void:
@@ -152,3 +153,36 @@ func places_of(type: String, from: Vector2i) -> Array:
 
 func to_dict() -> Dictionary:
 	return facts.duplicate(true)
+
+
+## ---- Game: where they last saw (or heard of) rabbits and deer ----------------------------
+
+const GAME_FRESH_H := 36.0      # after this a sighting is no use: the animals will have moved on
+
+
+func see_game(kind: String, cell: Vector2i, now: float, n: int) -> void:
+	game[kind] = {"cell": cell, "t": now, "src": "seen", "from": "", "n": n}
+
+
+## Told where someone saw animals. Fresher news replaces older news.
+func hear_game(kind: String, cell: Vector2i, t_source: float, from: String, n: int) -> bool:
+	if game.has(kind) and float(game[kind]["t"]) >= t_source:
+		return false
+	game[kind] = {"cell": cell, "t": t_source, "src": "heard", "from": from, "n": n}
+	return true
+
+
+## Sightings still worth acting on, freshest first: [{kind, cell, age_h, src, from, n}].
+func fresh_game(now: float) -> Array:
+	var out: Array = []
+	for k in game:
+		var e: Dictionary = game[k]
+		var age := (now - float(e["t"])) / 60.0
+		if age <= GAME_FRESH_H:
+			out.append({"kind": k, "cell": e["cell"], "age_h": age, "src": e["src"], "from": e.get("from", ""), "n": int(e.get("n", 1))})
+	out.sort_custom(func(a, b) -> bool: return float(a["age_h"]) < float(b["age_h"]))
+	return out
+
+
+func forget_game(kind: String) -> void:
+	game.erase(kind)

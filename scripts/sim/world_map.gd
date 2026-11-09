@@ -15,7 +15,7 @@ var center: Vector2i
 var height := PackedByteArray()     # terrain level per tile (0 = lowland, 1-2 = hills); walkable either way
 ## Map generation options (the New Game screen; saved with the game). Defaults in DEFAULT_OPTIONS.
 ## "legacy": a save from before hills and ponds keeps its flat map.
-const DEFAULT_OPTIONS := {"forests": 1.0, "rocks": 1.0, "berries": 1.0, "hills": 1.0, "ponds": 2, "river": true}
+const DEFAULT_OPTIONS := {"forests": 1.0, "rocks": 1.0, "berries": 1.0, "hills": 1.0, "ponds": 2, "river": true, "game": 1.0}
 
 
 func setup(map_size: int) -> void:

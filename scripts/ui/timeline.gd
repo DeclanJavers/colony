@@ -6,13 +6,14 @@ extends Control
 const LANES := {
 	"birth": 0, "death": 0, "couple": 0,
 	"built": 1, "expanded": 1, "tier": 1,
-	"meeting": 2, "role": 2, "season": 2,
+	"meeting": 2, "role": 2, "season": 2, "hunt": 2, "wildlife": 2,
 }
 const LANE_NAMES := ["people", "building", "colony"]
 const COLORS := {
 	"birth": Color("#9be29b"), "death": Color("#ff8a80"), "couple": Color("#f2b8d8"),
 	"built": Color("#d9b27c"), "expanded": Color("#f2c640"), "tier": Color("#f2c640"),
 	"meeting": Color("#e8c468"), "role": Color("#c9b6e4"), "season": Color("#8fc3ea"),
+	"hunt": Color("#d7b98c"), "wildlife": Color("#a8c48a"),
 }
 
 var sim: Sim

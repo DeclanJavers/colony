@@ -197,6 +197,7 @@ func _pool_knowledge(people: Array[Colonist]) -> void:
 		for sp in people:
 			if sp != li:
 				sim.share_places(sp, li, 2)
+				sim.share_game(sp, li)
 				li.knowledge.roles[sp.id] = sp.role    # everyone sees who does what
 
 

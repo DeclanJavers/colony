@@ -4,7 +4,7 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v7"   # v7: + tools. v6: + weekly meeting and the colony plan. v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
+const VERSION := "v8"   # v8: + game animals seen (hunting). v7: + tools. v6: + weekly meeting and the colony plan. v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
 const MAX_MEMORIES := 3
 
 
@@ -116,6 +116,18 @@ func places_phrase(sim: Sim, c: Colonist) -> String:
 	return "Knows where to find: %s." % ", ".join(out)
 
 
+## Where they last saw (or heard of) game, e.g. "Game: deer seen 7 tiles away 2h ago; rabbits
+## (Pia said) 12 tiles away 5h ago." or "No game seen lately."
+func game_phrase(sim: Sim, c: Colonist) -> String:
+	var out: PackedStringArray = []
+	for e in c.knowledge.fresh_game(sim.clock):
+		var label := String(sim.wildlife.kind_def(e["kind"]).get("plural", e["kind"]))
+		var when := "just now" if float(e["age_h"]) < 1.0 else "%dh ago" % int(e["age_h"])
+		var how := "seen" if e["src"] == "seen" else "(%s said)" % e["from"]
+		out.append("%s %s %d tiles away %s" % [label, how, int(Vector2(e["cell"] - c.cell).length()), when])
+	return "Game: %s." % "; ".join(out) if not out.is_empty() else "No game seen lately."
+
+
 func describe(sim: Sim, c: Colonist) -> String:
 	var parts: PackedStringArray = []
 	var trait_texts: PackedStringArray = []
@@ -145,6 +157,8 @@ func describe(sim: Sim, c: Colonist) -> String:
 		st.append(c.knowledge.phrase(k, sim.clock))
 	parts.append("%s thinks the stores hold: %s." % [c.name, ", ".join(st)])
 	parts.append(places_phrase(sim, c))
+	if c.is_adult():
+		parts.append(game_phrase(sim, c))
 
 	var built := {}
 	var sites: PackedStringArray = []

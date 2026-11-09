@@ -334,6 +334,7 @@ JOB_WORDS = {
     "check_stores": r"\b(check|count|look at|see what)\b.*\b(stores?|stock\w*|supplies|storehouse)\b|\bhow much\b.*\b(left|have|got)\b",
     "warm_up": r"\b(warm (yourself |you )?up|by the fire|get warm|campfire)\b",
     "rest": r"\b(rest|take a break|sit down|have a break|catch your breath)\b",
+    "hunt": r"\b(hunt\w*|deer|rabbits?|spear|meat|venison)\b",
     "explore": r"\b(explor\w*|scout\w*|look around|search (for|the)|find (some|more|new)|go and see what|see what'?s (out|beyond|over)|wander\w*|map the land|what you find)\b",
 }
 # Clear signs a message is NOT asking for a job now: negations, questions about the past, thanks.

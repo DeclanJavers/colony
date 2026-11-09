@@ -7,7 +7,7 @@ const RESOURCE_TARGETS := {"food": 80.0, "water": 40.0, "wood": 60.0, "stone": 5
 const KIND_OF := {
 	"gather_wood": "gather", "gather_stone": "gather", "gather_food": "gather", "fetch_water": "gather",
 	"farm": "work", "build": "build", "socialize": "socialize", "have_child": "socialize",
-	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize", "make_hatchet": "work", "make_pickaxe": "work", "make_rod": "work", "fish": "gather",
+	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize", "make_hatchet": "work", "make_pickaxe": "work", "make_rod": "work", "fish": "gather", "make_spear": "work", "hunt": "gather",
 }
 
 var temperature: float = 0.12
@@ -100,6 +100,8 @@ func _knows_source(sim: Sim, c: Colonist, res: String) -> bool:
 		return true
 	if res == "food" and c.has_tool("rod"):
 		return true     # the river
+	if res == "food" and c.has_tool("spear") and not c.knowledge.fresh_game(sim.clock).is_empty():
+		return true     # game they know where to find
 	for t in sim.content.nodes:
 		var d: Dictionary = sim.content.nodes[t]
 		var need := String(d.get("needs_tool", ""))
@@ -252,6 +254,25 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 		"make_rod":
 			# A rod is worth making when food is short and they've seen the river to fish in.
 			s = (0.2 + 0.9 * _scarcity(sim, c, "food") if sim.seen_shore(c).x >= 0 else -1.0) - _recently(c, sim, [aid], 12.0)
+		"make_spear":
+			# Worth making when they know where game is: more when food is short, more if it's deer
+			# (a lot of meat), and more when winter is coming (berries and crops stop, fish bite
+			# poorly; the animals are still about).
+			var sights: Array = c.knowledge.fresh_game(sim.clock)
+			var deer := sights.any(func(e: Dictionary) -> bool: return float(sim.wildlife.kind_def(e["kind"]).get("food", 5)) >= 20.0)
+			var lean := 0.35 if float(sim.season_def().get("crop_growth", 1.0)) <= 0.0 or sim.days_until("winter") <= 2 else 0.0
+			s = (0.3 + 0.9 * _scarcity(sim, c, "food") + (0.3 if deer else 0.0) + lean if not sights.is_empty() else -1.0) \
+				- _recently(c, sim, [aid], 12.0)
+		"hunt":
+			# A food job like picking berries, plus or minus how much better it pays. One berry trip
+			# brings ~6 food; a deer is 30 (about 1.6x berries per hour once misses and stalking are
+			# counted), a rabbit much less. Only as good as the sighting: fresh and close is best.
+			var best := -INF
+			for e in c.knowledge.fresh_game(sim.clock):
+				var food := float(sim.wildlife.kind_def(e["kind"]).get("food", 5))
+				var rel := clampf(food / 18.75, 0.3, 1.6) / (1.0 + float(e["age_h"]) / 12.0)
+				best = maxf(best, 0.4 * (rel - 1.0) - 0.01 * Vector2(e["cell"] - c.cell).length())
+			s = 0.35 + 0.9 * _scarcity(sim, c, "food") - 0.6 * _plenty(sim, c, "food") + best
 		"fish":
 			# Like picking berries: more worth it the shorter food is, and the better fish bite.
 			# (They made the rod for this, so a little more than berries when food isn't short.)

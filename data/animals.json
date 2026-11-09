@@ -1,0 +1,26 @@
+{
+  "_doc": "Game animals that live in the sim (birds stay scenery, in WildlifeView). Rabbits live in warrens and deer in herds; each group wanders near a home spot that drifts over time. They flee from anyone within `wary` tiles (from a hunter stalking them, only `wary` x stalk_factor, less with hunting skill). Groups grow in spring and summer (seasons.json breed) toward the land's capacity, and a few move in from the map's edge when numbers are low, so hunted-out land slowly recovers. Every kill near a group makes that species warier for a while (fear, fading with fear_half_life_days) and moves the group's home away. Speeds are tiles per sim minute (people walk 0.4). food: what one animal gives the stores.",
+  "stalk_factor": 0.45,
+  "fear_per_kill": 0.15,
+  "fear_half_life_days": 3.0,
+  "arrive_below_share": 0.35,
+  "arrive_chance_per_day": 0.25,
+  "kinds": {
+    "rabbit": {
+      "label": "rabbit", "plural": "rabbits",
+      "groups_per_100_tiles": 0.14, "group_size": [2, 4], "capacity_per_group": 5,
+      "roam": 3, "home_drift_days": 3.0, "near_trees": false,
+      "wander_speed": 0.15, "flee_speed": 0.9, "wary": 2.5, "flee_tiles": 5,
+      "breed_per_group_day": 0.6,
+      "food": 6, "hit_chance": 0.4
+    },
+    "deer": {
+      "label": "deer", "plural": "deer",
+      "groups_per_100_tiles": 0.08, "group_size": [2, 4], "capacity_per_group": 6,
+      "roam": 4, "home_drift_days": 1.5, "near_trees": true,
+      "wander_speed": 0.08, "flee_speed": 0.8, "wary": 5.0, "flee_tiles": 8,
+      "breed_per_group_day": 0.2,
+      "food": 30, "hit_chance": 0.45
+    }
+  }
+}

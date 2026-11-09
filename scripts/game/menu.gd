@@ -9,9 +9,10 @@ const AMOUNTS := [["Sparse", 0.6], ["Normal", 1.0], ["Thick", 1.5]]
 const HILLS := [["Flat", 0.0], ["Gentle", 1.0], ["Hilly", 1.8]]
 const PONDS := [["None", 0], ["A few", 2], ["Many", 5]]
 const SETTLERS := [["3", 3], ["5", 5], ["8", 8]]
+const GAME_AMOUNTS := [["Few", 0.5], ["Normal", 1.0], ["Many", 1.6]]
 const BRAINS := [["Hand-made rules", "utility"], ["Laya (learned AI)", "laya"]]
 
-var opts := {"seed": 0, "size": 60, "forests": 1.0, "rocks": 1.0, "hills": 1.0, "ponds": 2, "river": true, "settlers": 5, "brain": String(Content.get_instance().cfg("decision.brain", "laya"))}
+var opts := {"seed": 0, "size": 60, "forests": 1.0, "rocks": 1.0, "hills": 1.0, "ponds": 2, "river": true, "game": 1.0, "settlers": 5, "brain": String(Content.get_instance().cfg("decision.brain", "laya"))}
 var _preview: Node3D
 var _cam: IsoCamera
 var _rebuild_t := -1.0
@@ -90,7 +91,7 @@ func _build_preview() -> void:
 
 func _map_options() -> Dictionary:
 	return {"size": opts["size"], "forests": opts["forests"], "rocks": opts["rocks"], "berries": 1.0,
-		"hills": opts["hills"], "ponds": opts["ponds"], "river": opts["river"], "settlers": opts["settlers"]}
+		"hills": opts["hills"], "ponds": opts["ponds"], "river": opts["river"], "game": opts["game"], "settlers": opts["settlers"]}
 
 
 func _process(delta: float) -> void:
@@ -195,6 +196,7 @@ func _build_new() -> void:
 	_choice(grid, "Hills", "hills", HILLS)
 	_choice(grid, "Ponds", "ponds", PONDS)
 	_choice(grid, "River", "river", [["Yes", true], ["No", false]])
+	_choice(grid, "Deer and rabbits", "game", GAME_AMOUNTS)
 	_choice(grid, "Settlers", "settlers", SETTLERS)
 	_choice(grid, "Their minds", "brain", BRAINS, false)
 	var row := HBoxContainer.new()

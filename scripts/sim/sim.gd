@@ -79,6 +79,7 @@ func setup(p_seed: int) -> void:
 			complete_building(b, null, true)
 	for r in start.get("stock", {}):
 		stock[r] = float(start["stock"][r])
+	wildlife.setup(self)       # (after the start buildings, so no animal stands where they go)
 	var ages: Array = content.cfg("founder_age_days", [5.0, 12.0])
 	for i in int(map_options.get("settlers", start.get("colonists", 5))):
 		var cell := map.nearest_walkable(map.center + Vector2i(rng.randi_range(-3, 3), rng.randi_range(-3, 3)))
@@ -181,6 +182,7 @@ func tick(dt: float = 1.0) -> void:
 		colonists.erase(c.id)
 		graveyard.append(c)
 	_world_tick(dt)
+	wildlife.update(dt)
 	meetings.update()
 	if int(clock) % PERCEIVE_EVERY == 0:
 		_perceive()
@@ -193,6 +195,7 @@ func tick(dt: float = 1.0) -> void:
 	if day() != _last_day:
 		_last_day = day()
 		_roll_weather()
+		wildlife.on_day()
 		if season() != _last_season:
 			_last_season = season()
 			events.season_changed.emit(_last_season)
@@ -627,6 +630,7 @@ func _casual_chats() -> void:
 func _perceive() -> void:
 	for c: Colonist in colonists.values():
 		look_around(c)
+		_see_game(c)
 	var stores: Array[Building] = []
 	for b: Building in buildings.values():
 		if b.complete and float(b.provides("storage", 0)) > 0.0:
@@ -636,6 +640,42 @@ func _perceive() -> void:
 			if c.pos.distance_to(b.center()) <= SIGHT + b.size.x * 0.5:
 				observe_stock(c)
 				break
+
+
+## What game animals `c` can see from where they stand: the nearest of each kind is remembered (and
+## how many were there). Back at a spot where they'd seen some, and none there now: they've moved on.
+func _see_game(c: Colonist) -> void:
+	var seen_kind := {}
+	for a: Dictionary in wildlife.animals.values():
+		var dist: float = c.pos.distance_to(a["pos"])
+		if dist > LOOK:
+			continue
+		var k := String(a["kind"])
+		var e: Dictionary = seen_kind.get(k, {"d": INF, "cell": Vector2i.ZERO, "n": 0})
+		e["n"] = int(e["n"]) + 1
+		if dist < float(e["d"]):
+			e["d"] = dist
+			e["cell"] = Vector2i(a["pos"].round())
+		seen_kind[k] = e
+	for k in seen_kind:
+		c.knowledge.see_game(k, seen_kind[k]["cell"], clock, int(seen_kind[k]["n"]))
+	for k in c.knowledge.game.keys():
+		if not seen_kind.has(k) and c.pos.distance_to(Vector2(c.knowledge.game[k]["cell"])) < 3.0:
+			c.knowledge.forget_game(k)
+
+
+## Passing on where game was seen: the listener takes it if it's fresher than what they know.
+## Returns the kinds that were news to them.
+func share_game(from: Colonist, to: Colonist) -> Array:
+	var news := []
+	var tr := trust(to, from)
+	for e in from.knowledge.fresh_game(clock):
+		if rng.randf() > 0.4 + 0.6 * tr:
+			continue
+		var had := to.knowledge.fresh_game(clock).any(func(x: Dictionary) -> bool: return x["kind"] == e["kind"])
+		if to.knowledge.hear_game(e["kind"], e["cell"], clock - float(e["age_h"]) * 60.0, from.name, int(e["n"])) and not had:
+			news.append({"kind": e["kind"], "cell": e["cell"]})
+	return news
 
 
 ## ---- Exploration ----------------------------------------------------------
@@ -876,6 +916,7 @@ var conversation_handler: Callable
 var meeting_handler: Callable
 var meetings := ColonyMeetings.new()
 var story := ColonyStory.new()          # timeline and weekly summaries, for watching
+var wildlife := ColonyWildlife.new()    # rabbits and deer: grazing, fleeing, breeding, hunted
 var _conv_id := 0
 
 
@@ -960,6 +1001,9 @@ func apply_conversation(conv: Dictionary, result: Dictionary) -> void:
 		for news in share_places(sp, li):
 			places_learned.append({"who": li.name, "resource": news["resource"], "from": sp.name})
 			add_memory(li, "%s told me where to find %s (%s)." % [sp.name, news["resource"], direction_word(news["cell"])], 3.0)
+		for news in share_game(sp, li):
+			var kd: Dictionary = wildlife.kind_def(news["kind"])
+			add_memory(li, "%s saw %s %s." % [sp.name, kd.get("plural", news["kind"]), direction_word(news["cell"])], 2.0)
 	conv["places_learned"] = places_learned
 	# And what the last meeting decided, if one of them knows and the other doesn't.
 	if not meetings.pass_on(a, b):

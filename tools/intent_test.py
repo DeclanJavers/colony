@@ -16,6 +16,8 @@ CASES = [
     ("thanks for chopping wood yesterday", "none"), ("I love the smell of wood smoke", "none"),
     ("you should rest, no need to farm today", "rest"), ("check on the kids", "none"),
     ("hello there, how are you?", "none"), ("what do you think of the river?", "none"),
+    ("could you go hunting for some deer?", "hunt"), ("please go and hunt a rabbit for us", "hunt"),
+    ("did you see any deer?", "none"),
 ]
 
 url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765/intent"

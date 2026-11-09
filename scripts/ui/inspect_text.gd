@@ -280,6 +280,18 @@ static func colony(sim: Sim, runner: SimRunner) -> String:
 	L.append("%d people: %d adults, %d children, %d couples. %d births, %s." % [
 		sim.alive_count(), adults, sim.alive_count() - adults, couples / 2, int(sim.stats.get("births", 0)),
 		("deaths: " + ", ".join(death_parts)) if not death_parts.is_empty() else "no deaths"])
+	# The land's game: how many, hunted so far, and whether they're skittish after recent kills.
+	var w := sim.wildlife
+	var game: PackedStringArray = []
+	for k in w.kinds():
+		var n := w.count(k)
+		var kd := w.kind_def(k)
+		var bits := "%d %s" % [n, kd.get("plural" if n != 1 else "label", k)]
+		var killed := int(w.stats["kills"].get(k, 0))
+		if killed > 0:
+			bits += " (%d hunted%s)" % [killed, ", skittish" if float(w.fear.get(k, 0.0)) > 0.25 else ""]
+		game.append(bits)
+	L.append("Game on the land: %s." % ", ".join(game))
 
 	# The story: this week so far, then the last weeks (newest first), one short paragraph each.
 	var story := sim.story

@@ -21,6 +21,7 @@ var seasons: Dictionary = {}
 var roles: Dictionary = {}
 var meetings: Dictionary = {}
 var tools: Dictionary = {}
+var animals: Dictionary = {}       # game animals (animals.json): settings + kinds
 
 
 static func get_instance() -> Content:
@@ -50,6 +51,7 @@ func load_all() -> void:
 	roles = _load("roles.json")
 	meetings = _load("meetings.json")
 	tools = _strip_doc(_load("tools.json"))
+	animals = _load("animals.json")
 	actions_by_id.clear()
 	for a in actions:
 		actions_by_id[a["id"]] = a

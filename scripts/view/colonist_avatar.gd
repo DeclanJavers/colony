@@ -32,9 +32,10 @@ var _kid_head := -1.0              # head scale currently applied (children get 
 const KID_HEAD := 1.3
 var _tool := ""
 const TOOL_FOR_ACTION := {"gather_wood": "axe", "gather_stone": "pickaxe", "build": "hammer", "fish": "rod",
-	"farm": "hoe", "fetch_water": "bucket"}
+	"farm": "hoe", "fetch_water": "bucket", "hunt": "spear"}
 const WOOD := Color(0.55, 0.38, 0.22)
 const METAL := Color(0.62, 0.64, 0.68)
+const STONE := Color("#6E6A68")   # docs/STYLE.md stone, dark: a knapped flint point
 
 
 static func available() -> bool:
@@ -156,7 +157,7 @@ func _update_tool(c: Colonist) -> void:
 		return
 	var want := ""
 	var a := c.action
-	if a != null and (a.phase == "working" or a.phase == "fishing"):
+	if a != null and (a.phase in ["working", "fishing", "tracking", "searching", "stalking"]):
 		want = String(TOOL_FOR_ACTION.get(String(a.def.get("id", "")), ""))
 		# Picking up sticks and pebbles is done by hand: the axe and pick are for trees and rocks.
 		var src: Variant = a.get("source")
@@ -176,7 +177,7 @@ func _update_tool(c: Colonist) -> void:
 static func _make_tool(kind: String) -> Node3D:
 	var root := Node3D.new()
 	root.position = Vector3(0, 0.03, 0)
-	var handle_len: float = {"axe": 0.40, "pickaxe": 0.40, "hammer": 0.26, "hoe": 0.52, "bucket": 0.0, "rod": 0.95}[kind]
+	var handle_len: float = {"axe": 0.40, "pickaxe": 0.40, "hammer": 0.26, "hoe": 0.52, "bucket": 0.0, "rod": 0.95, "spear": 1.1}[kind]
 	if handle_len > 0.0:
 		var h := _part(CylinderMesh.new(), WOOD)
 		(h.mesh as CylinderMesh).top_radius = 0.016
@@ -212,6 +213,16 @@ static func _make_tool(kind: String) -> Node3D:
 			(line.mesh as CylinderMesh).radial_segments = 3
 			line.position = Vector3(0, -0.25, handle_len * 0.78)
 			root.add_child(line)
+		"spear":
+			# A knapped stone point at the end of a long shaft.
+			var point := _part(CylinderMesh.new(), STONE)
+			(point.mesh as CylinderMesh).top_radius = 0.0
+			(point.mesh as CylinderMesh).bottom_radius = 0.026
+			(point.mesh as CylinderMesh).height = 0.09
+			(point.mesh as CylinderMesh).radial_segments = 4
+			point.rotation.x = PI / 2.0
+			point.position = Vector3(0, 0, handle_len * 0.8 + 0.045)
+			root.add_child(point)
 		"hoe":
 			var head := _part(BoxMesh.new(), METAL)
 			(head.mesh as BoxMesh).size = Vector3(0.02, 0.09, 0.06)
