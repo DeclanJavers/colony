@@ -42,3 +42,5 @@ signal week_summarized(week: Dictionary)
 signal tool_made(c: Colonist, tool: String)
 ## A fish was caught at this bit of shore.
 signal fish_caught(c: Colonist, shore: Vector2i)
+## A building was taken down (an old hall replaced by a bigger one).
+signal building_removed(b: Building)

@@ -23,6 +23,7 @@ var level: int = 1                 # buildings with "levels" (meeting hall): how
 var expanding: bool = false        # being enlarged to the next level: still usable, work_done counts up
 var prev_cell: Vector2i = Vector2i(-1, -1)   # footprint before the enlargement started (for drawing)
 var prev_size: Vector2i = Vector2i.ZERO
+var replaces_id: int = -1          # a bigger hall built elsewhere: the old one goes when this is done
 var grow_rect := Rect2i()          # land kept free for the building's biggest level (empty = none)
 
 

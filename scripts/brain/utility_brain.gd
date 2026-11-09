@@ -102,6 +102,9 @@ func _knows_source(sim: Sim, c: Colonist, res: String) -> bool:
 		return true     # the river
 	for t in sim.content.nodes:
 		var d: Dictionary = sim.content.nodes[t]
+		var need := String(d.get("needs_tool", ""))
+		if need != "" and not c.has_tool(need):
+			continue      # a tree is no source of wood without a hatchet
 		if String(d.get("resource", "")) == res and not c.knowledge.usable_places_of(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0).is_empty():
 			return true
 	return false
@@ -244,8 +247,8 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			# Trees and big rocks need the tool. Worth making when you'll need what it gets (the
 			# colony is short of it) or when the bare-hands sources you know of are thin.
 			var res := "wood" if aid == "make_hatchet" else "stone"
-			var no_tool_source := not _knows_source(sim, c, res)
-			s = 0.5 + 0.9 * _scarcity(sim, c, res) + (0.4 if no_tool_source else 0.0) - _recently(c, sim, [aid], 6.0)
+			var no_source := not _knows_source(sim, c, res)
+			s = 0.3 + 0.9 * _scarcity(sim, c, res) + (0.5 if no_source else 0.0) - _recently(c, sim, [aid], 6.0)
 		"make_rod":
 			# A rod is worth making when food is short and they've seen the river to fish in.
 			s = (0.2 + 0.9 * _scarcity(sim, c, "food") if sim.seen_shore(c).x >= 0 else -1.0) - _recently(c, sim, [aid], 12.0)

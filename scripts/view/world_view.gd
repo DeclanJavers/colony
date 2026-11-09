@@ -69,6 +69,13 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	sim.events.conversation_finished.connect(_on_conversation)
 	sim.events.building_expansion_started.connect(_rebuild_building)
 	sim.events.building_expanded.connect(_rebuild_building)
+	sim.events.building_removed.connect(func(b: Building) -> void:
+		var e: Dictionary = _buildings.get(b.id, {})
+		if not e.is_empty():
+			if e.get("light") != null:
+				_fire_lights.erase(e["light"])
+			(e["root"] as Node3D).queue_free()
+			_buildings.erase(b.id))
 	sim.events.meeting_held.connect(_on_meeting)
 	# Little moments: parents celebrate a birth, whoever finishes a building cheers.
 	sim.events.colonist_born.connect(func(c: Colonist) -> void:
@@ -1036,13 +1043,18 @@ func pick(screen_pos: Vector2) -> Variant:
 	var dir := camera.project_ray_normal(screen_pos)
 	if absf(dir.y) < 0.0001:
 		return null
+	# The ray meets the highest terrace first: try each hill level from the top down and take the
+	# first one where the tile under the ray really is that high.
 	var hit := from + dir * (-from.y / dir.y)
 	var cell := Vector2i(roundi(hit.x), roundi(hit.z))
-	# On hills the ground is higher: step the ray up to the height of the tile it lands on.
-	for k in 3:
-		var hy := ground.y_at(Vector2(cell)) if ground != null else 0.0
-		hit = from + dir * ((hy - from.y) / dir.y)
-		cell = Vector2i(roundi(hit.x), roundi(hit.z))
+	for lv in [2, 1]:
+		var y := float(lv) * Ground.H
+		var p := from + dir * ((y - from.y) / dir.y)
+		var c2 := Vector2i(roundi(p.x), roundi(p.z))
+		if sim.map.in_bounds(c2) and sim.map.height_at(c2) >= lv:
+			hit = p
+			cell = c2
+			break
 	if not sim.map.in_bounds(cell):
 		return null
 	for g in sim.graveyard:

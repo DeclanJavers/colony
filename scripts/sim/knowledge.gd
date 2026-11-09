@@ -115,6 +115,7 @@ func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, fro
 ## Places of a type they believe are worth going to: something was left there when last seen (or
 ## they don't know how much), or it regrows and they last saw it long enough ago.
 func usable_places_of(type: String, from: Vector2i, now: float, regrows: bool) -> Array:
+	# (Callers that care whether they can work it with what they carry check the tool themselves.)
 	return places_of(type, from).filter(func(p: Dictionary) -> bool:
 		var e: Dictionary = places[p["id"]]
 		if float(e.get("blocked_until", -1.0)) > now:

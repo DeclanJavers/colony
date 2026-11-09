@@ -48,7 +48,8 @@ func setup(p_sim: Sim, p_view: WorldView, p_camera: Camera3D) -> void:
 			var cc := _near_walkable(c, 1)
 			if cc.x >= 0:
 				_spawn("bird", cc, f * 10 + k)
-	_butterflies = _make_particles(Color("#F2DFA8"), Color("#E8A0C8"), 0.09, 40, 6.0, false)
+	_butterflies = _make_particles(Color("#F2DFA8"), Color("#E8A0C8"), 0.11, 40, 6.0, false)
+	_butterfly_look(_butterflies)
 	_fireflies = _make_particles(Color("#E8F27A"), Color("#B8F28A"), 0.035, 60, 5.0, true)
 	_leaves = _make_particles(Color("#D9822B"), Color("#B9472A"), 0.07, 50, 6.0, false)
 	(_leaves.process_material as ParticleProcessMaterial).gravity = Vector3(0, -0.35, 0)
@@ -162,6 +163,32 @@ func _make_particles(c1: Color, c2: Color, size: float, amount: int, life: float
 	return p
 
 
+## Butterflies get a wing shape (two lobes each side) and a colour each: yellow, orange, blue, white.
+func _butterfly_look(p: GPUParticles3D) -> void:
+	var img := Image.create_empty(8, 8, false, Image.FORMAT_RGBA8)
+	var shape := ["........", ".##..##.", "###..###", "###..###", ".##..##.", ".##..##.", "..#..#..", "........"]
+	for y in 8:
+		for x in 8:
+			img.set_pixel(x, y, Color(1, 1, 1, 1) if shape[y][x] == "#" else Color(0, 0, 0, 0))
+	var m := (p.draw_pass_1 as QuadMesh).material as StandardMaterial3D
+	m.albedo_texture = ImageTexture.create_from_image(img)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var pm := p.process_material as ParticleProcessMaterial
+	var cols := Gradient.new()
+	cols.offsets = PackedFloat32Array([0.0, 0.3, 0.6, 0.85, 1.0])
+	cols.colors = PackedColorArray([Color("#F2D45C"), Color("#E8873A"), Color("#7FA8E8"), Color("#F4F1E8"), Color("#F2D45C")])
+	cols.interpolation_mode = Gradient.GRADIENT_INTERPOLATE_CONSTANT
+	var ct := GradientTexture1D.new()
+	ct.gradient = cols
+	pm.color_initial_ramp = ct
+	var fade := Gradient.new()
+	fade.offsets = PackedFloat32Array([0.0, 0.1, 0.9, 1.0])
+	fade.colors = PackedColorArray([Color(1, 1, 1, 0), Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 0)])
+	var ft := GradientTexture1D.new()
+	ft.gradient = fade
+	pm.color_ramp = ft
+
+
 func _process(delta: float) -> void:
 	if sim == null:
 		return
@@ -201,11 +228,31 @@ func _update_animal(a: Dictionary, delta: float, people: Array[Vector2]) -> void
 				a["state"] = "move"
 				a["speed"] = {"rabbit": 1.2, "deer": 0.5, "bird": 2.2}[kind]
 		"move", "flee":
-			var to: Vector2 = a["target"] - a["pos"]
+			# Ground animals go round trees, buildings and water (path), birds fly straight.
+			if kind != "bird":
+				var here := Vector2i(roundi(a["pos"].x), roundi(a["pos"].y))
+				if not sim.map.is_walkable(here):   # (a building went up where it stood)
+					var w := sim.map.nearest_walkable(here)
+					if w.x >= 0:
+						a["pos"] = Vector2(w)
+				var path: Array = a.get("path", [])
+				if path.is_empty() or a.get("path_to") != a["target"]:
+					path = Array(sim.map.find_path(Vector2i(roundi(a["pos"].x), roundi(a["pos"].y)), Vector2i(a["target"])))
+					a["path_to"] = a["target"]
+					if path.is_empty():
+						a["state"] = "idle"
+						a["timer"] = rng.randf_range(1.0, 3.0)
+						return
+				while path.size() > 1 and Vector2(path[0]).distance_to(a["pos"]) < 0.3:
+					path.pop_front()
+				a["path"] = path
+			var aim: Vector2 = a["target"] if kind == "bird" or (a["path"] as Array).is_empty() else Vector2((a["path"] as Array)[0])
+			var to: Vector2 = aim - a["pos"]
 			var step: float = a["speed"] * delta
-			if to.length() <= step:
+			if to.length() <= step and aim == a["target"]:
 				a["pos"] = a["target"]
 				a["state"] = "idle"
+				a["path"] = []
 				a["timer"] = rng.randf_range(2.0, 7.0) if kind != "bird" else rng.randf_range(1.0, 4.0)
 			else:
 				a["pos"] += to.normalized() * step
@@ -238,10 +285,12 @@ func _update_animal(a: Dictionary, delta: float, people: Array[Vector2]) -> void
 	node.position = Vector3(a["pos"].x, a["y"] + (view.ground.y_at(a["pos"]) if view.ground != null else 0.0), a["pos"].y)
 
 
-func _walkable_toward(p: Vector2, flying: bool) -> Vector2:
+## Where an animal heads: open ground near `p` (birds too: they land on open ground, not on
+## water, trees or roofs).
+func _walkable_toward(p: Vector2, _flying: bool) -> Vector2:
 	var n := sim.map.size
 	var c := Vector2i(clampi(roundi(p.x), 1, n - 2), clampi(roundi(p.y), 1, n - 2))
-	if flying or sim.map.is_walkable(c):
+	if sim.map.is_walkable(c):
 		return Vector2(c)
 	var w := sim.map.nearest_walkable(c)
 	return Vector2(w) if w.x >= 0 else p

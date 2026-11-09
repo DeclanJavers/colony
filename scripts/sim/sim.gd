@@ -60,6 +60,11 @@ func setup(p_seed: int) -> void:
 	_load_action_types()
 	map.setup(int(map_options.get("size", content.cfg("map_size", 60))))
 	map.generate(rng, self)
+	# Keep the full options the map was made with (defaults included), so a save made now
+	# rebuilds the same map even if the defaults change later.
+	var full: Dictionary = WorldMap.DEFAULT_OPTIONS.duplicate()
+	full.merge(map_options, true)
+	map_options = full
 	footfall.resize(map.size * map.size)
 	discovered.resize(map.size * map.size)
 	clock = 6.0 * 60.0  # start at 06:00 on day 0
@@ -1499,6 +1504,17 @@ func harvest_source(source: Dictionary, amount: float) -> float:
 	return amount
 
 
+## Sticks and pebbles where something is being built are cleared away.
+func _clear_litter(cells: Array[Vector2i]) -> void:
+	for cell in cells:
+		if map.litter_at.has(cell):
+			var lit := nodes.get(map.litter_at[cell]) as ResNode
+			map.litter_at.erase(cell)
+			if lit != null:
+				nodes.erase(lit.id)
+				events.node_depleted.emit(lit)
+
+
 ## ---- Tools ------------------------------------------------------------------
 
 func give_tool(c: Colonist, tool: String) -> void:
@@ -1574,11 +1590,14 @@ func nearest_site(from: Vector2i) -> Building:
 	return best
 
 
-func nearest_building_with(key: String, from: Vector2i) -> Building:
+## The nearest finished building that provides `key` (or, with colony_effect, has `key` among
+## its colony-wide effects, e.g. the workshop's tool_uses).
+func nearest_building_with(key: String, from: Vector2i, colony_effect: bool = false) -> Building:
 	var best: Building = null
 	var best_d := INF
 	for b: Building in buildings.values():
-		if b.complete and b.provides(key) != null:
+		var has: bool = (b.provides("colony", {}) as Dictionary).has(key) if colony_effect else b.provides(key) != null
+		if b.complete and has:
 			var d := Vector2(b.cell - from).length_squared()
 			if d < best_d:
 				best_d = d
@@ -1626,6 +1645,7 @@ const NEAR_VILLAGE := 14.0
 
 
 func room_for(type: String) -> Vector2i:
+	var near := float(content.buildings.get(type, {}).get("near_village", NEAR_VILLAGE))
 	var base := footprint_of(type)
 	var levels: Array = content.buildings.get(type, {}).get("levels", [])
 	var sizes: Array[Vector2i] = []
@@ -1635,7 +1655,7 @@ func room_for(type: String) -> Vector2i:
 	sizes.reverse()
 	for sz in sizes:
 		for origin in _spots(sz):
-			if Vector2(origin + sz / 2 - map.center).length() <= NEAR_VILLAGE:
+			if Vector2(origin + sz / 2 - map.center).length() <= near:
 				return sz
 			break
 	return base
@@ -1709,13 +1729,7 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	b.placed_at = clock
 	b.placed_by = by.name if by != null else ""
 	buildings[b.id] = b
-	for cell in b.cells():
-		if map.litter_at.has(cell):      # sticks and pebbles where it goes are cleared away
-			var lit := nodes.get(map.litter_at[cell]) as ResNode
-			map.litter_at.erase(cell)
-			if lit != null:
-				nodes.erase(lit.id)
-				events.node_depleted.emit(lit)
+	_clear_litter(b.cells())
 	if not d.get("walkable", false):
 		for cell in b.cells():
 			map.building_at[cell] = b.id
@@ -1734,7 +1748,24 @@ func can_expand(b: Building) -> bool:
 	if not b.complete or b.expanding:
 		return false
 	var nxt := b.level_def(b.level + 1)
-	return not nxt.is_empty() and affordable(nxt.get("cost", {})) and _expansion_origin(b).x >= 0
+	if nxt.is_empty() or not affordable(nxt.get("cost", {})):
+		return false
+	for o: Building in buildings.values():
+		if o.replaces_id == b.id:
+			return false      # a bigger one is already going up elsewhere
+	return _expansion_origin(b).x >= 0 or _relocation_spot(b).x >= 0
+
+
+## No room to enlarge it where it stands: a free spot near the village for the next size.
+func _relocation_spot(b: Building) -> Vector2i:
+	var fp: Array = b.level_def(b.level + 1).get("footprint", [b.size.x, b.size.y])
+	var size := Vector2i(int(fp[0]), int(fp[1]))
+	var near := float(b.def().get("near_village", NEAR_VILLAGE)) * 1.3
+	for origin in _spots(size):
+		if Vector2(origin + size / 2 - map.center).length() <= near:
+			return origin
+		break
+	return Vector2i(-1, -1)
 
 
 ## Where the bigger footprint can go: it has to contain the current one.
@@ -1786,6 +1817,8 @@ func start_expansion(type: String, by: Colonist) -> Building:
 			continue
 		var nxt := b.level_def(b.level + 1)
 		var origin := _expansion_origin(b)
+		if origin.x < 0:
+			return _relocate(b, by)
 		var fp: Array = nxt.get("footprint", [b.size.x, b.size.y])
 		for r in nxt.get("cost", {}):
 			stock[r] = float(stock[r]) - float(nxt["cost"][r])
@@ -1797,6 +1830,7 @@ func start_expansion(type: String, by: Colonist) -> Building:
 		b.expanding = true
 		b.work_done = 0.0
 		b.work_needed = float(nxt.get("work", 600))
+		_clear_litter(b.cells())
 		for cell in b.cells():
 			map.building_at[cell] = b.id
 			map.refresh_cell(cell)
@@ -1805,6 +1839,48 @@ func start_expansion(type: String, by: Colonist) -> Building:
 		events.building_expansion_started.emit(b)
 		return b
 	return null
+
+
+## Build the next size on a new spot; the old one stays in use until it's finished.
+func _relocate(old: Building, by: Colonist) -> Building:
+	var nxt := old.level_def(old.level + 1)
+	var spot := _relocation_spot(old)
+	if spot.x < 0:
+		return null
+	for r in nxt.get("cost", {}):
+		stock[r] = float(stock[r]) - float(nxt["cost"][r])
+	events.stock_changed.emit(stock)
+	var fp: Array = nxt.get("footprint", [old.size.x, old.size.y])
+	var b := Building.new()
+	b.id = _new_id()
+	b.type = old.type
+	b.cell = spot
+	b.size = Vector2i(int(fp[0]), int(fp[1]))
+	b.level = old.level + 1
+	b.work_needed = float(nxt.get("work", 600))
+	b.replaces_id = old.id
+	b.placed_at = clock
+	b.placed_by = by.name if by != null else ""
+	buildings[b.id] = b
+	_clear_litter(b.cells())
+	for cell in b.cells():
+		map.building_at[cell] = b.id
+		map.refresh_cell(cell)
+	if by != null:
+		add_memory(by, "There was no room to make the %s bigger, so I started a bigger one nearby." % b.def().get("label", b.type), 3.0)
+	events.building_placed.emit(b)
+	events.building_expansion_started.emit(b)
+	return b
+
+
+## Take a building down (the old hall once its bigger replacement is finished).
+func remove_building(b: Building) -> void:
+	buildings.erase(b.id)
+	for cell in b.cells():
+		if map.building_at.get(cell, -1) == b.id:
+			map.building_at.erase(cell)
+			map.refresh_cell(cell)
+	events.building_removed.emit(b)
 
 
 func _finish_expansion(b: Building, by: Colonist) -> void:
@@ -1820,6 +1896,19 @@ func _finish_expansion(b: Building, by: Colonist) -> void:
 func complete_building(b: Building, by: Colonist, quiet: bool = false) -> void:
 	if b.expanding:
 		_finish_expansion(b, by)
+		return
+	if b.replaces_id >= 0:
+		# The bigger hall built elsewhere is done: everyone moves over and the old one comes down.
+		var old := buildings.get(b.replaces_id) as Building
+		b.replaces_id = -1
+		b.complete = true
+		b.work_done = b.work_needed
+		b.completed_at = clock
+		if old != null:
+			remove_building(old)
+		for c: Colonist in colonists.values():
+			add_memory(c, "The new %s is finished: it seats %d." % [b.def().get("label", b.type), b.seats()], 3.0)
+		events.building_expanded.emit(b)
 		return
 	b.complete = true
 	b.work_done = b.work_needed

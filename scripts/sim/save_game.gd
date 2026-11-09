@@ -27,7 +27,7 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 			"work_done": b.work_done, "work_needed": b.work_needed, "beds": b.beds.duplicate(),
 			"farm_stage": b.farm_stage, "farm_growth": b.farm_growth, "placed_at": b.placed_at,
 			"completed_at": b.completed_at, "placed_by": b.placed_by, "work_by": b.work_by.duplicate(),
-			"harvests": b.harvests, "level": b.level, "expanding": b.expanding, "prev_cell": b.prev_cell, "prev_size": b.prev_size, "grow_rect": b.grow_rect})
+			"harvests": b.harvests, "level": b.level, "expanding": b.expanding, "prev_cell": b.prev_cell, "prev_size": b.prev_size, "grow_rect": b.grow_rect, "replaces_id": b.replaces_id})
 	for c: Colonist in sim.colonists.values():
 		data["colonists"].append(_colonist(c))
 	for g in sim.graveyard:
@@ -100,6 +100,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 		b.level = int(d.get("level", 1)); b.expanding = bool(d.get("expanding", false))
 		b.prev_cell = d.get("prev_cell", Vector2i(-1, -1)); b.prev_size = d.get("prev_size", Vector2i.ZERO)
 		b.grow_rect = d.get("grow_rect", Rect2i())
+		b.replaces_id = int(d.get("replaces_id", -1))
 		sim.buildings[b.id] = b
 		if not b.def().get("walkable", false):
 			for cell in b.cells():

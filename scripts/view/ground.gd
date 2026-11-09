@@ -71,6 +71,23 @@ func y_at(p: Vector2) -> float:
 	return float(sim.map.height_at(Vector2i(roundi(p.x), roundi(p.y)))) * H
 
 
+## The fog veil's mesh: the terrain's top faces with UVs across the whole map (0..1), so the veil
+## texture (one pixel per tile) lines up with the tiles, plus the cliff faces.
+func veil_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_normal(Vector3.UP)
+	for y in _n:
+		for x in _n:
+			var h := float(sim.map.height_at(Vector2i(x, y))) * H
+			var corners := [Vector3(x - 0.5, h, y - 0.5), Vector3(x + 0.5, h, y - 0.5), Vector3(x + 0.5, h, y + 0.5), Vector3(x - 0.5, h, y + 0.5)]
+			for k in [0, 1, 2, 0, 2, 3]:
+				var v: Vector3 = corners[k]
+				st.set_uv(Vector2((v.x + 0.5) / _n, (v.z + 0.5) / _n))
+				st.add_vertex(v)
+	return st.commit()
+
+
 ## One flat quad per tile at its height.
 func _top_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()

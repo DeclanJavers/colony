@@ -21,18 +21,17 @@ func setup(p_sim: Sim, p_view: WorldView) -> void:
 	var n := sim.map.size
 	_img = Image.create_empty(n, n, false, Image.FORMAT_RGBA8)
 	_tex = ImageTexture.create_from_image(_img)
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(n, n)
-	_mesh.mesh = plane
+	# The veil lies just over the ground, hills included (same steps as the terrain).
+	_mesh.mesh = view.ground.veil_mesh() if view.ground != null else PlaneMesh.new()
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = _tex
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 	m.render_priority = -1
-	m.no_depth_test = true          # over hills too (nothing of the colony is under unseen land)
+	m.uv1_scale = Vector3(1, 1, 1)
 	_mesh.material_override = m
-	_mesh.position = Vector3(n / 2.0 - 0.5, 1.2, n / 2.0 - 0.5)
+	_mesh.position = Vector3(0, 0.04, 0)
 	_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_mesh)
 	_refresh()

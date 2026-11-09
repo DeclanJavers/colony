@@ -17,12 +17,26 @@ func tools_phrase(sim: Sim, c: Colonist) -> String:
 		if c.has_tool(t):
 			var left := float(c.tools[t]) / maxf(1.0, float(d.get("uses", 30)) * sim.colony_mult("tool_uses"))
 			have.append("a %s%s" % [d.get("label", t), " (nearly worn out)" if left < 0.25 else (" (well used)" if left < 0.6 else "")])
-		elif t in ["hatchet", "pickaxe"]:   # (no rod is nothing to remark on)
+		elif _needed_for(sim, t) != "":   # (no rod is nothing to remark on)
 			lack.append("no %s" % String(d.get("label", t)).replace("stone ", ""))
 	var out := "%s has %s" % [c.name, " and ".join(have) if not have.is_empty() else "no tools"]
 	if not lack.is_empty() and not have.is_empty():
 		out += ", " + " and ".join(lack)
-	return out + " (trees need a hatchet, big rocks a pickaxe)."
+	var needs: PackedStringArray = []
+	for t in sim.content.tools:
+		var what := _needed_for(sim, t)
+		if what != "":
+			needs.append("%s need a %s" % [what, String(sim.content.tools[t].get("label", t)).replace("stone ", "")])
+	return out + (" (%s)." % ", ".join(needs) if not needs.is_empty() else ".")
+
+
+## Which resource nodes need this tool, said as people would ("trees", "rocks"), or "".
+func _needed_for(sim: Sim, tool: String) -> String:
+	var kinds: PackedStringArray = []
+	for t in sim.content.nodes:
+		if String(sim.content.nodes[t].get("needs_tool", "")) == tool:
+			kinds.append(String(t).replace("_", " ") + "s")
+	return " and ".join(kinds)
 
 
 ## The weekly meeting and the plan, e.g. "The weekly meeting is in 3 hours at the meeting hall.

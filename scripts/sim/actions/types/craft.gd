@@ -21,8 +21,8 @@ func begin() -> bool:
 	var d: Dictionary = sim.content.tools.get(tool, {})
 	if d.is_empty() or c.has_tool(tool) or not sim.affordable(d.get("cost", {})):
 		return false
-	spot = sim.nearest_building_with("colony", c.cell)   # the workshop, if any
-	if spot == null or spot.type != "workshop":
+	spot = sim.nearest_building_with("tool_uses", c.cell, true)   # the workshop, if there is one
+	if spot == null:
 		spot = sim.nearest_building_with("rest_spot", c.cell)
 	if spot != null and not go_to(sim.map.access_cell(spot.cells(), c.cell)):
 		spot = null

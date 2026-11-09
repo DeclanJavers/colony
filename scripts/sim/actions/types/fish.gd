@@ -23,7 +23,10 @@ func _shore() -> Vector2i:
 
 func begin() -> bool:
 	# The nearest bit of bank they've seen that they can actually walk to (not across the river).
-	for s: Vector2i in sim.seen_shores(c, 6):
+	var taken := sim.claimed_cells(c)
+	for s: Vector2i in sim.seen_shores(c, 12):
+		if taken.has(s):
+			continue          # someone's already fishing (or standing) there
 		if go_to(s, false):
 			spot = s
 			phase = "walking"

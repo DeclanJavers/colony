@@ -92,7 +92,8 @@ func update() -> void:
 			if c.action != null and String(c.action.def.get("id", "")) == "attend_meeting" and c.action.phase == "walking":
 				walking += 1
 		var here := (current["present"] as Array).size()
-		var settled := here >= 2 and here >= 0.8 * float(here + walking) and sim.clock >= float(current["start"]) + 30.0
+		var settled := here >= 2 and here >= float(cfg("start_when_share", 0.8)) * float(here + walking) \
+			and sim.clock >= float(current["start"]) + float(cfg("min_wait_minutes", 30))
 		if settled or sim.clock >= float(current["talk_at"]):
 			_hold_talk()
 			current["end"] = sim.clock + float(cfg("talk_hours", 1.0)) * 60.0
