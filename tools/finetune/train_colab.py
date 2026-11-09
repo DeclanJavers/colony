@@ -25,7 +25,8 @@ DATA = os.environ.get("DATA", "data_v1")
 OUT = os.environ.get("OUT", "laya_colony_v1")
 EPOCHS = int(os.environ.get("EPOCHS", "2"))
 MAX_TRAIN = int(os.environ.get("MAX_TRAIN", "24000"))
-MAX_EVAL = int(os.environ.get("MAX_EVAL", "1500"))
+MAX_EVAL = int(os.environ.get("MAX_EVAL", "600"))     # held-out rows for the before/after check (it runs at fp32: keep it small)
+GRAD_CKPT = os.environ.get("GRAD_CKPT", "0") == "1"   # off = ~30% faster; a T4 has the memory at micro_batch 8
 BASE = os.environ.get("BASE", "convaiinnovations/laya")   # or a Drive checkpoint dir, e.g. continue from v1
 WORK = "/content/work"
 
@@ -67,6 +68,7 @@ cfg = TrainConfig(
     shuffle_options=("choice",),    # option order changes per colonist, so don't learn positions
     eval_data=eval_path,
     log_every=50,
+    gradient_checkpointing=GRAD_CKPT,
 )
 t = time.time()
 out_local = f"{WORK}/{OUT}"
