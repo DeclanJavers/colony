@@ -13,6 +13,12 @@ Decided with the user:
 
 Order: v4 scoreboard first, then features, then the v5 training data last, so it covers everything. Each step gets an independent check.
 
+**Done overnight (2026-11-09):** tools (sticks, pebbles, hatchet, pickaxe, wear), fishing, wildlife and ambient life, hills/ponds/meadows with map options, title menu with new-game options, save slots with thumbnails and an autosave, pause menu, polish (names in crowds, night glow, vignette, hall near the village, meetings start when people have arrived), `tests/systems_check.gd`.
+
+**Next:**
+- **Hunting pack:** rabbits and deer become huntable (spear), herds thin if over-hunted.
+- **Laya v5:** retrain on the new state text (v7: tools; fishing; terrain) with DAgger data from v4.
+
 ## Next big Laya training run (v2)
 
 Goal: one larger fine-tune that covers everything below, instead of several small runs.
