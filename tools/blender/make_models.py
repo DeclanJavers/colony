@@ -23,7 +23,7 @@ OUT = os.path.abspath(ARGS[0] if ARGS else "assets/models")
 ONLY = set(ARGS[1:])
 os.makedirs(OUT, exist_ok=True)
 
-KEEP = {"window", "leaves1", "leaves2", "flame", "lamp", "body", "head", "roof_tint"}
+KEEP = {"window", "leaves1", "leaves2", "flame", "lamp", "body", "head", "roof_tint", "wing_l", "wing_r", "leg_0", "leg_1", "leg_2", "leg_3"}
 _mats = {}
 
 
@@ -702,6 +702,53 @@ def pebbles():
              M(["stone", "stone_light", "stone_dark"][i % 3]), sub=1, scale=(1.2, 1, 0.7))
 
 
+# ---- Animals (scenery: the view moves them; nothing in the sim) ------------------------------
+# Faces -Y like everything else. Parts the view animates keep their names: legs (leg_*), wings
+# (wing_l, wing_r), head.
+
+def rabbit(fur="#9C8064"):
+    m = mat("fur_" + fur, fur)
+    blob("body", 0.11, (0, 0.02, 0.1), m, sub=2, scale=(0.9, 1.25, 0.9))
+    blob("head", 0.07, (0, -0.1, 0.17), m, sub=2)
+    for x in (-0.025, 0.025):
+        box("ear", (0.018, 0.03, 0.11), (x, -0.08, 0.27), m, rot=(-0.25, 0, 0))
+    blob("tail", 0.035, (0, 0.15, 0.12), M("plaster"), sub=1)
+    blob("eye", 0.012, (0.04, -0.15, 0.19), M("iron"), sub=1)
+    blob("eye", 0.012, (-0.04, -0.15, 0.19), M("iron"), sub=1)
+
+
+def deer(antlers=True):
+    m = mat("fur_deer", "#A0683A")
+    light = mat("fur_deer_light", "#D9B98C")
+    blob("body", 0.2, (0, 0.02, 0.58), m, sub=2, scale=(0.8, 1.6, 0.85))
+    blob("belly", 0.15, (0, 0.03, 0.5), light, sub=1, scale=(0.75, 1.5, 0.6))
+    beam("neck", (0, -0.22, 0.62), (0, -0.32, 0.88), 0.09, m)
+    blob("head", 0.08, (0, -0.37, 0.92), m, sub=2, scale=(0.9, 1.4, 0.9))
+    for x in (-0.05, 0.05):
+        box("ear", (0.03, 0.02, 0.07), (x, -0.33, 1.0), m, rot=(0, 0.5 * (1 if x > 0 else -1), 0))
+    for i, (x, y) in enumerate([(-0.08, -0.2), (0.08, -0.2), (-0.08, 0.22), (0.08, 0.22)]):
+        beam("leg_%d" % i, (x, y, 0.45), (x, y, 0.02), 0.045, m)
+    blob("tail", 0.04, (0, 0.33, 0.66), light, sub=1)
+    if antlers:
+        for s in (-1, 1):
+            beam("antler", (s * 0.03, -0.35, 0.99), (s * 0.12, -0.32, 1.2), 0.02, M("sack"))
+            beam("antler", (s * 0.1, -0.33, 1.13), (s * 0.06, -0.42, 1.26), 0.018, M("sack"))
+
+
+def bird(col="#6B4F3A"):
+    m = mat("feather_" + col, col)
+    blob("body", 0.05, (0, 0, 0.0), m, sub=1, scale=(0.9, 1.4, 0.8))
+    blob("head", 0.032, (0, -0.06, 0.03), m, sub=1)
+    cone("beak", 0.012, 0.03, (0, -0.095, 0.03), M("fire"), verts=4)
+    box("wing_l", (0.11, 0.06, 0.008), (-0.06, 0.0, 0.01), m)
+    box("wing_r", (0.11, 0.06, 0.008), (0.06, 0.0, 0.01), m)
+
+
+def fish():
+    blob("body", 0.06, (0, 0, 0), M("stone_light"), sub=1, scale=(0.45, 1.5, 0.6))
+    cone("tail", 0.04, 0.05, (0, 0.1, 0), M("stone"), verts=4)
+
+
 # ---- Props --------------------------------------------------------------------------------------
 
 def prop_crate():
@@ -734,6 +781,10 @@ MODELS = {
     "site_frame": site_frame, "tree": tree, "tree_2": tree_2, "tree_3": tree_3,
     "rock": rock, "rock_2": rock_2, "berry_bush": berry_bush,
     "sticks": sticks, "pebbles": pebbles,
+    "rabbit": lambda: rabbit("#9C8064"), "rabbit_2": lambda: rabbit("#B7A58C"), "rabbit_3": lambda: rabbit("#6E5A4A"),
+    "deer": lambda: deer(True), "deer_2": lambda: deer(False), "deer_3": lambda: deer(False),
+    "bird": lambda: bird("#6B4F3A"), "bird_2": lambda: bird("#3F5E8C"), "bird_3": lambda: bird("#A8452F"),
+    "fish": fish,
     "meeting_hall": lambda: meeting_hall(3, 1), "meeting_hall_lv2": lambda: meeting_hall(4, 2),
     "meeting_hall_lv3": lambda: meeting_hall(5, 3),
     "meeting_hall_lv4": lambda: meeting_hall(6, 4),

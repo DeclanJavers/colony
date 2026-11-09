@@ -48,6 +48,8 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	_build_terrain()
 	var fog := FogView.new()
 	add_child(fog)
+	var wildlife := WildlifeView.new()
+	add_child(wildlife)
 	for n: ResNode in sim.nodes.values():
 		_add_node(n)
 	for b: Building in sim.buildings.values():
@@ -57,6 +59,7 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	for g in sim.graveyard:
 		_add_grave(g)
 	fog.setup(sim, self)
+	wildlife.setup(sim, self, camera)
 	sim.events.node_depleted.connect(_on_node_depleted)
 	sim.events.building_placed.connect(_add_building)
 	sim.events.building_completed.connect(_on_building_completed)
@@ -141,6 +144,11 @@ func _model(type: String, key: int = 0) -> Node3D:
 	lbl.position.y = 1.1
 	root.add_child(lbl)
 	return root
+
+
+## A model by type (with its variants), for other views (wildlife).
+func make_model(type: String, key: int = 0) -> Node3D:
+	return _model(type, key)
 
 
 func _flat_mat(c: Color, unshaded: bool = false) -> StandardMaterial3D:
