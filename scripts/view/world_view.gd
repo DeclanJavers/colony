@@ -207,7 +207,7 @@ func _add_building(b: Building) -> void:
 	add_child(root)
 	var model := _model(b.type)
 	root.add_child(model)
-	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null, "pct": null,
+	var entry := {"root": root, "model": model, "frame": null, "crops": null, "light": null, "pct": null, "goods": null,
 		"window": model.find_child("window", true, false), "lit": false, "smoke": null}
 	if b.provides("farm") != null:
 		var crops := _model("farm_crops")
@@ -398,6 +398,7 @@ func _process(delta: float) -> void:
 		_node_t = 0.0
 		_update_nodes()
 		_update_windows()
+		_update_goods()
 
 
 func _critical(c: Colonist) -> bool:
@@ -594,6 +595,107 @@ func _add_smoke(b: Building, e: Dictionary) -> void:
 	p.color_ramp = grad
 	(e["root"] as Node3D).add_child(p)
 	e["smoke"] = p
+
+
+## ---- Stored goods ------------------------------------------------------------
+
+const GOODS_UNIT := 4.0        # goods per item shown
+const GOODS_PER_LAYER := 9     # 3 x 3
+const GOODS_LAYERS := 3
+const GOODS_CORNER := {"wood": Vector2(-0.42, -0.42), "stone": Vector2(0.42, -0.42),
+	"food": Vector2(-0.42, 0.42), "water": Vector2(0.42, 0.42)}
+static var _goods_mesh: Dictionary = {}
+
+
+## Open-air stockpiles show what the colony has stored: logs, stone blocks, food sacks, water
+## barrels. Shared stock fills the open stockpiles first (by capacity); the rest is out of sight
+## inside storehouses.
+func _update_goods() -> void:
+	var piles: Array = []
+	var open_cap := 0.0
+	for bid in _buildings:
+		var b := sim.buildings.get(bid) as Building
+		if b != null and b.complete and b.type == "stockpile":
+			piles.append(b)
+			open_cap += float(b.provides("storage", 0))
+	if piles.is_empty():
+		return
+	for b: Building in piles:
+		var e: Dictionary = _buildings[b.id]
+		if e["goods"] == null:
+			e["goods"] = _make_goods(e["root"])
+		var share := float(b.provides("storage", 0)) / maxf(open_cap, 1.0)
+		var shown := minf(1.0, open_cap / maxf(sim.stock_total(), 1.0))
+		for res in GOODS_CORNER:
+			var amount := float(sim.stock.get(res, 0.0)) * share * shown
+			var n := clampi(int(ceil(amount / GOODS_UNIT)), 0, GOODS_PER_LAYER * GOODS_LAYERS)
+			(e["goods"][res] as MultiMeshInstance3D).multimesh.visible_instance_count = n
+
+
+func _make_goods(root: Node3D) -> Dictionary:
+	var out := {}
+	for res in GOODS_CORNER:
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = _goods_item_mesh(res)
+		mm.instance_count = GOODS_PER_LAYER * GOODS_LAYERS
+		var h := 0.12 if res != "water" else 0.2
+		var corner: Vector2 = GOODS_CORNER[res]
+		for i in mm.instance_count:
+			var layer := i / GOODS_PER_LAYER
+			var k := i % GOODS_PER_LAYER
+			var x := corner.x + (float(k % 3) - 1.0) * 0.24
+			var z := corner.y + (float(k / 3) - 1.0) * 0.24
+			var jitter := (_hash01(i * 13 + res.length()) - 0.5) * 0.35
+			var basis := Basis(Vector3.UP, jitter)
+			if res == "wood":
+				basis = basis * Basis(Vector3(0, 0, 1), PI / 2.0)   # logs lie on their side
+			mm.set_instance_transform(i, Transform3D(basis, Vector3(x, 0.1 + h * 0.5 + layer * h, z)))
+		mm.visible_instance_count = 0
+		var mi := MultiMeshInstance3D.new()
+		mi.multimesh = mm
+		root.add_child(mi)
+		out[res] = mi
+	return out
+
+
+static func _goods_item_mesh(res: String) -> Mesh:
+	if _goods_mesh.has(res):
+		return _goods_mesh[res]
+	var m: PrimitiveMesh
+	match res:
+		"wood":
+			var c := CylinderMesh.new()
+			c.top_radius = 0.055
+			c.bottom_radius = 0.055
+			c.height = 0.22
+			c.radial_segments = 6
+			m = c
+		"stone":
+			var b := BoxMesh.new()
+			b.size = Vector3(0.2, 0.11, 0.18)
+			m = b
+		"food":
+			var sph := SphereMesh.new()
+			sph.radius = 0.1
+			sph.height = 0.14
+			sph.radial_segments = 7
+			sph.rings = 4
+			m = sph
+		_:
+			var w := CylinderMesh.new()
+			w.top_radius = 0.085
+			w.bottom_radius = 0.08
+			w.height = 0.2
+			w.radial_segments = 8
+			m = w
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = {"wood": Color(0.55, 0.38, 0.22), "stone": Color(0.62, 0.63, 0.66),
+		"food": Color(0.80, 0.62, 0.40), "water": Color(0.36, 0.55, 0.80)}[res]
+	mat.roughness = 0.85
+	m.material = mat
+	_goods_mesh[res] = m
+	return m
 
 
 ## Houses glow warm in the evening and at night while someone is home.

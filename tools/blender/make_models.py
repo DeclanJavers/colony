@@ -161,10 +161,10 @@ def campfire():
 
 
 def stockpile():
+    # A bare pallet with a low rim: the game stacks whatever is stored on it (logs, stone, sacks, barrels).
     box("pallet", (1.8, 1.8, 0.1), (0, 0, 0.05), mat("wood_light", WOOD_LIGHT))
-    for i, (x, y, s) in enumerate([(-0.45, -0.45, 0.55), (0.45, -0.4, 0.45), (-0.4, 0.45, 0.5), (0.35, 0.4, 0.6)]):
-        box(f"crate{i}", (s, s, s), (x, y, 0.1 + s / 2), mat("wood", WOOD))
-    box("crate_top", (0.4, 0.4, 0.4), (-0.45, -0.45, 0.85), mat("wood_light", WOOD_LIGHT))
+    for i, (x, y, w, d) in enumerate([(0, -0.88, 1.8, 0.06), (0, 0.88, 1.8, 0.06), (-0.88, 0, 0.06, 1.8), (0.88, 0, 0.06, 1.8)]):
+        box(f"rim{i}", (w, d, 0.08), (x, y, 0.14), mat("wood", WOOD))
 
 
 def well():
