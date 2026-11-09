@@ -19,7 +19,8 @@ func begin() -> bool:
 			phase = "walking"
 			return true
 		if s.get("kind") == "node":
-			(s["ref"] as ResNode).unreachable_until = sim.clock + 12.0 * 60.0   # cut off: skip it for a while
+			(s["ref"] as ResNode).unreachable_until = sim.clock + 12.0 * 60.0
+			c.knowledge.block_place((s["ref"] as ResNode).id, sim.clock + 12.0 * 60.0)   # cut off: skip it for a while
 	return false
 
 

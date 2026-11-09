@@ -134,7 +134,7 @@ func _send_meeting(meeting: Dictionary) -> bool:
 	var place: Building = meeting["place"]
 	var body := {"people": people, "options": meeting["options"], "seats": meeting["seats"], "overflow": meeting["overflow"],
 		"place": place.def().get("label", "campfire") if place != null else "campfire",
-		"plan_items": int(sim.meetings.cfg("plan_items", 3))}
+		"plan_items": int(sim.meetings.cfg("plan_items", 3)), "built": _built_labels()}
 	if _mreq.request(base_url + "/meeting", ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body)) != OK:
 		return false
 	_meeting = meeting
@@ -154,12 +154,26 @@ func _on_meeting_done(result: int, code: int, _h: PackedStringArray, raw: Packed
 		sim.meetings.apply(meeting, fb)
 		return
 	var out := {"lines": data["lines"], "items": data.get("items", []), "llm": true}
-	if (out["items"] as Array).is_empty():
-		out["items"] = fb["items"]    # they talked but agreed nothing clear: what most of them wanted
+	# Fill any room left with what most of them came wanting (the chat model can miss things that
+	# many raised, like the hall being too small).
+	var items: Array = out["items"]
+	for it in fb["items"]:
+		if items.size() >= int(sim.meetings.cfg("plan_items", 3)):
+			break
+		if not items.any(func(x) -> bool: return x.get("id") == it["id"]):
+			items.append({"id": it["id"], "who": []})
 	if print_talks:
 		print("MEETING day %d: %s" % [int(meeting["day"]), " | ".join((out["lines"] as Array).map(func(l) -> String: return "%s: %s" % [l["who"], l["text"]]))])
 		print("     plan %s" % JSON.stringify(out["items"]))
 	sim.meetings.apply(meeting, out)
+
+
+func _built_labels() -> Array:
+	var seen := {}
+	for b: Building in sim.buildings.values():
+		if b.complete:
+			seen[String(b.def().get("label", b.type))] = true
+	return seen.keys()
 
 
 func _fallback(conv: Dictionary) -> void:

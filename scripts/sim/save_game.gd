@@ -61,7 +61,6 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 	sim._used_names = data["used_names"].duplicate()
 	sim._conv_id = int(data.get("conv_id", 0))
 	sim.weather = String(data.get("weather", "clear"))
-	sim.meetings.from_dict(data.get("meetings", {}))
 	sim.story.from_dict(data.get("story", {}))
 	var ff: Variant = data.get("footfall")
 	if ff is PackedFloat32Array and (ff as PackedFloat32Array).size() == sim.footfall.size():
@@ -109,6 +108,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 		sim.colonists[c.id] = c
 	for d in data["graveyard"]:
 		sim.graveyard.append(_restore(d, sim))
+	sim.meetings.from_dict(data.get("meetings", {}))   # after buildings: a meeting refers to its place
 	# What the colony has seen. Saves from before exploration: everyone knows the camp's surroundings.
 	var disc: Variant = data.get("discovered")
 	sim.discovered.fill(0)

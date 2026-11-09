@@ -16,7 +16,8 @@
     "provides": {
       "rest_spot": 1.25,
       "warmth": 24.0,
-      "warm_radius": 3.0
+      "warm_radius": 3.0,
+      "meeting_seats": 6
     }
   },
   "stockpile": {
@@ -221,6 +222,18 @@
           "stone": 60
         },
         "work": 1000
+      },
+      {
+        "seats": 48,
+        "footprint": [
+          6,
+          6
+        ],
+        "cost": {
+          "wood": 120,
+          "stone": 90
+        },
+        "work": 1400
       }
     ]
   }

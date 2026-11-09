@@ -25,8 +25,13 @@ var last_overflow: int = 0      # people who had to stand outside at the last me
 ## Building jobs in the plan are done once someone starts them ("build a house" means one house).
 func watch(p_sim: Sim) -> void:
 	sim = p_sim
-	sim.events.building_placed.connect(func(b: Building) -> void: _mark_done(b.type))
-	sim.events.building_expansion_started.connect(func(b: Building) -> void: _mark_done("expand:" + b.type))
+	sim.events.building_placed.connect(func(b: Building) -> void:
+		_mark_done(b.type)
+		if b.provides("meeting_place") != null:
+			last_overflow = 0)        # the crush round the campfire is being dealt with
+	sim.events.building_expansion_started.connect(func(b: Building) -> void:
+		_mark_done("expand:" + b.type)
+		last_overflow = 0)            # being enlarged: last week's crowding is answered
 
 
 func _mark_done(build_what: String) -> void:
@@ -71,10 +76,13 @@ func meeting_place() -> Building:
 
 
 func on_hour() -> void:
-	var h := sim.hour()
+	if current.is_empty() and is_meeting_day(sim.day()) and sim.hour() == int(cfg("hour", 17)):
+		_ring_bell()
+
+
+## Called every sim minute while a meeting is on (talk and end aren't tied to the hour).
+func update() -> void:
 	if current.is_empty():
-		if is_meeting_day(sim.day()) and h == int(cfg("hour", 17)):
-			_ring_bell()
 		return
 	if not bool(current["talked"]) and sim.clock >= float(current["talk_at"]):
 		_hold_talk()
@@ -89,7 +97,7 @@ func _ring_bell() -> void:
 	var length := float(cfg("length_hours", 2.0)) * 60.0
 	current = {"day": sim.day(), "start": sim.clock, "end": sim.clock + length,
 		"talk_at": sim.clock + float(cfg("arrive_within_hours", 1.0)) * 60.0,
-		"place": place, "seats": place.seats() if place.provides("meeting_place") != null else 0,
+		"place": place, "seats": seats_of(place),
 		"present": [], "inside": [], "talked": false}
 	sim.events.meeting_called.emit(current)
 	# Everyone hears the bell: a request from the meeting itself, which they weigh like any other
@@ -99,13 +107,23 @@ func _ring_bell() -> void:
 			sim.add_request(c, "the meeting bell", "attend_meeting", 1.0, true)
 
 
+## How many fit: the hall's seats for its size, or how many can sit round the campfire.
+func seats_of(place: Building) -> int:
+	if place == null:
+		return 0
+	if place.provides("meeting_place") != null:
+		return place.seats()
+	return int(place.provides("meeting_seats", 0))
+
+
 ## Is there a meeting `c` can still get to?
 func open_for(c: Colonist) -> bool:
 	return not current.is_empty() and c.is_adult() and not bool(current["talked"]) \
 		and not (current["present"] as Array).has(c.id)
 
 
-## Where to stand: inside (hidden, like home at night) while there are seats, else outside.
+## Take a seat if there's one left (inside the hall, or round the campfire). Returns true only
+## when they go inside the hall (out of sight, like at home at night).
 func arrive(c: Colonist) -> bool:
 	if current.is_empty():
 		return false
@@ -113,9 +131,9 @@ func arrive(c: Colonist) -> bool:
 	if not present.has(c.id):
 		present.append(c.id)
 	var inside: Array = current["inside"]
-	if int(current["seats"]) > 0 and inside.size() < int(current["seats"]):
+	if int(current["seats"]) > 0 and inside.size() < int(current["seats"]) and not inside.has(c.id):
 		inside.append(c.id)
-		return true
+		return (current["place"] as Building).provides("meeting_place") != null
 	return false
 
 
@@ -197,12 +215,19 @@ func symbolic(meeting: Dictionary) -> Dictionary:
 		ids[o["id"]] = o["label"]
 	var votes := {}
 	var lines := []
+	var said := {}   # wish -> who said it first
 	for p: Colonist in people:
 		var wants := _wishes(p, meeting, ids).slice(0, 2)
 		for k in wants.size():
 			votes[wants[k]] = float(votes.get(wants[k], 0.0)) + (1.0 if k == 0 else 0.6)
-		if not wants.is_empty() and lines.size() < 6:
-			lines.append({"who": p.name, "text": _say_wish(wants[0], ids)})
+		if wants.is_empty() or lines.size() >= 6:
+			continue
+		var fresh: Array = wants.filter(func(x) -> bool: return not said.has(x))
+		if not fresh.is_empty():
+			said[fresh[0]] = p.name
+			lines.append({"who": p.name, "text": _say_wish(fresh[0], ids, lines.size())})
+		else:
+			lines.append({"who": p.name, "text": "I agree with %s." % said[wants[0]]})
 	if lines.is_empty():
 		var chair: Colonist = people[0]
 		for p: Colonist in people:
@@ -224,23 +249,29 @@ func _wishes(p: Colonist, meeting: Dictionary, ids: Dictionary) -> Array:
 		if ids.has(id) and not out.has(id):
 			out.append(id)
 	# Standing outside a full hall is what makes people want a bigger one.
-	if int(meeting["overflow"]) > 0 and not (meeting.get("inside", []) as Array).has(p.id):
+	if int(meeting["overflow"]) > 0 and not (meeting.get("inside", []) as Array).has(p.id) and place_is_hall(meeting):
 		add.call("expand:meeting_hall")
 	var short := sim.believed_shortage(p)
 	if short != "":
 		add.call(String(Sim.GATHER_FOR.get(short, "")))
-	if sim.free_beds() <= 1:
+	# Their own reasons for a house: no bed, or a child on the way and nowhere for it.
+	if p.home_id < 0 or (p.pregnant_until > 0.0 and sim.free_beds() <= 0):
 		add.call("build:house")
+	# Crowded round the campfire: a hall would fit everyone.
 	var place: Building = meeting["place"]
-	if place != null and place.provides("meeting_place") == null and people_count(meeting) >= 6:
+	if place != null and place.provides("meeting_place") == null and int(meeting["overflow"]) > 0:
 		add.call("build:meeting_hall")
-	if sim.season() in ["summer", "autumn"] and sim.days_until("winter") <= 4:
+	if sim.season() != "winter" and sim.days_until("winter") <= int(sim.content.seasons.get("days_per_season", 4)):
 		add.call("gather_wood")
 		add.call("farm")
 	for res in ["stone", "wood", "food"]:
 		if p.knowledge.usable_places_of(_node_for(res), p.cell, sim.clock, res == "food").is_empty():
 			add.call("explore")
 	return out
+
+
+func place_is_hall(meeting: Dictionary) -> bool:
+	return meeting["place"] != null and (meeting["place"] as Building).provides("meeting_place") != null
 
 
 func _node_for(res: String) -> String:
@@ -254,12 +285,14 @@ func people_count(meeting: Dictionary) -> int:
 	return (meeting["people"] as Array).size()
 
 
-func _say_wish(id: String, ids: Dictionary) -> String:
+func _say_wish(id: String, ids: Dictionary, k: int = 0) -> String:
 	if id.begins_with("expand:"):
-		return "We barely fit in here. We should %s." % ids[id]
+		return ["We barely fit in here. We should %s.", "Half of us are standing outside. Let's %s."][k % 2] % ids[id]
 	if id.begins_with("build:"):
-		return "I think we should %s." % ids[id]
-	return "We're running short. Someone should %s." % ids[id]
+		return ["I think we should %s.", "What we need is to %s."][k % 2] % ids[id]
+	if id == "explore":
+		return ["Someone should go and explore; we don't know where to find enough.", "We need to look further out for what we're missing."][k % 2]
+	return ["We're running short. Someone should %s.", "We should %s, we're low.", "I'd like a few of us to %s."][k % 3] % ids[id]
 
 
 ## Who does what: for each item, people known for that work first, then whoever is best at it;
@@ -277,7 +310,7 @@ func _assign(items: Array, people: Array) -> Array:
 				return ra > rb
 			return float(a.skills.get(sk, 0.0)) > float(b.skills.get(sk, 0.0)))
 		var who: Array = []
-		var n := clampi(people.size() / 4, 1, 3)
+		var n := clampi(roundi(people.size() * float(cfg("volunteer_share", 0.25))), 1, int(cfg("max_volunteers", 3)))
 		for p: Colonist in ranked.slice(0, n):
 			who.append(p.name)
 			taken[p.id] = true
@@ -313,7 +346,13 @@ func apply(meeting: Dictionary, result: Dictionary) -> void:
 		var id := String(it.get("id", ""))
 		if not ids.has(id) or items.any(func(x) -> bool: return x["id"] == id):
 			continue
-		items.append({"id": id, "who": Array(it.get("who", [])).filter(func(n) -> bool: return by_name.has(n))})
+		# Volunteers named by the chat model: real attendees, once each, one job per person.
+		var who: Array = []
+		for n in it.get("who", []):
+			if by_name.has(n) and not who.has(n) and not items.any(func(x) -> bool: return (x["who"] as Array).has(n)) \
+					and who.size() < int(cfg("max_volunteers", 3)):
+				who.append(n)
+		items.append({"id": id, "who": who})
 		if items.size() >= int(cfg("plan_items", 3)):
 			break
 	# Items the chat model left unassigned get volunteers the usual way.
@@ -365,11 +404,20 @@ func pass_on(from: Colonist, to: Colonist) -> bool:
 
 
 func to_dict() -> Dictionary:
-	var p := plan.duplicate(true)
-	return {"plan": p, "held": held, "last_overflow": last_overflow}
+	var cur := {}
+	if not current.is_empty():
+		cur = current.duplicate(true)
+		cur["place"] = (current["place"] as Building).id if current["place"] != null else -1
+	return {"plan": plan.duplicate(true), "held": held, "last_overflow": last_overflow, "current": cur}
 
 
+## Call after the buildings are loaded (a meeting in progress refers to its place).
 func from_dict(d: Dictionary) -> void:
 	plan = d.get("plan", {}).duplicate(true)
 	held = int(d.get("held", 0))
 	last_overflow = int(d.get("last_overflow", 0))
+	current = d.get("current", {}).duplicate(true)
+	if not current.is_empty():
+		current["place"] = sim.buildings.get(int(current["place"]))
+		if current["place"] == null:
+			current = {}

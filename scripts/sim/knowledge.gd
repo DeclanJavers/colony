@@ -117,8 +117,17 @@ func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, fro
 func usable_places_of(type: String, from: Vector2i, now: float, regrows: bool) -> Array:
 	return places_of(type, from).filter(func(p: Dictionary) -> bool:
 		var e: Dictionary = places[p["id"]]
+		if float(e.get("blocked_until", -1.0)) > now:
+			return false     # they found they couldn't get there
 		var amt := float(e.get("amt", -1.0))
 		return amt < 0.0 or amt >= 1.0 or (regrows and (now - float(e["t"])) / 60.0 > 24.0))
+
+
+## They tried and couldn't get there (cut off by water or buildings): not worth heading for
+## until `until`.
+func block_place(node_id: int, until: float) -> void:
+	if places.has(node_id):
+		places[node_id]["blocked_until"] = until
 
 
 func forget_place(node_id: int) -> void:

@@ -134,7 +134,13 @@ static func building(sim: Sim, b: Building) -> String:
 		for k in keys:
 			parts.append("%s %d%%" % [_name_link(sim, k), roundi(100.0 * float(b.work_by[k]) / maxf(total, 0.001))])
 		L.append("Built by: %s" % ", ".join(parts))
-	L.append("Here now: %s" % names(working_on(sim, b)))
+	var here := working_on(sim, b)
+	if not sim.meetings.current.is_empty() and sim.meetings.current["place"] == b:
+		for cid in sim.meetings.current["present"]:
+			var p := sim.colonists.get(cid) as Colonist
+			if p != null and not here.has(p):
+				here.append(p)
+	L.append("Here now: %s" % names(here))
 
 	var prov: Dictionary = d.get("provides", {})
 	if prov.has("meeting_place"):
@@ -175,7 +181,13 @@ static func building(sim: Sim, b: Building) -> String:
 		var parts: PackedStringArray = []
 		for r in cost:
 			parts.append("%d %s" % [int(cost[r]), r])
-		L.append("\n%s" % gray("Cost %s · tier %d · %dx%d tiles at (%d, %d)" % [", ".join(parts), int(d.get("tier", 0)), b.size.x, b.size.y, b.cell.x, b.cell.y]))
+		var nxt := b.level_def(b.level + 1)
+		if not b.level_def().is_empty():      # buildings that grow: what the next size costs
+			var np: PackedStringArray = []
+			for r in nxt.get("cost", {}):
+				np.append("%d %s" % [int(nxt["cost"][r]), r])
+			parts = PackedStringArray([("next size costs " + ", ".join(np)) if not nxt.is_empty() else "at its biggest"])
+		L.append("\n%s" % gray("%s · tier %d · %dx%d tiles at (%d, %d)" % [("Cost " if b.level_def().is_empty() else "") + ", ".join(parts), int(d.get("tier", 0)), b.size.x, b.size.y, b.cell.x, b.cell.y]))
 	return "\n".join(L)
 
 

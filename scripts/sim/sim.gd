@@ -175,6 +175,7 @@ func tick(dt: float = 1.0) -> void:
 		colonists.erase(c.id)
 		graveyard.append(c)
 	_world_tick(dt)
+	meetings.update()
 	if int(clock) % PERCEIVE_EVERY == 0:
 		_perceive()
 	if int(clock) % 30 == 0:
@@ -1392,7 +1393,11 @@ func find_sources(specs: Array, resource: String, from: Vector2i, amount: float,
 				for p in knower.knowledge.places_of(t, from):
 					if nodes.has(p["id"]):
 						pool.append(nodes[p["id"]])
+					else:
+						knower.knowledge.forget_place(p["id"])   # they'd go and find it gone
 			for n: ResNode in pool:
+				if knower != null and clock < n.unreachable_until:
+					knower.knowledge.block_place(n.id, n.unreachable_until)   # they'd find they can't get there
 				if n.type == t and n.amount >= 1.0 and (not for_gather or n.workers < 2) and clock >= n.unreachable_until:
 					cands.append({"kind": "node", "ref": n, "cells": [n.cell], "d": Vector2(n.cell - from).length_squared()})
 		elif spec.begins_with("building:"):
@@ -1404,14 +1409,20 @@ func find_sources(specs: Array, resource: String, from: Vector2i, amount: float,
 			for s in map.shore_cells:
 				cands.append({"kind": "tile", "ref": s, "cells": [s], "d": Vector2(s - from).length_squared()})
 	cands.sort_custom(func(a, b) -> bool: return a["d"] < b["d"])
+	# The nearest few that have somewhere to stand next to them. Walled-in ones (no free side) are
+	# skipped, and a colonist who knows of one learns it's no use for now.
 	var out := []
-	for cand in cands.slice(0, 4):
+	for cand in cands:
+		if out.size() >= 4:
+			break
 		var typed: Array[Vector2i] = []
 		typed.assign(cand["cells"])
 		var acc := map.access_cell(typed, from)
 		if acc.x >= 0:
 			cand["access"] = acc
 			out.append(cand)
+		elif knower != null and cand["kind"] == "node":
+			knower.knowledge.block_place((cand["ref"] as ResNode).id, clock + 12.0 * 60.0)
 	return out
 
 

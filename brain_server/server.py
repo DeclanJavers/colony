@@ -234,7 +234,7 @@ RES = ["food", "water", "wood", "stone"]
 ASKABLE = ["gather_food", "fetch_water", "gather_wood", "gather_stone", "farm", "build", "check_stores"]
 LEVEL_VALUE = {"none": 0, "low": 0.25, "some": 0.7, "plenty": 1.6}   # x a typical amount per resource
 TYPICAL = {"food": 60, "water": 30, "wood": 40, "stone": 40}
-LINE_RE = re.compile(r"^\s*\**\s*([A-Z][\w ]{0,20}?)\s*\**\s*:\s*(.+)$")
+LINE_RE = re.compile(r"^\s*\**\s*([A-Z][\w'\u2019\- ]{0,30}?)\s*\**\s*:\s*(.+)$")
 
 
 class ConverseRequest(BaseModel):
@@ -422,6 +422,18 @@ class MeetingRequest(BaseModel):
     overflow: int = 0
     place: str = "meeting hall"
     plan_items: int = 3
+    built: list[str] = []            # what the colony has, so the dialogue doesn't invent places
+
+
+MEETING_STOP = {"some", "more", "with", "the", "new", "a", "an"}   # every other word of the job must be said (verb too)
+
+
+def _grounded(label: str, said: str, wished: set) -> bool:
+    """A plan item counts if someone came wanting it, or its distinctive words were all said."""
+    if label in wished:
+        return True
+    words = [w for w in re.findall(r"[a-z]+", label.lower()) if len(w) > 2 and w not in MEETING_STOP]
+    return bool(words) and all(w in said for w in words)
 
 
 @app.post("/meeting")
@@ -435,11 +447,13 @@ def meeting(req: MeetingRequest) -> dict:
     blocks = "\n".join(f"{_speaker_block(p)} On their mind: {', '.join(p.get('wishes', [])) or 'nothing pressing'}."
                        for p in speakers)
     crowd = (f" The {req.place} seats {req.seats}; {req.overflow} people had to stand outside." if req.overflow > 0 else "")
+    built = ", ".join(req.built) or "a campfire"
     sys = ("You write the weekly meeting of a small colony where everyone shares food, water, wood and stone. "
            "Each person only knows what is listed for them and may be a bit wrong about amounts. Write 5 to 8 lines, "
-           "each as 'Name: words', under 22 words, first person. They raise what is on their mind, react to each other, "
-           "and end by agreeing who will do what. Only spoken words: no narration, no actions, and no buildings or "
-           "events that aren't mentioned.")
+           "each as 'Name: words', under 22 words. People talk like neighbours, in the first person ('I', 'we'): they "
+           "say what worries them and why, in their own words; they don't recite lists of numbers or feelings. "
+           "They react to each other and end by agreeing who will do what. Only spoken words: no narration or "
+           f"actions. The colony has only: {built}. Never mention any other place or building.")
     user = (f"The meeting is at the {req.place}. {len(names)} people came: {', '.join(names)}.{crowd}\n{blocks}\n"
             f"Write the meeting.")
     try:
@@ -478,8 +492,7 @@ def meeting(req: MeetingRequest) -> dict:
         oid = it.get("id")
         if oid not in labels or any(x["id"] == oid for x in items):
             continue
-        words = [w for w in re.findall(r"[a-z]+", labels[oid].lower()) if len(w) > 3]
-        if labels[oid] in wished or any(w in said for w in words):
+        if _grounded(labels[oid], said, wished):
             items.append({"id": oid, "who": [n for n in it.get("who", []) if n in names]})
     return {"lines": lines, "items": items, "llm": True, "latency_ms": (time.time() - t) * 1000.0}
 

@@ -714,6 +714,7 @@ MODELS = {
     "rock": rock, "rock_2": rock_2, "berry_bush": berry_bush,
     "meeting_hall": lambda: meeting_hall(3, 1), "meeting_hall_lv2": lambda: meeting_hall(4, 2),
     "meeting_hall_lv3": lambda: meeting_hall(5, 3),
+    "meeting_hall_lv4": lambda: meeting_hall(6, 4),
     "prop_crate": prop_crate, "prop_barrel": prop_barrel, "lamp_post": lamp_post,
 }
 

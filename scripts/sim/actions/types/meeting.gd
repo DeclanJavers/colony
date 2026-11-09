@@ -26,6 +26,8 @@ func describe() -> String:
 		"inside":
 			return "at the meeting (inside)"
 		"outside":
+			if place != null and place.provides("meeting_place") == null:
+				return "at the meeting by the campfire"
 			return "at the meeting (standing outside)"
 	return "going to the meeting"
 

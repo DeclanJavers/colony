@@ -25,6 +25,10 @@ func decide(ctx: Dictionary, sim: Sim, done: Callable) -> void:
 	var scores := {}
 	for o in ctx["options"]:
 		scores[o["id"]] = _score(o["id"], c, sim)
+	# Building only makes sense if something is worth building: nothing scoring above zero means
+	# whatever got built would be waste (e.g. the only affordable thing is another farm).
+	if scores.has("build") and _best_build(sim) <= 0.0:
+		scores["build"] = minf(float(scores["build"]), -1.0)
 	var probs := Brain.softmax(scores, temperature)
 	var action := Brain.argmax(probs) if pick == "argmax" else Brain.sample(probs, sim.rng)
 
@@ -251,6 +255,10 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 	# the people who said they'd do them.
 	if sim.meetings.knows_plan(c):
 		for it in sim.meetings.open_items():
+			# A planned building only counts if it can be built now (else it would push building
+			# in general, and builders would put up whatever is affordable instead).
+			if aid == "build" and not sim.build_options().has(String(it.get("build_what", ""))):
+				continue
 			if String(it.get("action", "")) == aid:
 				s += 0.35 + (0.25 if (it.get("who", []) as Array).has(c.name) else 0.0)
 				break
@@ -299,11 +307,8 @@ func _build_score(bid: String, sim: Sim) -> float:
 		for b: Building in sim.buildings.values():
 			if b.type == bid.substr(7):
 				hall = b
-		var adults := 0
-		for c: Colonist in sim.colonists.values():
-			if c.is_adult():
-				adults += 1
-		var crowded := sim.meetings.last_overflow > 0 or (hall != null and adults > hall.seats())
+		# Worth it when the last meeting didn't fit everyone (people remember standing outside).
+		var crowded := sim.meetings.last_overflow > 0 and hall != null and not hall.expanding
 		return (0.9 if crowded else -0.8) + planned
 	var s := 0.6 - 0.05 * float(sim.content.buildings[bid].get("tier", 0))
 	match bid:
@@ -329,11 +334,7 @@ func _build_score(bid: String, sim: Sim) -> float:
 		"workshop", "kitchen", "town_hall":
 			s += 0.4
 		"meeting_hall":
-			# Somewhere to meet once there are enough people that the campfire is a crush.
-			var grown := 0
-			for c: Colonist in sim.colonists.values():
-				if c.is_adult():
-					grown += 1
-			s += 0.5 if grown >= 6 else -0.3
+			# Somewhere to meet once the gatherings round the campfire no longer fit everyone.
+			s += 0.5 if sim.meetings.last_overflow > 0 else -0.3
 	s += planned
 	return s
