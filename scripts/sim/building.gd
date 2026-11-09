@@ -19,6 +19,11 @@ var placed_by: String = ""         # colonist name ("" = there from the start)
 var work_by: Dictionary = {}       # colonist name -> minutes of building work put in
 var harvests: int = 0              # farms: times harvested
 var heated: bool = false           # houses: burning firewood right now
+var level: int = 1                 # buildings with "levels" (meeting hall): how far it's been enlarged
+var expanding: bool = false        # being enlarged to the next level: still usable, work_done counts up
+var prev_cell: Vector2i = Vector2i(-1, -1)   # footprint before the enlargement started (for drawing)
+var prev_size: Vector2i = Vector2i.ZERO
+var grow_rect := Rect2i()          # land kept free for the building's biggest level (empty = none)
 
 
 func def() -> Dictionary:
@@ -27,6 +32,28 @@ func def() -> Dictionary:
 
 func provides(key: String, default: Variant = null) -> Variant:
 	return def().get("provides", {}).get(key, default)
+
+
+## Level data ({seats, footprint, cost, work}) for `lv` (default: the current level), or {}.
+func level_def(lv: int = -1) -> Dictionary:
+	var levels: Array = def().get("levels", [])
+	var i := (level if lv < 0 else lv) - 1
+	return levels[i] if i >= 0 and i < levels.size() else {}
+
+
+func seats() -> int:
+	return int(level_def().get("seats", 0))
+
+
+## The land this building occupies or keeps free to grow into.
+func land() -> Rect2i:
+	var r := Rect2i(cell, size)
+	return r.merge(grow_rect) if grow_rect.size != Vector2i.ZERO else r
+
+
+## Still being built or enlarged (builders can work on it).
+func is_site() -> bool:
+	return not complete or expanding
 
 
 func cells() -> Array[Vector2i]:

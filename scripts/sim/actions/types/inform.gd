@@ -44,9 +44,9 @@ func begin() -> bool:
 		# (and they're not much further than a day's stroll).
 		var sk := sim.skill_for_action(topic)
 		if topic != "" and sk != "":
+			var reach := float(sim.content.roles.get("ask_reach_tiles", 30))
 			for o: Colonist in cands:
-				if o.role == sk and (c.affection.has(o.id) or c.partner_id == o.id or c.parent_ids.has(o.id)) \
-						and o.pos.distance_to(c.pos) < 30.0:
+				if sim.believed_role(c, o) == sk and o.pos.distance_to(c.pos) < reach:
 					other = o
 					break
 	phase = "walking"

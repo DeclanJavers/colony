@@ -86,10 +86,34 @@ static func names(list: Array) -> String:
 
 ## ---- Pages ----------------------------------------------------------------------------------------
 
+## The meeting hall: how big it is, the next meeting, and what the last one decided.
+static func _meeting_text(sim: Sim, b: Building) -> String:
+	var m := sim.meetings
+	var L: PackedStringArray = ["\n[b]Meetings[/b]"]
+	var levels: Array = b.def().get("levels", [])
+	L.append("Seats %d (size %d of %d)." % [b.seats(), b.level, levels.size()])
+	var every := int(m.cfg("every_days", 7))
+	var next_day := int(ceil(float(sim.day() + (0 if m.hours_until_next() > 0.0 else 1)) / every)) * every
+	if not m.current.is_empty():
+		L.append("[b]Meeting now:[/b] %d here (%d inside)." % [(m.current["present"] as Array).size(), (m.current["inside"] as Array).size()])
+	else:
+		L.append("Next meeting: day %d at %02d:00." % [maxi(next_day, int(m.cfg("first_day", every))), int(m.cfg("hour", 17))])
+	if not m.plan.is_empty():
+		var p := m.plan
+		L.append("Last meeting (day %d): %d came%s." % [int(p["day"]), (p["present"] as Array).size(),
+			(", %d had to stand outside" % int(p["overflow"])) if int(p["overflow"]) > 0 else ""])
+		L.append("Agreed: %s." % m.plan_summary())
+		for line in (p.get("lines", []) as Array).slice(0, 6):
+			L.append("[color=#cfc6b0]%s: \u201c%s\u201d[/color]" % [line["who"], line["text"]])
+	return "\n".join(L)
+
+
 static func building(sim: Sim, b: Building) -> String:
 	var d := b.def()
 	var L: PackedStringArray = []
 	L.append(gray(String(d.get("description", ""))))
+	if b.expanding:
+		L.append("[b]Being enlarged: %d%%[/b] (%d of %d work minutes) — it will seat %d." % [int(b.progress() * 100), int(b.work_done), int(b.work_needed), int(b.level_def(b.level + 1).get("seats", 0))])
 	if b.complete:
 		L.append("Finished %s." % when(sim, b.completed_at))
 	else:
@@ -113,6 +137,8 @@ static func building(sim: Sim, b: Building) -> String:
 	L.append("Here now: %s" % names(working_on(sim, b)))
 
 	var prov: Dictionary = d.get("provides", {})
+	if prov.has("meeting_place"):
+		L.append(_meeting_text(sim, b))
 	if not prov.is_empty():
 		L.append("\n[b]What it does[/b]")
 	if prov.has("storage"):

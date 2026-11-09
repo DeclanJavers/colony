@@ -64,6 +64,9 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	sim.events.colonist_died.connect(_on_colonist_died)
 	sim.events.delivered.connect(_on_delivered)
 	sim.events.conversation_finished.connect(_on_conversation)
+	sim.events.building_expansion_started.connect(_rebuild_building)
+	sim.events.building_expanded.connect(_rebuild_building)
+	sim.events.meeting_held.connect(_on_meeting)
 	# Little moments: parents celebrate a birth, whoever finishes a building cheers.
 	sim.events.colonist_born.connect(func(c: Colonist) -> void:
 		for pid in c.parent_ids:
@@ -196,8 +199,14 @@ func _add_building(b: Building) -> void:
 	var root := Node3D.new()
 	root.position = to_world(b.center())
 	add_child(root)
-	var model := _model(b.type, b.id)
+	# Buildings that grow (the meeting hall) have a model per level: <type>_lv2, <type>_lv3...
+	var mtype := b.type if b.level <= 1 else "%s_lv%d" % [b.type, b.level]
+	var model := _model(mtype, b.id)
 	root.add_child(model)
+	if b.expanding and b.prev_size != Vector2i.ZERO:
+		# While it's being enlarged the old hall stands where it was, inside the new scaffolding.
+		var prev_center := Vector2(b.prev_cell) + Vector2(b.prev_size - Vector2i.ONE) * 0.5
+		model.position = to_world(prev_center) - to_world(b.center())
 	# Square buildings face different ways (STYLE.md: variety), picked per building.
 	if b.size.x == b.size.y and b.size.x > 1 and b.provides("farm") == null and b.type != "stockpile":
 		model.rotation.y = float(int(_hash01(b.id * 31 + 7) * 4.0) % 4) * PI / 2.0
@@ -217,7 +226,7 @@ func _add_building(b: Building) -> void:
 		root.add_child(light)
 		entry["light"] = light
 		_fire_lights.append(light)
-	if not b.complete:
+	if b.is_site():
 		var frame := _model("site_frame")
 		frame.scale = Vector3(b.size.x, 1.0 + 0.3 * (b.size.x - 1), b.size.y)
 		root.add_child(frame)
@@ -256,7 +265,7 @@ func _update_building(b: Building) -> void:
 	if e.is_empty():
 		return
 	var model: Node3D = e["model"]
-	# Sites rise out of the ground as work progresses.
+	# Sites rise out of the ground as work progresses (an enlargement keeps the old hall standing).
 	model.scale = Vector3.ONE if b.complete else Vector3(1.0, maxf(0.04, b.progress()), 1.0)
 	model.visible = b.complete or b.progress() > 0.03     # a fresh site is just its frame
 	var crops: Node3D = e["crops"]
@@ -355,8 +364,10 @@ func _process(delta: float) -> void:
 		var avatar := model as ColonistAvatar
 		if avatar != null:
 			avatar.update_for(c, (root.position - before).length() / maxf(delta, 0.0001))
-		# Sleeping at home = inside the house: hide the body, keep the label.
-		model.visible = not (sleeping and c.action.get("where") == "at home")
+		# Sleeping at home = inside the house, and sitting inside the hall at a meeting: hide the
+		# body, keep the label.
+		var in_hall := c.action != null and c.action.phase == "inside" and String(c.action.def.get("id", "")) == "attend_meeting"
+		model.visible = not (sleeping and c.action.get("where") == "at home") and not in_hall
 		var face: Variant = null
 		if move.length() > 0.01 and not sleeping:
 			face = move
@@ -385,12 +396,13 @@ func _process(delta: float) -> void:
 		var over: Overhead = e["over"]
 		var names_mode := String(GameSettings.get_value("names"))
 		var show_name: bool = names_mode == "always" or (names_mode == "auto" and (camera.size < NAME_ZOOM or c == selected or InspectText.same(c, _hover)))
+		over.visible = not in_hall or c == selected     # inside the hall: the hall's own label says who's there
 		over.position.y = 0.75 if sleeping else (1.3 * s + 0.12)
 		over.update_for(c, show_name, delta)
 		_update_carry(c, e["carry"])
 	for bid in _buildings:
 		var b := sim.buildings.get(bid) as Building
-		if b != null and (not b.complete or b.provides("farm") != null):
+		if b != null and (b.is_site() or b.provides("farm") != null):
 			_update_building(b)
 	var night := 1.0 if sim.is_night() else 0.0
 	for l in _fire_lights:
@@ -398,6 +410,7 @@ func _process(delta: float) -> void:
 	if selected_target != null:
 		_place_ring()
 	_update_intent_line()
+	_update_meeting_label()
 	_node_t += delta
 	if _node_t > 0.5:
 		_node_t = 0.0
@@ -479,6 +492,63 @@ func _on_conversation(conv: Dictionary) -> void:
 	if lines.is_empty() or not bool(GameSettings.get_value("bubbles")) or not (camera.size < NAME_ZOOM * 1.3 or selected == a or selected == b):
 		return
 	var by_name := {a.name: a, b.name: b}
+	var delay := 0.0
+	for line in lines:
+		var who: Colonist = by_name.get(line["who"])
+		if who == null:
+			continue
+		var secs := clampf(1.2 + String(line["text"]).length() * 0.045, 2.0, 5.0)
+		get_tree().create_timer(delay).timeout.connect(func() -> void:
+			var e: Dictionary = _colonists.get(who.id, {})
+			if not e.is_empty():
+				(e["over"] as Overhead).say(line["text"], secs))
+		delay += secs
+
+
+var _meeting_label: Label3D
+
+
+## Over the hall during a meeting: how many are inside and outside.
+func _update_meeting_label() -> void:
+	var m := sim.meetings.current
+	if m.is_empty():
+		if _meeting_label != null:
+			_meeting_label.visible = false
+		return
+	if _meeting_label == null:
+		_meeting_label = _make_label("", 30)
+		_meeting_label.modulate = Color("#F2DFA8")
+		add_child(_meeting_label)
+	var place: Building = m["place"]
+	var inside := (m["inside"] as Array).size()
+	var outside := (m["present"] as Array).size() - inside
+	_meeting_label.text = "Meeting · %d inside%s" % [inside, (" · %d outside" % outside) if outside > 0 else ""]
+	_meeting_label.position = to_world(place.center()) + Vector3(0, 3.2 + 0.4 * place.level, 0)
+	_meeting_label.visible = true
+
+
+## Rebuild a building's visuals (it changed shape: started or finished being enlarged).
+func _rebuild_building(b: Building) -> void:
+	var e: Dictionary = _buildings.get(b.id, {})
+	if not e.is_empty():
+		var light: Variant = e.get("light")
+		if light != null:
+			_fire_lights.erase(light)
+		(e["root"] as Node3D).queue_free()
+		_buildings.erase(b.id)
+	_add_building(b)
+	if _roofs_snowy:
+		_snow_roof(_buildings[b.id]["model"], true)
+
+
+## The meeting's discussion, as speech bubbles over the speakers (when it's worth showing).
+func _on_meeting(plan: Dictionary) -> void:
+	var lines: Array = plan.get("lines", [])
+	if lines.is_empty() or not bool(GameSettings.get_value("bubbles")) or camera.size > NAME_ZOOM * 1.6:
+		return
+	var by_name := {}
+	for c: Colonist in sim.colonists.values():
+		by_name[c.name] = c
 	var delay := 0.0
 	for line in lines:
 		var who: Colonist = by_name.get(line["who"])
@@ -751,7 +821,8 @@ func _update_windows() -> void:
 		var w := e.get("window") as MeshInstance3D
 		if w == null:
 			continue
-		var lit := evening and (home.has(bid) or (bb != null and bb.type in ["kitchen", "town_hall"]))
+		var meeting_here: bool = not sim.meetings.current.is_empty() and sim.meetings.current["place"] == bb
+		var lit: bool = meeting_here or (evening and (home.has(bid) or (bb != null and bb.type in ["kitchen", "town_hall"])))
 		if lit == bool(e["lit"]):
 			continue
 		e["lit"] = lit

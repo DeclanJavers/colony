@@ -30,3 +30,9 @@ signal conversation_started(conv: Dictionary)    # {id, t, a, b, intent, topic}
 signal conversation_finished(conv: Dictionary)   # + lines, facts, requests, learned
 ## Someone has become known for a kind of work (data/roles.json). role = skill id, "" = none.
 signal role_changed(c: Colonist, role: String)
+## A building (the meeting hall) started being enlarged / finished: it has its new footprint.
+signal building_expansion_started(b: Building)
+signal building_expanded(b: Building)
+## The meeting bell rang (meeting = ColonyMeetings.current) / the meeting agreed a plan.
+signal meeting_called(meeting: Dictionary)
+signal meeting_held(plan: Dictionary)

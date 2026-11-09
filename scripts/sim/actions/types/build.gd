@@ -25,6 +25,8 @@ func begin() -> bool:
 		what = opts[0]
 	if what == "continue":
 		site = sim.nearest_reachable_site(c.cell)
+	elif what.begins_with("expand:"):
+		site = sim.start_expansion(what.substr(7), c)
 	else:
 		# Find a reachable spot BEFORE paying, so a site can never be orphaned.
 		var spot := sim.find_build_spot(what, c.cell)
@@ -42,11 +44,11 @@ func begin() -> bool:
 func describe() -> String:
 	if site == null:
 		return "build"
-	return "build %s (%d%%)" % [site.def().get("label", site.type), int(site.progress() * 100)]
+	return "%s %s (%d%%)" % ["enlarge" if site.expanding else "build", site.def().get("label", site.type), int(site.progress() * 100)]
 
 
 func tick(dt: float) -> int:
-	if site.complete:
+	if not site.is_site():
 		return DONE
 	match phase:
 		"walking":

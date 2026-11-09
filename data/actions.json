@@ -156,6 +156,16 @@
     }
   },
   {
+    "id": "attend_meeting",
+    "type": "meeting",
+    "label": "go to the meeting",
+    "description": "the weekly meeting: share news with everyone and agree what the colony should do next",
+    "params": {},
+    "for": [
+      "adult"
+    ]
+  },
+  {
     "id": "have_child",
     "type": "have_child",
     "label": "have a child",

@@ -489,6 +489,53 @@ def town_hall():
     join_named("window", [o for o in bpy.context.scene.objects if o.name.startswith("window")])
 
 
+def meeting_hall(size=3, level=1):
+    """Where the colony meets each week. One model per size: the hall grows a level at a time
+    (3x3, 4x4, 5x5 footprints) when the colony no longer fits inside."""
+    W = size - 0.35
+    Z0 = 0.24
+    Z1 = Z0 + 1.0 + 0.12 * level
+    footing(W + 0.1, W + 0.1, Z0, 20 + level)
+    wall_box(W, W, Z0, Z1)
+    bays = max(2, int(W / 0.9))
+    for s in (-1, 1):
+        # Long walls get extra posts per bay; gable walls a simple frame.
+        timber_face("y", s * (W / 2 + 0.012), -W / 2, W / 2, Z0, Z1, braces=True)
+        for k in range(1, bays):
+            u = -W / 2 + k * W / bays
+            beam("tb", (u, s * (W / 2 + 0.02), Z0), (u, s * (W / 2 + 0.02), Z1), 0.07, M("timber"))
+        timber_face("x", s * (W / 2 + 0.012), -W / 2, W / 2, Z0, Z1, braces=False)
+    # Double doors in the middle of the front, windows in the other bays.
+    box("door", (0.62, 0.04, 0.72), (0, -W / 2 - 0.02, Z0 + 0.36), M("plank_dark"))
+    beam("tb", (0, -W / 2 - 0.045, Z0), (0, -W / 2 - 0.045, Z0 + 0.72), 0.04, M("timber"))
+    box("doorframe", (0.74, 0.06, 0.07), (0, -W / 2 - 0.03, Z0 + 0.75), M("timber"))
+    box("step", (0.9, 0.18, 0.08), (0, -W / 2 - 0.12, 0.04), M("stone_light"))
+    for k in range(bays):
+        u = -W / 2 + (k + 0.5) * W / bays
+        if abs(u) > 0.5:
+            window("y", -W / 2 - 0.02, u, (Z0 + Z1) / 2 + 0.05, "shutter_blue", w=0.24, h=0.34)
+        window("y", W / 2 + 0.02, u, (Z0 + Z1) / 2 + 0.05, "shutter_blue", w=0.24, h=0.34)
+    for k in (-1, 1):
+        window("x", k * (W / 2 + 0.02), 0.0, (Z0 + Z1) / 2 + 0.05, "shutter_blue", w=0.24, h=0.34)
+    H = W * 0.55
+    tiled_roof(W, W, H, Z1, "blue", rows=6 + 2 * level)
+    gable_ends(W, W, H, Z1)
+    # Bell-cote on the ridge: the bell that calls everyone to the meeting.
+    zr = Z1 + H
+    for x in (-0.14, 0.14):
+        box("post", (0.06, 0.06, 0.42), (x + W * 0.25, 0, zr + 0.2), M("timber"))
+    box("bell", (0.16, 0.16, 0.18), (W * 0.25, 0, zr + 0.24), M("iron"))
+    tiled_roof(0.36, 0.3, 0.16, zr + 0.4, "red", over=0.05, rows=2)
+    # Banners either side of the door, benches outside.
+    for x in (-0.55, 0.55):
+        box("banner", (0.22, 0.02, 0.42), (x, -W / 2 - 0.04, Z1 - 0.3), M("roof_red"))
+    for x in (-W / 2 + 0.25, W / 2 - 0.25):
+        box("bench", (0.5, 0.14, 0.04), (x, -W / 2 - 0.32, 0.2), M("plank"))
+        for dx in (-0.2, 0.2):
+            box("bench", (0.04, 0.12, 0.18), (x + dx, -W / 2 - 0.32, 0.09), M("plank_dark"))
+    join_named("window", [o for o in bpy.context.scene.objects if o.name.startswith("window")])
+
+
 def well():
     cyl("ring", 0.4, 0.42, (0, 0, 0.21), M("stone"), verts=12)
     rnd = random.Random(2)
@@ -665,6 +712,8 @@ MODELS = {
     "storehouse": storehouse, "workshop": workshop, "kitchen": kitchen, "town_hall": town_hall,
     "site_frame": site_frame, "tree": tree, "tree_2": tree_2, "tree_3": tree_3,
     "rock": rock, "rock_2": rock_2, "berry_bush": berry_bush,
+    "meeting_hall": lambda: meeting_hall(3, 1), "meeting_hall_lv2": lambda: meeting_hall(4, 2),
+    "meeting_hall_lv3": lambda: meeting_hall(5, 3),
     "prop_crate": prop_crate, "prop_barrel": prop_barrel, "lamp_post": lamp_post,
 }
 

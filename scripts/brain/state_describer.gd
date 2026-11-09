@@ -4,8 +4,23 @@ extends RefCounted
 ## Laya's English checkpoint reads ~320 tokens of state, so keep this compact.
 ## Bump VERSION whenever the format changes so logged data stays comparable.
 
-const VERSION := "v5"   # v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
+const VERSION := "v6"   # v6: + weekly meeting and the colony plan. v5: + roles / what they're good at. v4: + where they know resources are. v3: + season, weather, warmth, heating. v2: beliefs (seen/heard) and requests
 const MAX_MEMORIES := 3
+
+
+## The weekly meeting and the plan, e.g. "The weekly meeting is in 3 hours at the meeting hall.
+## Colony plan (agreed at the meeting on day 7): chop wood (Zed, Pia), build a house."
+func meeting_phrase(sim: Sim, c: Colonist) -> String:
+	var out: PackedStringArray = []
+	var m := sim.meetings
+	if not m.current.is_empty() and m.open_for(c):
+		out.append("The meeting bell has rung: everyone is gathering at the %s." % (m.current["place"] as Building).def().get("label", "campfire"))
+	elif m.hours_until_next() > 0.0 and c.is_adult():
+		var place := m.meeting_place()
+		out.append("The weekly meeting is in %d hours at the %s." % [ceili(m.hours_until_next()), place.def().get("label", "campfire") if place != null else "campfire"])
+	if m.knows_plan(c):
+		out.append("Colony plan (agreed at the meeting on day %d): %s." % [int(m.plan["day"]), m.plan_summary()])
+	return " ".join(out)
 
 
 ## What they're good at and who they know is good at what, e.g. "Zed is the colony's woodcutter
@@ -14,7 +29,7 @@ func work_phrase(sim: Sim, c: Colonist) -> String:
 	var rs := sim.role_skills()
 	var mine: Array = []
 	for sk in rs:
-		if float(c.skills.get(sk, 0.0)) >= 0.5:
+		if float(c.skills.get(sk, 0.0)) >= float(sim.content.roles.get("getting_good_at", 0.5)):
 			mine.append(sk)
 	mine.sort_custom(func(a, b) -> bool: return float(c.skills[a]) > float(c.skills[b]))
 	var out := ""
@@ -24,11 +39,13 @@ func work_phrase(sim: Sim, c: Colonist) -> String:
 		out += " (also handy at %s)." % rs[also[0]]["good_at"] if not also.is_empty() else "."
 	elif not mine.is_empty():
 		out = "%s is getting good at %s." % [c.name, " and ".join(mine.slice(0, 2).map(func(sk) -> String: return String(rs[sk]["good_at"])))]
-	# People they know (have feelings about, or family) who are known for their work.
+	# Who they've heard (or seen at the meeting) is known for their work.
 	var known: PackedStringArray = []
-	for o: Colonist in sim.colonists.values():
-		if o != c and o.role != "" and (c.affection.has(o.id) or c.parent_ids.has(o.id) or c.partner_id == o.id):
-			known.append("%s (%s)" % [o.name, sim.role_name(o.role)])
+	for oid in c.knowledge.roles:
+		var o := sim.colonists.get(oid) as Colonist
+		var r := String(c.knowledge.roles[oid])
+		if o != null and o != c and r != "":
+			known.append("%s (%s)" % [o.name, sim.role_name(r)])
 		if known.size() >= 4:
 			break
 	if not known.is_empty():
@@ -102,7 +119,9 @@ func describe(sim: Sim, c: Colonist) -> String:
 		var lbl: String = b.def().get("label", b.type)
 		if b.complete:
 			built[lbl] = int(built.get(lbl, 0)) + 1
-		else:
+		if b.expanding:
+			sites.append("%s (being enlarged) %d%%" % [lbl, int(b.progress() * 100)])
+		elif not b.complete:
 			sites.append("%s %d%%" % [lbl, int(b.progress() * 100)])
 	var built_txt: PackedStringArray = []
 	for k in built:
@@ -123,6 +142,10 @@ func describe(sim: Sim, c: Colonist) -> String:
 	parts.append("Has a home bed." if c.home_id >= 0 else "Has no bed.")
 	if c.pregnant_until > 0.0:
 		parts.append("Expecting a child.")
+
+	var meet := meeting_phrase(sim, c)
+	if meet != "":
+		parts.append(meet)
 
 	var reqs := sim.active_requests(c)
 	if not reqs.is_empty():
@@ -152,7 +175,8 @@ func relation_text(sim: Sim, c: Colonist, o: Colonist) -> String:
 		var a := float(c.affection.get(o.id, 0.0))
 		rel = "a close friend" if a >= 60 else "a friend" if a >= 30 else "an acquaintance" if a >= 10 else "someone you dislike" if a <= -20 else "someone you barely know"
 	var dist := c.pos.distance_to(o.pos)
-	return "%s, %s" % [rel, "nearby" if dist < 8.0 else "far away"]
+	var role := sim.believed_role(c, o)
+	return "%s, %s%s" % [rel, "nearby" if dist < 8.0 else "far away", (", the colony's " + sim.role_name(role)) if role != "" else ""]
 
 
 func _season_phrase(sim: Sim) -> String:

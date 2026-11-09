@@ -53,6 +53,7 @@ var _used_names: Dictionary = {}
 
 func setup(p_seed: int) -> void:
 	content = Content.get_instance()
+	meetings.sim = self
 	seed_value = p_seed
 	rng.seed = p_seed
 	_load_action_types()
@@ -206,22 +207,55 @@ func role_skills() -> Dictionary:
 	return content.roles.get("skills", {})
 
 
-## The skill id `c` is known for right now, or "".
+var _role_cut: Dictionary = {}   # skill id -> skill level needed to be among the colony's best at it
+
+
+func _roles_cfg(key: String, default: Variant) -> Variant:
+	return content.roles.get(key, default)
+
+
+## For each skill, the level you need to be in the top `top_share` of adults at it.
+func _update_role_cuts() -> void:
+	var adults: Array[Colonist] = []
+	for c: Colonist in colonists.values():
+		if c.is_adult():
+			adults.append(c)
+	var allowed := maxi(1, ceili(adults.size() * float(_roles_cfg("top_share", 0.15))))
+	_role_cut.clear()
+	for sk in role_skills():
+		var levels: Array = adults.map(func(c: Colonist) -> float: return float(c.skills.get(sk, 0.0)))
+		levels.sort()
+		levels.reverse()
+		_role_cut[sk] = float(levels[mini(allowed, levels.size()) - 1]) if not levels.is_empty() else INF
+
+
+func _among_best(c: Colonist, sk: String) -> bool:
+	return float(c.skills.get(sk, 0.0)) >= float(_role_cut.get(sk, INF)) and float(c.skills.get(sk, 0.0)) >= float(_roles_cfg("min_level", 1.5))
+
+
+## The skill id `c` is known for right now, or "": what they've done most lately, if they're also
+## among the colony's best at it. A role sticks until another job overtakes it clearly.
 func role_for(c: Colonist) -> String:
 	if not c.is_adult():
 		return ""
+	if _role_cut.is_empty():
+		_update_role_cuts()
+	var lead := float(_roles_cfg("lead", 1.3))
 	var best := ""
-	var best_l := 0.0
+	var bp := 0.0
 	var second := 0.0
 	for sk in role_skills():
-		var l := float(c.skills.get(sk, 0.0))
-		if l > best_l:
-			second = best_l
-			best_l = l
+		var p := float(c.practice.get(sk, 0.0))
+		if p > bp:
+			second = bp
+			bp = p
 			best = sk
-		elif l > second:
-			second = l
-	if best_l >= float(content.roles.get("min_level", 1.5)) and best_l >= second * float(content.roles.get("lead", 1.3)):
+		elif p > second:
+			second = p
+	var cur := c.role
+	if cur != "" and _among_best(c, cur) and bp < lead * float(c.practice.get(cur, 0.0)):
+		return cur          # nothing has clearly overtaken it
+	if best != "" and _among_best(c, best) and bp >= lead * second:
 		return best
 	return ""
 
@@ -239,21 +273,48 @@ func skill_for_action(action_id: String) -> String:
 
 
 func _update_roles() -> void:
+	var fade := pow(0.5, 1.0 / (24.0 * float(_roles_cfg("practice_half_life_days", 3.0))))
+	for c: Colonist in colonists.values():
+		for sk in c.practice:
+			c.practice[sk] = float(c.practice[sk]) * fade
+	_update_role_cuts()
 	for c: Colonist in colonists.values():
 		var r := role_for(c)
 		if r == c.role:
 			continue
 		var was := c.role
 		c.role = r
+		c.knowledge.roles[c.id] = r
 		if r != "":
 			add_memory(c, "People have started calling me the colony's %s." % role_name(r), 3.5)
 		elif was != "":
-			add_memory(c, "I don't do much %s any more." % String(role_skills().get(was, {}).get("good_at", "of that work")), 1.5)
+			var what := String(role_skills().get(was, {}).get("good_at", "that work"))
+			add_memory(c, ("Others are better at %s than me now." if not _among_best(c, was) else "I haven't done much %s lately.") % what, 1.5)
 		events.role_changed.emit(c, r)
+
+
+## What `c` believes `o` is known for ("" if nothing / not heard).
+func believed_role(c: Colonist, o: Colonist) -> String:
+	if c == o:
+		return c.role
+	return String(c.knowledge.roles.get(o.id, ""))
+
+
+## `to` learns what `from` is known for, and a couple of others `from` knows about.
+func share_roles(from: Colonist, to: Colonist) -> void:
+	to.knowledge.roles[from.id] = from.role
+	var n := 0
+	for oid in from.knowledge.roles:
+		if n >= 2:
+			break
+		if oid != to.id and not to.knowledge.roles.has(oid) and colonists.has(oid):
+			to.knowledge.roles[oid] = from.knowledge.roles[oid]
+			n += 1
 
 
 func _on_hour() -> void:
 	_update_roles()
+	meetings.on_hour()
 	for i in footfall.size():
 		footfall[i] *= FOOTFALL_FADE_PER_HOUR
 	for n: ResNode in nodes.values():
@@ -685,15 +746,18 @@ func share_places(from: Colonist, to: Colonist, limit: int = PLACES_PER_TALK) ->
 	var known: Array = from.knowledge.places.keys().filter(func(nid) -> bool:
 		var a := float(from.knowledge.places[nid].get("amt", -1.0))
 		return not to.knowledge.knows_place(nid) and (a < 0.0 or a >= 1.0))
-	var lacks := func(nid) -> int:
-		var ty: String = from.knowledge.places[nid]["type"]
-		return 0 if to.knowledge.usable_places_of(ty, to.cell, clock, false).is_empty() else 1
-	known.sort_custom(func(a, b) -> bool:
-		var la: int = lacks.call(a)
-		var lb: int = lacks.call(b)
-		if la != lb:
-			return la < lb
-		return Vector2(from.knowledge.places[a]["cell"] - from.cell).length() < Vector2(from.knowledge.places[b]["cell"] - from.cell).length())
+	if known.is_empty():
+		return []
+	# Which kinds of resource the listener has nowhere to get (worked out once, not per comparison:
+	# meetings call this for every pair of people there).
+	var lacks := {}
+	for t in content.nodes:
+		lacks[t] = 0 if to.knowledge.usable_places_of(t, to.cell, clock, false).is_empty() else 1
+	var key := {}
+	for nid in known:
+		var pl: Dictionary = from.knowledge.places[nid]
+		key[nid] = float(lacks.get(pl["type"], 1)) * 1e6 + Vector2(pl["cell"] - from.cell).length_squared()
+	known.sort_custom(func(a, b) -> bool: return float(key[a]) < float(key[b]))
 	var tr := trust(to, from)
 	for nid in known:
 		if told >= limit:
@@ -770,6 +834,10 @@ const SHORT_BELOW := {"food": 40.0, "water": 20.0, "wood": 25.0, "stone": 25.0}
 ## the chat model to write the dialogue) and later call apply_conversation(conv, result).
 ## Unset (headless, training) = a quick symbolic exchange of facts happens immediately.
 var conversation_handler: Callable
+## Set by the game to have the chat model write the weekly meeting: (meeting) -> true if it will
+## call meetings.apply() itself. Unset (headless): the meeting is worked out symbolically.
+var meeting_handler: Callable
+var meetings := ColonyMeetings.new()
 var _conv_id := 0
 
 
@@ -855,6 +923,11 @@ func apply_conversation(conv: Dictionary, result: Dictionary) -> void:
 			places_learned.append({"who": li.name, "resource": news["resource"], "from": sp.name})
 			add_memory(li, "%s told me where to find %s (%s)." % [sp.name, news["resource"], direction_word(news["cell"])], 3.0)
 	conv["places_learned"] = places_learned
+	# And what the last meeting decided, if one of them knows and the other doesn't.
+	if not meetings.pass_on(a, b):
+		meetings.pass_on(b, a)
+	share_roles(a, b)
+	share_roles(b, a)
 	conv["lines"] = result.get("lines", [])
 	conv["facts"] = result.get("facts", [])
 	conv["requests"] = result.get("requests", [])
@@ -1132,6 +1205,15 @@ func build_context(c: Colonist) -> Dictionary:
 				var lbl: String = site.def().get("label", site.type)
 				bopts.append({"id": "continue", "label": "finish the %s" % lbl,
 					"description": "help finish the half-built %s (%d%% done)" % [lbl, int(site.progress() * 100)]})
+			elif t.begins_with("expand:"):
+				var d: Dictionary = content.buildings[t.substr(7)]
+				var hall: Building = null
+				for hb: Building in buildings.values():
+					if hb.type == t.substr(7):
+						hall = hb
+				var nxt := hall.level_def(hall.level + 1) if hall != null else {}
+				bopts.append({"id": t, "label": "make the %s bigger" % d.get("label", t),
+					"description": "enlarge it from %d to %d seats" % [hall.seats() if hall != null else 0, int(nxt.get("seats", 0))]})
 			else:
 				var d: Dictionary = content.buildings[t]
 				bopts.append({"id": t, "label": "new %s" % d.get("label", t), "description": d.get("description", "")})
@@ -1409,7 +1491,7 @@ func nearest_site(from: Vector2i) -> Building:
 	var best: Building = null
 	var best_d := INF
 	for b: Building in buildings.values():
-		if not b.complete:
+		if b.is_site():
 			var d := Vector2(b.cell - from).length_squared()
 			if d < best_d:
 				best_d = d
@@ -1434,6 +1516,9 @@ func build_options() -> Array[String]:
 	var out: Array[String] = []
 	if nearest_site(map.center) != null:
 		out.append("continue")
+	for b: Building in buildings.values():
+		if can_expand(b):
+			out.append("expand:" + b.type)
 	for t in content.buildings:
 		var d: Dictionary = content.buildings[t]
 		if int(d.get("tier", 0)) > unlocked_tier:
@@ -1450,9 +1535,20 @@ func footprint_of(type: String) -> Vector2i:
 	return Vector2i(int(fp[0]), int(fp[1]))
 
 
+## The biggest footprint a building type can grow to (its last level), or its footprint.
+func max_footprint_of(type: String) -> Vector2i:
+	var levels: Array = content.buildings.get(type, {}).get("levels", [])
+	var fp := footprint_of(type)
+	for lv in levels:
+		var f: Array = lv.get("footprint", [fp.x, fp.y])
+		fp = Vector2i(maxi(fp.x, int(f[0])), maxi(fp.y, int(f[1])))
+	return fp
+
+
 func find_build_spot(type: String, from: Vector2i) -> Vector2i:
-	## First free spot (spiralling out from the centre) that `from` can actually walk to.
-	var size := footprint_of(type)
+	## First free spot (spiralling out from the centre) that `from` can actually walk to. For
+	## buildings that grow, there must be room for their biggest size.
+	var size := max_footprint_of(type)
 	var checked := 0
 	for origin in _spots(size):
 		var cells: Array[Vector2i] = []
@@ -1480,7 +1576,7 @@ func reach_cell(from: Vector2i, cells: Array[Vector2i]) -> Vector2i:
 func nearest_reachable_site(from: Vector2i) -> Building:
 	var sites: Array[Building] = []
 	for b: Building in buildings.values():
-		if not b.complete:
+		if b.is_site():
 			sites.append(b)
 	sites.sort_custom(func(a: Building, b: Building) -> bool:
 		return Vector2(a.cell - from).length_squared() < Vector2(b.cell - from).length_squared())
@@ -1495,8 +1591,9 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	if d.is_empty() or (not free and not affordable(d.get("cost", {}))):
 		return null
 	var size := footprint_of(type)
+	var room := max_footprint_of(type)
 	if spot.x < 0:
-		spot = _find_spot(size)
+		spot = _find_spot(room)
 	if spot.x < 0:
 		return null
 	if not free:
@@ -1508,6 +1605,8 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	b.type = type
 	b.cell = spot
 	b.size = size
+	if room != size:
+		b.grow_rect = Rect2i(spot, room)    # kept free so it can be enlarged later
 	b.work_needed = float(d.get("work", 60))
 	for i in int(d.get("provides", {}).get("beds", 0)):
 		b.beds.append(-1)
@@ -1524,7 +1623,99 @@ func place_site(type: String, by: Colonist, free: bool = false, spot: Vector2i =
 	return b
 
 
+## ---- Enlarging buildings (the meeting hall) ------------------------------------
+
+## Can `b` be enlarged now: it has a next level, isn't already being enlarged, the colony can pay
+## for it, and there's room around it for the bigger footprint.
+func can_expand(b: Building) -> bool:
+	if not b.complete or b.expanding:
+		return false
+	var nxt := b.level_def(b.level + 1)
+	return not nxt.is_empty() and affordable(nxt.get("cost", {})) and _expansion_origin(b).x >= 0
+
+
+## Where the bigger footprint can go: it has to contain the current one.
+func _expansion_origin(b: Building) -> Vector2i:
+	var fp: Array = b.level_def(b.level + 1).get("footprint", [b.size.x, b.size.y])
+	var size := Vector2i(int(fp[0]), int(fp[1]))
+	var grow := size - b.size
+	var best := Vector2i(-1, -1)
+	var best_d := INF
+	for oy in range(grow.y + 1):
+		for ox in range(grow.x + 1):
+			var origin := b.cell - Vector2i(ox, oy)
+			if _fits_except(origin, size, b):
+				var d := Vector2(origin + size / 2 - map.center).length()
+				if b.grow_rect.size != Vector2i.ZERO and b.grow_rect.encloses(Rect2i(origin, size)):
+					d -= 1000.0     # the land it kept for this
+				if d < best_d:
+					best_d = d
+					best = origin
+	return best
+
+
+## Like _fits, but the building's own cells don't count as in the way.
+func _fits_except(origin: Vector2i, size: Vector2i, b: Building) -> bool:
+	for y in range(-1, size.y + 1):
+		for x in range(-1, size.x + 1):
+			var cell := origin + Vector2i(x, y)
+			if not map.in_bounds(cell):
+				return false
+			if (map.building_at.has(cell) and map.building_at[cell] != b.id) or map.node_at.has(cell):
+				return false
+			var inside := x >= 0 and y >= 0 and x < size.x and y < size.y
+			if inside and map.tile(cell) != WorldMap.Tile.GRASS and not map.building_at.has(cell):
+				return false
+	for o: Building in buildings.values():
+		var land := o.land()
+		if o != b and Rect2i(land.position - Vector2i.ONE, land.size + Vector2i(2, 2)).intersects(Rect2i(origin, size)):
+			return false
+	return true
+
+
+## Start enlarging the building of this type: pay, mark out the bigger footprint, and it becomes a
+## site builders can work on (it stays usable meanwhile). Returns it, or null.
+func start_expansion(type: String, by: Colonist) -> Building:
+	for b: Building in buildings.values():
+		if b.type != type or not can_expand(b):
+			continue
+		var nxt := b.level_def(b.level + 1)
+		var origin := _expansion_origin(b)
+		var fp: Array = nxt.get("footprint", [b.size.x, b.size.y])
+		for r in nxt.get("cost", {}):
+			stock[r] = float(stock[r]) - float(nxt["cost"][r])
+		events.stock_changed.emit(stock)
+		b.prev_cell = b.cell
+		b.prev_size = b.size
+		b.cell = origin
+		b.size = Vector2i(int(fp[0]), int(fp[1]))
+		b.expanding = true
+		b.work_done = 0.0
+		b.work_needed = float(nxt.get("work", 600))
+		for cell in b.cells():
+			map.building_at[cell] = b.id
+			map.refresh_cell(cell)
+		if by != null:
+			add_memory(by, "I started making the %s bigger." % b.def().get("label", type), 3.0)
+		events.building_expansion_started.emit(b)
+		return b
+	return null
+
+
+func _finish_expansion(b: Building, by: Colonist) -> void:
+	b.expanding = false
+	b.level += 1
+	b.work_done = b.work_needed
+	var label: String = b.def().get("label", b.type)
+	for c: Colonist in colonists.values():
+		add_memory(c, ("I finished making the %s bigger: it seats %d now." if c == by else "The %s is bigger now: it seats %d.") % [label, b.seats()], 3.0)
+	events.building_expanded.emit(b)
+
+
 func complete_building(b: Building, by: Colonist, quiet: bool = false) -> void:
+	if b.expanding:
+		_finish_expansion(b, by)
+		return
 	b.complete = true
 	b.work_done = b.work_needed
 	b.completed_at = clock
@@ -1573,9 +1764,10 @@ func _fits(origin: Vector2i, size: Vector2i) -> bool:
 			var inside := x >= 0 and y >= 0 and x < size.x and y < size.y
 			if inside and map.tile(cell) != WorldMap.Tile.GRASS:
 				return false
-	# Walkable farm plots also must not overlap other walkable sites.
+	# Walkable farm plots also must not overlap other walkable sites, nor land kept to grow into.
 	for b: Building in buildings.values():
-		if Rect2i(b.cell - Vector2i.ONE, b.size + Vector2i(2, 2)).intersects(Rect2i(origin, size)):
+		var land := b.land()
+		if Rect2i(land.position - Vector2i.ONE, land.size + Vector2i(2, 2)).intersects(Rect2i(origin, size)):
 			return false
 	return true
 

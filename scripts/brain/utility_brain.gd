@@ -7,7 +7,7 @@ const RESOURCE_TARGETS := {"food": 80.0, "water": 40.0, "wood": 60.0, "stone": 5
 const KIND_OF := {
 	"gather_wood": "gather", "gather_stone": "gather", "gather_food": "gather", "fetch_water": "gather",
 	"farm": "work", "build": "build", "socialize": "socialize", "have_child": "socialize",
-	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work",
+	"rest": "rest", "sleep": "rest", "check_stores": "work", "share_news": "socialize", "ask_help": "socialize", "warm_up": "rest", "explore": "work", "attend_meeting": "socialize",
 }
 
 var temperature: float = 0.12
@@ -39,6 +39,18 @@ func decide(ctx: Dictionary, sim: Sim, done: Callable) -> void:
 		var aff := float(c.affection.get(oid, 0.0))
 		sscores[o["id"]] = aff / 50.0 + (1.0 if c.partner_id == oid else 0.0)
 	var sprobs := Brain.softmax(sscores, 0.3) if not sscores.is_empty() else {}
+	# Asking for help: go to someone they believe is known for that work, if there's one nearby
+	# enough, rather than just whoever they like best.
+	if action == "ask_help":
+		var topic := String(Sim.GATHER_FOR.get(sim.believed_shortage(c), ""))
+		var sk := sim.skill_for_action(topic)
+		var reach := float(sim.content.roles.get("ask_reach_tiles", 30))
+		var best_d := INF
+		for oid in c.knowledge.roles:
+			var o := sim.colonists.get(oid) as Colonist
+			if o != null and o != c and sk != "" and String(c.knowledge.roles[oid]) == sk and o.pos.distance_to(c.pos) < minf(reach, best_d):
+				best_d = o.pos.distance_to(c.pos)
+				sprobs = {str(o.id): 1.0}
 
 	done.call({
 		"action": action,
@@ -222,6 +234,10 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			var seen_share := float(c.knowledge.seen.count(1)) / maxf(1.0, float(c.knowledge.seen.size()))
 			s = 1.3 * need + 0.4 * (1.0 - seen_share) - 0.6 - _recently(c, sim, ["explore"], 10.0) \
 				- (0.8 if sim.is_night() else 0.0) - 1.5 * (1.0 - sim.weather_work_mult())
+		"attend_meeting":
+			# The weekly meeting is where news and plans are shared: worth going to unless something
+			# urgent comes first (needs score up to ~3). The bell's request adds to this below.
+			s = 1.0
 		"check_stores":
 			# Worth a look when what they know is old or missing.
 			s = 1.3 * c.knowledge.uncertainty(sim.clock) - 0.35
@@ -231,6 +247,13 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 		if r["action"] == aid:
 			var fresh := 1.0 - clampf((sim.clock - float(r["t"])) / Sim.REQUEST_TTL, 0.0, 1.0)
 			s += 0.9 * float(r["trust"]) * fresh
+	# The plan agreed at the meeting (if they know it): its jobs are worth more, and more again for
+	# the people who said they'd do them.
+	if sim.meetings.knows_plan(c):
+		for it in sim.meetings.plan.get("items", []):
+			if String(it.get("action", "")) == aid:
+				s += 0.35 + (0.25 if (it.get("who", []) as Array).has(c.name) else 0.0)
+				break
 	# Doing what you're good at: people lean towards work they've practised (relative to their own
 	# other skills), a little more if it's what they're known for. Practice makes them better at
 	# it, so a division of labour can grow by itself; colony needs above still outweigh it.
@@ -242,7 +265,9 @@ func _score(aid: String, c: Colonist, sim: Sim) -> float:
 			tot += float(c.skills.get(k, 0.0))
 		var avg := tot / maxf(1.0, float(sim.role_skills().size()))
 		# Only among work worth doing: being a good builder is no reason to build what nobody needs.
-		s += (0.12 * clampf(lvl - avg, -2.0, 3.0) + (0.15 if c.role == sk else 0.0)) * clampf(s, 0.0, 1.0)
+		var lean := float(sim.content.roles.get("lean_per_level", 0.12)) * clampf(lvl - avg, -2.0, 3.0) \
+			+ (float(sim.content.roles.get("role_bonus", 0.15)) if c.role == sk else 0.0)
+		s += lean * clampf(s, 0.0, 1.0)
 	# Trait biases (data/traits.json "utility")
 	var kind: String = KIND_OF.get(aid, "need")
 	for t in c.traits:
@@ -264,6 +289,22 @@ func _recently(c: Colonist, sim: Sim, ids: Array, hours: float) -> float:
 func _build_score(bid: String, sim: Sim) -> float:
 	if bid == "continue":
 		return 1.2
+	var planned := 0.0
+	for it in sim.meetings.plan.get("items", []):
+		if String(it.get("build_what", "")) == bid:
+			planned = 0.6     # the colony agreed to build it
+	if bid.begins_with("expand:"):
+		# Enlarge the hall when the last meeting didn't fit everyone, or the adults no longer would.
+		var hall: Building = null
+		for b: Building in sim.buildings.values():
+			if b.type == bid.substr(7):
+				hall = b
+		var adults := 0
+		for c: Colonist in sim.colonists.values():
+			if c.is_adult():
+				adults += 1
+		var crowded := sim.meetings.last_overflow > 0 or (hall != null and adults > hall.seats())
+		return (0.9 if crowded else -0.8) + planned
 	var s := 0.6 - 0.05 * float(sim.content.buildings[bid].get("tier", 0))
 	match bid:
 		"campfire":
@@ -287,4 +328,12 @@ func _build_score(bid: String, sim: Sim) -> float:
 			s += 0.9 if sim.stock_total() > sim.storage_capacity() * 0.8 else -0.4
 		"workshop", "kitchen", "town_hall":
 			s += 0.4
+		"meeting_hall":
+			# Somewhere to meet once there are enough people that the campfire is a crush.
+			var grown := 0
+			for c: Colonist in sim.colonists.values():
+				if c.is_adult():
+					grown += 1
+			s += 0.5 if grown >= 6 else -0.3
+	s += planned
 	return s

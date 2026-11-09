@@ -1,13 +1,55 @@
 {
-  "_doc": "Roles are not assigned: someone becomes known as the colony's woodcutter by chopping a lot of wood. A colonist's role is their best skill here once it reaches min_level and leads their next-best by `lead` times. `jobs` are the actions that train it (and that a skilled person is better at).",
+  "_doc": "Roles are not assigned: someone becomes known as the colony's woodcutter by chopping a lot of wood lately and being among the colony's best at it. A colonist's role is the skill they've practised most recently (practice fades with practice_half_life_days) once that skill is at least min_level, their recent practice of it leads their next-most-practised job by `lead` times, and they are in the top `top_share` of adults at that skill. They keep a role until another job's practice overtakes it by `lead` or they drop out of the top. `jobs` are the actions that train it. The rest are weights for how people weigh this (teacher brain, state text, asking for help).",
   "min_level": 1.5,
   "lead": 1.3,
+  "top_share": 0.15,
+  "practice_half_life_days": 3.0,
+  "getting_good_at": 0.5,
+  "ask_reach_tiles": 30,
+  "lean_per_level": 0.12,
+  "role_bonus": 0.15,
   "skills": {
-    "woodcutting":    {"role": "woodcutter",    "good_at": "chopping wood",    "jobs": ["gather_wood"]},
-    "mining":         {"role": "stonecutter",   "good_at": "cutting stone",    "jobs": ["gather_stone"]},
-    "foraging":       {"role": "forager",       "good_at": "finding berries",  "jobs": ["gather_food"]},
-    "water_carrying": {"role": "water carrier", "good_at": "carrying water",   "jobs": ["fetch_water"]},
-    "farming":        {"role": "farmer",        "good_at": "farming",          "jobs": ["farm"]},
-    "building":       {"role": "builder",       "good_at": "building",         "jobs": ["build"]}
+    "woodcutting": {
+      "role": "woodcutter",
+      "good_at": "chopping wood",
+      "jobs": [
+        "gather_wood"
+      ]
+    },
+    "mining": {
+      "role": "stonecutter",
+      "good_at": "cutting stone",
+      "jobs": [
+        "gather_stone"
+      ]
+    },
+    "foraging": {
+      "role": "forager",
+      "good_at": "finding berries",
+      "jobs": [
+        "gather_food"
+      ]
+    },
+    "water_carrying": {
+      "role": "water carrier",
+      "good_at": "carrying water",
+      "jobs": [
+        "fetch_water"
+      ]
+    },
+    "farming": {
+      "role": "farmer",
+      "good_at": "farming",
+      "jobs": [
+        "farm"
+      ]
+    },
+    "building": {
+      "role": "builder",
+      "good_at": "building",
+      "jobs": [
+        "build"
+      ]
+    }
   }
 }

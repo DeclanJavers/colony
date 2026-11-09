@@ -21,6 +21,10 @@ var done := 0
 var fallbacks := 0
 var _req := HTTPRequest.new()
 var _current: Dictionary = {}
+# The weekly meeting has its own request so it never waits behind everyday talk.
+var _mreq := HTTPRequest.new()
+var _meeting: Dictionary = {}
+var _meeting_fallback: Dictionary = {}
 
 
 func _init(p_sim: Sim, url: String = "") -> void:
@@ -33,6 +37,13 @@ func _ready() -> void:
 	_req.timeout = 60.0
 	add_child(_req)
 	_req.request_completed.connect(_on_done)
+	_mreq.timeout = 120.0
+	add_child(_mreq)
+	_mreq.request_completed.connect(_on_meeting_done)
+	sim.meeting_handler = func(meeting: Dictionary) -> bool:
+		if String(GameSettings.get_value("talk_mode")) == "quick" or not _meeting.is_empty():
+			return false
+		return _send_meeting(meeting)
 	sim.conversation_handler = func(conv: Dictionary) -> bool:
 		var mode := String(GameSettings.get_value("talk_mode"))
 		if mode == "quick" or (mode == "near" and is_watched.is_valid() and not bool(is_watched.call(conv))):
@@ -106,6 +117,49 @@ func _on_done(result: int, code: int, _h: PackedStringArray, raw: PackedByteArra
 			" | ".join((data["lines"] as Array).map(func(l) -> String: return "%s: %s" % [l["who"], l["text"]]))])
 		print("     facts %s requests %s" % [JSON.stringify(data.get("facts", [])), JSON.stringify(data.get("requests", []))])
 	sim.apply_conversation(conv, data)
+
+
+## The meeting: the server writes the discussion from what everyone there believes and wants,
+## and picks the plan from the options; the quick version is kept as the fallback.
+func _send_meeting(meeting: Dictionary) -> bool:
+	var fb := sim.meetings.symbolic(meeting)
+	var people := []
+	for p: Colonist in meeting["people"]:
+		var snap := _snapshot(p)
+		var ids := {}
+		for o in meeting["options"]:
+			ids[o["id"]] = o["label"]
+		snap["wishes"] = sim.meetings._wishes(p, meeting, ids).slice(0, 2).map(func(id) -> String: return String(ids[id]))
+		people.append(snap)
+	var place: Building = meeting["place"]
+	var body := {"people": people, "options": meeting["options"], "seats": meeting["seats"], "overflow": meeting["overflow"],
+		"place": place.def().get("label", "campfire") if place != null else "campfire",
+		"plan_items": int(sim.meetings.cfg("plan_items", 3))}
+	if _mreq.request(base_url + "/meeting", ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body)) != OK:
+		return false
+	_meeting = meeting
+	_meeting_fallback = fb
+	return true
+
+
+func _on_meeting_done(result: int, code: int, _h: PackedStringArray, raw: PackedByteArray) -> void:
+	var meeting := _meeting
+	var fb := _meeting_fallback
+	_meeting = {}
+	_meeting_fallback = {}
+	if meeting.is_empty():
+		return
+	var data = JSON.parse_string(raw.get_string_from_utf8()) if result == HTTPRequest.RESULT_SUCCESS and code == 200 else null
+	if typeof(data) != TYPE_DICTIONARY or (data.get("lines", []) as Array).is_empty():
+		sim.meetings.apply(meeting, fb)
+		return
+	var out := {"lines": data["lines"], "items": data.get("items", []), "llm": true}
+	if (out["items"] as Array).is_empty():
+		out["items"] = fb["items"]    # they talked but agreed nothing clear: what most of them wanted
+	if print_talks:
+		print("MEETING day %d: %s" % [int(meeting["day"]), " | ".join((out["lines"] as Array).map(func(l) -> String: return "%s: %s" % [l["who"], l["text"]]))])
+		print("     plan %s" % JSON.stringify(out["items"]))
+	sim.meetings.apply(meeting, out)
 
 
 func _fallback(conv: Dictionary) -> void:

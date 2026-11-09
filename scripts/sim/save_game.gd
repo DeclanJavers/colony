@@ -17,7 +17,7 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 		"format": FORMAT, "seed": sim.seed_value, "clock": sim.clock, "stock": sim.stock.duplicate(),
 		"tier": sim.unlocked_tier, "stats": sim.stats.duplicate(true), "next_id": sim._next_id,
 		"next_request_id": sim._next_request_id, "used_names": sim._used_names.duplicate(),
-		"conv_id": sim._conv_id, "weather": sim.weather, "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
+		"conv_id": sim._conv_id, "weather": sim.weather, "meetings": sim.meetings.to_dict(), "footfall": sim.footfall, "discovered": sim.discovered, "rng_state": sim.rng.state, "history": history.duplicate(true), "chronicle": chronicle.duplicate(true),
 		"nodes": [], "buildings": [], "colonists": [], "graveyard": [],
 	}
 	for n: ResNode in sim.nodes.values():
@@ -27,7 +27,7 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 			"work_done": b.work_done, "work_needed": b.work_needed, "beds": b.beds.duplicate(),
 			"farm_stage": b.farm_stage, "farm_growth": b.farm_growth, "placed_at": b.placed_at,
 			"completed_at": b.completed_at, "placed_by": b.placed_by, "work_by": b.work_by.duplicate(),
-			"harvests": b.harvests})
+			"harvests": b.harvests, "level": b.level, "expanding": b.expanding, "prev_cell": b.prev_cell, "prev_size": b.prev_size, "grow_rect": b.grow_rect})
 	for c: Colonist in sim.colonists.values():
 		data["colonists"].append(_colonist(c))
 	for g in sim.graveyard:
@@ -61,6 +61,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 	sim._used_names = data["used_names"].duplicate()
 	sim._conv_id = int(data.get("conv_id", 0))
 	sim.weather = String(data.get("weather", "clear"))
+	sim.meetings.from_dict(data.get("meetings", {}))
 	var ff: Variant = data.get("footfall")
 	if ff is PackedFloat32Array and (ff as PackedFloat32Array).size() == sim.footfall.size():
 		sim.footfall = ff
@@ -92,6 +93,9 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 		b.beds = d["beds"].duplicate(); b.farm_stage = d["farm_stage"]; b.farm_growth = float(d["farm_growth"])
 		b.placed_at = float(d["placed_at"]); b.completed_at = float(d["completed_at"]); b.placed_by = d["placed_by"]
 		b.work_by = d["work_by"].duplicate(); b.harvests = int(d["harvests"])
+		b.level = int(d.get("level", 1)); b.expanding = bool(d.get("expanding", false))
+		b.prev_cell = d.get("prev_cell", Vector2i(-1, -1)); b.prev_size = d.get("prev_size", Vector2i.ZERO)
+		b.grow_rect = d.get("grow_rect", Rect2i())
 		sim.buildings[b.id] = b
 		if not b.def().get("walkable", false):
 			for cell in b.cells():
@@ -120,7 +124,7 @@ static func apply(sim: Sim, data: Dictionary) -> void:
 
 static func _colonist(c: Colonist) -> Dictionary:
 	return {"id": c.id, "name": c.name, "age": c.age_minutes, "lifespan": c.lifespan_days, "traits": Array(c.traits),
-		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(), "role": c.role,
+		"needs": c.needs.duplicate(), "zero": c.zero_minutes.duplicate(), "skills": c.skills.duplicate(), "role": c.role, "practice": c.practice.duplicate(), "known_roles": c.knowledge.roles.duplicate(), "plan_day": c.plan_day,
 		"memories": c.memories.duplicate(true), "recent": c.recent.duplicate(true),
 		"knowledge": c.knowledge.facts.duplicate(true), "places": c.knowledge.places.duplicate(true), "seen": c.knowledge.seen, "requests": c.requests.duplicate(true),
 		"conversations": c.conversations.duplicate(true), "affection": c.affection.duplicate(),
@@ -135,6 +139,8 @@ static func _restore(d: Dictionary, sim: Sim) -> Colonist:
 	c.traits.assign(d["traits"])
 	c.needs = d["needs"].duplicate(); c.zero_minutes = d["zero"].duplicate(); c.skills = d["skills"].duplicate()
 	c.role = String(d.get("role", ""))
+	c.plan_day = int(d.get("plan_day", -1))
+	c.practice = d.get("practice", {}).duplicate()
 	if c.skills.has("gathering"):   # saves from before skills were split per job
 		var g := float(c.skills["gathering"])
 		c.skills.erase("gathering")
@@ -144,6 +150,7 @@ static func _restore(d: Dictionary, sim: Sim) -> Colonist:
 	c.knowledge = Knowledge.new(c.id)
 	c.knowledge.facts = d["knowledge"].duplicate(true)
 	c.knowledge.places = d.get("places", {}).duplicate(true)
+	c.knowledge.roles = d.get("known_roles", {}).duplicate()
 	var seen: Variant = d.get("seen")
 	if seen is PackedByteArray:
 		c.knowledge.seen = seen

@@ -13,6 +13,8 @@ var needs: Dictionary = {}          # need_id -> 0..100 (100 = satisfied)
 var zero_minutes: Dictionary = {}   # need_id -> minutes spent at 0
 var skills: Dictionary = {}         # skill_id -> level (0 = novice); each level = 8 hours of practice
 var role: String = ""               # skill id they're known for (data/roles.json), "" = none yet
+var practice: Dictionary = {}       # skill_id -> recent minutes of practice (fades; see data/roles.json)
+var plan_day: int = -1              # day of the meeting whose plan they know (were there or were told)
 var memories: Array = []            # [{t, text, importance}]
 var recent: Array = []              # last few decisions, newest last: {t, action, label, p, began, brain}
 var knowledge: Knowledge            # what they believe about the colony (see knowledge.gd)
@@ -71,8 +73,11 @@ func skill_mult(skill: String) -> float:
 
 
 func add_skill_xp(skill: String, minutes: float) -> void:
-	# One level per ~8 hours of practice.
+	if skill == "":
+		return
+	# One level per ~8 hours of practice. Recent practice (which fades) is what roles go by.
 	skills[skill] = float(skills.get(skill, 0.0)) + minutes / 480.0
+	practice[skill] = float(practice.get(skill, 0.0)) + minutes
 
 
 func remember(t: float, text: String, importance: float) -> Dictionary:

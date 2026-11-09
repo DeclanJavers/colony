@@ -38,7 +38,7 @@ func tick(dt: float) -> int:
 			if walk(dt):
 				phase = "working"
 				timer = float(params.get("work_minutes", sim.source_def(source).get("work_minutes", 20)))
-				skill = String(params.get("skill", sim.source_def(source).get("skill", "gathering")))
+				skill = String(params.get("skill", sim.source_def(source).get("skill", "")))
 		"working":
 			timer -= dt * work_rate(skill)
 			c.add_skill_xp(skill, dt)

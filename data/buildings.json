@@ -176,5 +176,52 @@
         "social_gain": 1.5
       }
     }
+  },
+  "meeting_hall": {
+    "label": "meeting hall",
+    "tier": 2,
+    "cost": {
+      "wood": 60,
+      "stone": 30
+    },
+    "work": 900,
+    "footprint": [
+      3,
+      3
+    ],
+    "max_count": 1,
+    "description": "where the colony meets each week to share news and agree what to do; it can be made bigger when everyone no longer fits",
+    "provides": {
+      "meeting_place": 1
+    },
+    "levels": [
+      {
+        "seats": 8
+      },
+      {
+        "seats": 16,
+        "footprint": [
+          4,
+          4
+        ],
+        "cost": {
+          "wood": 50,
+          "stone": 40
+        },
+        "work": 700
+      },
+      {
+        "seats": 30,
+        "footprint": [
+          5,
+          5
+        ],
+        "cost": {
+          "wood": 80,
+          "stone": 60
+        },
+        "work": 1000
+      }
+    ]
   }
 }

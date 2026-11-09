@@ -39,7 +39,7 @@ func _initialize() -> void:
 	var a := Sim.new()
 	a.register_brain(UtilityBrain.new(), true)
 	a.setup(1234)
-	for i in 3 * 1440:
+	for i in 8 * 1440:   # past the first weekly meeting (day 7)
 		a.tick(1.0)
 	var path := "user://test_save.tres"
 	check("saves", SaveGame.save(a, [], path) == OK)
@@ -81,6 +81,22 @@ func _initialize() -> void:
 			places_ok = false
 	check("same known places and seen land", places_ok)
 	check("same footpaths", a.footfall == b.footfall)
+	var roles_ok := true
+	for cid in a.colonists:
+		var x: Colonist = a.colonists[cid]
+		var y: Colonist = b.colonists.get(cid)
+		if y == null or x.role != y.role or x.plan_day != y.plan_day or x.knowledge.roles.size() != y.knowledge.roles.size() \
+				or not _close(x.practice, y.practice):
+			roles_ok = false
+	check("same roles, practice and known plan", roles_ok)
+	check("same meeting plan", JSON.stringify(a.meetings.plan.get("items", [])) == JSON.stringify(b.meetings.plan.get("items", [])) and a.meetings.held == b.meetings.held)
+	var levels_ok := true
+	for bid in a.buildings:
+		var x: Building = a.buildings[bid]
+		var y: Building = b.buildings.get(bid)
+		if y == null or x.level != y.level or x.expanding != y.expanding or x.grow_rect != y.grow_rect or x.size != y.size:
+			levels_ok = false
+	check("same building levels and land kept to grow", levels_ok)
 	for i in 2 * 1440:
 		b.tick(1.0)
 	check("loaded colony keeps going", b.alive_count() > 0 and int(b.stats["failed_decisions"]) == 0,

@@ -415,6 +415,75 @@ def converse(req: ConverseRequest) -> dict:
     return {"lines": lines, "facts": facts, "requests": reqs, "llm": True, "latency_ms": (time.time() - t) * 1000.0}
 
 
+class MeetingRequest(BaseModel):
+    people: list[dict[str, Any]]
+    options: list[dict[str, Any]]     # [{id, label}] what the meeting could agree to do
+    seats: int = 0
+    overflow: int = 0
+    place: str = "meeting hall"
+    plan_items: int = 3
+
+
+@app.post("/meeting")
+def meeting(req: MeetingRequest) -> dict:
+    """The weekly meeting: a short discussion among the people there (each knows only their own
+    beliefs and has a couple of things on their mind), then the plan they agreed, picked from the
+    options and grounded in what was said."""
+    t = time.time()
+    names = [p["name"] for p in req.people]
+    speakers = sorted(req.people, key=lambda p: -len(p.get("wishes", [])))[:6]
+    blocks = "\n".join(f"{_speaker_block(p)} On their mind: {', '.join(p.get('wishes', [])) or 'nothing pressing'}."
+                       for p in speakers)
+    crowd = (f" The {req.place} seats {req.seats}; {req.overflow} people had to stand outside." if req.overflow > 0 else "")
+    sys = ("You write the weekly meeting of a small colony where everyone shares food, water, wood and stone. "
+           "Each person only knows what is listed for them and may be a bit wrong about amounts. Write 5 to 8 lines, "
+           "each as 'Name: words', under 22 words, first person. They raise what is on their mind, react to each other, "
+           "and end by agreeing who will do what. Only spoken words: no narration, no actions, and no buildings or "
+           "events that aren't mentioned.")
+    user = (f"The meeting is at the {req.place}. {len(names)} people came: {', '.join(names)}.{crowd}\n{blocks}\n"
+            f"Write the meeting.")
+    try:
+        text = llm([{"role": "system", "content": sys}, {"role": "user", "content": user}], max_tokens=320, temperature=0.8)
+    except Exception as e:
+        return {"lines": [], "items": [], "error": repr(e)}
+    lines = []
+    for raw in text.replace("**", "").splitlines():
+        m = LINE_RE.match(raw)
+        if m and m.group(1).strip() in names:
+            said = re.sub(r"\*[^*]{1,80}\*", "", m.group(2).strip().strip('"')).strip()
+            if said:
+                lines.append({"who": m.group(1).strip(), "text": said})
+    lines = lines[:8]
+    if not lines:
+        return {"lines": [], "items": [], "error": "no dialogue"}
+    ids = [o["id"] for o in req.options]
+    labels = {o["id"]: o["label"] for o in req.options}
+    schema = {"type": "object", "properties": {"plan": {"type": "array", "maxItems": req.plan_items, "items": {
+        "type": "object", "properties": {"id": {"enum": ids}, "who": {"type": "array", "items": {"enum": names}}},
+        "required": ["id", "who"]}}}, "required": ["plan"]}
+    convo = "\n".join(f"{l['who']}: {l['text']}" for l in lines)
+    opts = "\n".join(f"- {o['id']}: {o['label']}" for o in req.options)
+    try:
+        out = json.loads(llm([{"role": "system", "content": "You record what a meeting agreed, as JSON."},
+                              {"role": "user", "content": f"Meeting:\n{convo}\n\nOptions:\n{opts}\n\nWhich options did they "
+                               "agree the colony should do (at most %d), and who said they would do each? Only what was "
+                               "actually said." % req.plan_items}], max_tokens=200, temperature=0.1, schema=schema))
+    except Exception:
+        out = {"plan": []}
+    # Grounding: keep an item only if someone wanted it or its words came up in the meeting.
+    said = convo.lower()
+    wished = {w for p in req.people for w in p.get("wishes", [])}
+    items = []
+    for it in out.get("plan", []):
+        oid = it.get("id")
+        if oid not in labels or any(x["id"] == oid for x in items):
+            continue
+        words = [w for w in re.findall(r"[a-z]+", labels[oid].lower()) if len(w) > 3]
+        if labels[oid] in wished or any(w in said for w in words):
+            items.append({"id": oid, "who": [n for n in it.get("who", []) if n in names]})
+    return {"lines": lines, "items": items, "llm": True, "latency_ms": (time.time() - t) * 1000.0}
+
+
 class IntentRequest(BaseModel):
     colonist: str = ""
     message: str

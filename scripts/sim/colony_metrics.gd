@@ -14,6 +14,8 @@ var winter_wood := -1.0            # wood in stock when the first winter starts
 var famine_hours := 0              # hours with less than a day of food in storage
 var max_glut := {}                 # resource -> max days of supply in storage
 var max_farms_per_person := 0.0
+var _attend := 0.0       # sum of attendance shares (present / adults) over meetings
+var _attend_n := 0.0
 var belief_err_sum := 0.0
 var belief_err_n := 0
 var talks := {}
@@ -34,6 +36,13 @@ func attach(p_sim: Sim) -> void:
 	sim.events.hour_passed.connect(_on_hour)
 	sim.events.conversation_started.connect(func(conv: Dictionary) -> void:
 		talks[conv["intent"]] = int(talks.get(conv["intent"], 0)) + 1)
+	sim.events.meeting_held.connect(func(p: Dictionary) -> void:
+		var adults := 0
+		for c: Colonist in sim.colonists.values():
+			if c.is_adult():
+				adults += 1
+		_attend += float((p["present"] as Array).size()) / maxf(1.0, float(adults))
+		_attend_n += 1.0)
 	sim.events.tier_unlocked.connect(func(t: int) -> void:
 		if t >= 4 and tier4_day < 0:
 			tier4_day = sim.day())
@@ -80,7 +89,7 @@ func report() -> Dictionary:
 		"homeless_share": snappedf(homeless_hours / maxf(person_hours, 1.0), 0.01),
 		"critical_share": snappedf(critical_hours / maxf(person_hours, 1.0), 0.001),
 		"cold_share": snappedf(cold_hours / maxf(person_hours, 1.0), 0.001), "winter_wood": winter_wood,
-		"explored_share": snappedf(sim.explored_share(), 0.01), "roles": _roles(),
+		"explored_share": snappedf(sim.explored_share(), 0.01), "roles": _roles(), "meetings": sim.meetings.held, "meeting_attendance": snappedf(_attend / maxf(1.0, _attend_n), 0.01), "hall_seats": _hall_seats(), "last_plan": sim.meetings.plan_summary(),
 		"famine_share": snappedf(float(famine_hours) / maxf(hours, 1.0), 0.01),
 		"max_farms_per_person": snappedf(max_farms_per_person, 0.01),
 		"max_glut_days": {}, "failed_share": snappedf(float(sim.stats.get("failed_decisions", 0)) / maxf(decisions, 1.0), 0.001),
@@ -128,3 +137,10 @@ func _roles() -> Dictionary:
 			var r := sim.role_name(c.role) if c.role != "" else "none"
 			out[r] = int(out.get(r, 0)) + 1
 	return out
+
+
+func _hall_seats() -> int:
+	for b: Building in sim.buildings.values():
+		if b.provides("meeting_place") != null and b.complete:
+			return b.seats()
+	return 0

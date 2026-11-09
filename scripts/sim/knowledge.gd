@@ -23,7 +23,8 @@ const STOCK_KEYS := ["food", "water", "wood", "stone"]
 var owner_id: int = 0
 var facts: Dictionary = {}     # key -> {v: float, t: float, src: "seen"|"heard", from: String}
 var places: Dictionary = {}    # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from, amt}
-var seen := PackedByteArray()  # land this colonist has seen with their own eyes (y * size + x)
+var seen := PackedByteArray()
+var roles: Dictionary = {}     # colonist id -> skill id they're known for (as last heard or seen)  # land this colonist has seen with their own eyes (y * size + x)
 
 
 func _init(p_owner: int = 0) -> void:

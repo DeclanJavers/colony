@@ -1,0 +1,9 @@
+{
+  "_doc": "The weekly meeting. The bell rings at `hour` on every `every_days`-th day; adults come if nothing urgent keeps them away. People talk for `length_hours`; what they agree becomes the colony plan (at most `plan_items` things), which lasts until the next meeting. Without a meeting hall they meet at the campfire.",
+  "every_days": 7,
+  "first_day": 7,
+  "hour": 17,
+  "length_hours": 2.5,
+  "plan_items": 3,
+  "arrive_within_hours": 1.5
+}

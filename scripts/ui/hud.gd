@@ -160,6 +160,13 @@ func bind(p_runner: SimRunner, p_view: WorldView, chat: WatcherChat) -> void:
 			_log("[color=#c9b6e4]%s asked %s to %s.[/color]" % [InspectText.link(a), InspectText.link(b), lbl])
 		elif conv["intent"] == "news":
 			_log("[color=#c9b6e4]%s told %s the news.[/color]" % [InspectText.link(a), InspectText.link(b)]))
+	ev.meeting_called.connect(func(m: Dictionary) -> void:
+		_log("[color=#d8c79a]The bell rings: the weekly meeting at the %s.[/color]" % (m["place"] as Building).def().get("label", "campfire")))
+	ev.meeting_held.connect(func(p: Dictionary) -> void:
+		var crowd := (" (%d stood outside)" % int(p["overflow"])) if int(p["overflow"]) > 0 else ""
+		_log("[color=#d8c79a]Meeting: %d came%s. Agreed: %s.[/color]" % [(p["present"] as Array).size(), crowd, runner.sim.meetings.plan_summary(p)]))
+	ev.building_expanded.connect(func(b: Building) -> void:
+		_log("[color=#d8c79a]The %s is bigger now: it seats %d.[/color]" % [b.def().get("label", b.type), b.seats()]))
 	ev.role_changed.connect(func(c: Colonist, role: String) -> void:
 		if role != "":
 			_log("[color=#d8c79a]%s has become the colony's %s.[/color]" % [InspectText.link(c), runner.sim.role_name(role)]))
