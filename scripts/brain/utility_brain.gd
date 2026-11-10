@@ -107,7 +107,7 @@ func _knows_source(sim: Sim, c: Colonist, res: String) -> bool:
 		var need := String(d.get("needs_tool", ""))
 		if need != "" and not c.has_tool(need):
 			continue      # a tree is no source of wood without a hatchet
-		if String(d.get("resource", "")) == res and not c.knowledge.usable_places_of(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0).is_empty():
+		if String(d.get("resource", "")) == res and c.knowledge.has_usable(t, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0):
 			return true
 	return false
 

@@ -19,6 +19,7 @@ var chronicle: Array = []            # everything the event feed showed: {t, tex
 var map_options: Dictionary = {}     # for a new game: map generation options (WorldMap.DEFAULT_OPTIONS)
 var speed_index: int = 1
 var minutes_per_second: float = 12.0
+var _decision_budget_ms := 2.0   # time per frame for colonists' decisions (the rest decide next frame)
 var lag_paused: bool = false     # true while waiting on a slow brain (sim slows rather than skips)
 var _acc: float = 0.0
 var _last_running_index: int = 1
@@ -51,6 +52,7 @@ func start(p_seed: int, brain_override: String = "", saved: Dictionary = {}) -> 
 		chronicle = saved.get("chronicle", []).duplicate(true)
 	minutes_per_second = 1440.0 / float(content.cfg("real_seconds_per_day", 120.0))
 	_max_lag = float(content.cfg("decision.max_lag_minutes", 15))
+	_decision_budget_ms = float(content.cfg("decision.frame_budget_ms", 2.0))
 	log = DecisionLog.new()
 	log.attach(sim, "game")
 	sim.events.hour_passed.connect(func(_d: int, _h: int) -> void:
@@ -66,6 +68,7 @@ func start(p_seed: int, brain_override: String = "", saved: Dictionary = {}) -> 
 func prewarm(days: float) -> void:
 	var keep := sim.default_brain_id
 	sim.default_brain_id = "utility"
+	sim.decision_budget_usec = -1     # fast-forwarding: no per-frame limit
 	for i in int(days * 1440.0):
 		sim.tick(1.0)
 	sim.default_brain_id = keep
@@ -88,7 +91,7 @@ func save_game() -> Error:
 
 
 func autosave() -> Error:
-	return SaveSlots.save("autosave", sim, history, chronicle, get_viewport())
+	return SaveSlots.save("autosave", sim, history, chronicle, get_viewport(), "", true)
 
 
 ## Reload the scene and continue from a save (a clean restart of view, HUD and brains).
@@ -121,9 +124,12 @@ func toggle_pause() -> void:
 
 
 func _process(delta: float) -> void:
+	SaveSlots.poll_background()
 	if sim == null or speed() == 0:
 		return
 	_acc += delta * minutes_per_second * speed()
+	sim.decision_budget_usec = int(_decision_budget_ms * 1000.0)
+	sim.decisions_spent_usec = 0
 	var n := 0
 	lag_paused = false
 	while _acc >= 1.0 and n < MAX_TICKS_PER_FRAME:
@@ -138,6 +144,12 @@ func _process(delta: float) -> void:
 		_acc = 0.0  # can't keep up: drop the backlog instead of spiralling
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
+		SaveSlots.finish_background()
+
+
 func _exit_tree() -> void:
+	SaveSlots.finish_background()     # (quitting, the main menu, loading: don't leave a save half-done)
 	if log != null:
 		log.close()

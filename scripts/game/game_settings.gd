@@ -7,11 +7,12 @@ extends RefCounted
 ##   names:     "auto" (when zoomed in / hovered / selected) | "always" | "never"
 ##   bubbles:   show speech bubbles
 ##   pixels:    "fine" | "chunky" | "off" (how big the pixel-art pixels are; see docs/STYLE.md)
+##   fps:       show the frame rate in the top bar
 
 signal changed(key: String, value: Variant)
 
 const PATH := "user://settings.cfg"
-const DEFAULTS := {"talk_mode": "all", "names": "auto", "bubbles": true, "pixels": "fine"}
+const DEFAULTS := {"talk_mode": "all", "names": "auto", "bubbles": true, "pixels": "fine", "fps": true}
 
 static var _inst: GameSettings
 var values: Dictionary = DEFAULTS.duplicate()

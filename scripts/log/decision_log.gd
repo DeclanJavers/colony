@@ -10,6 +10,9 @@ var _file: FileAccess
 var _pending: Array = []
 var _after_min: float = 360.0
 var written: int = 0
+var _ready: Array = []          # outcome known, waiting to be written
+var _unflushed := false
+const WRITE_PER_TICK := 4
 
 
 func attach(p_sim: Sim, label: String = "") -> void:
@@ -23,6 +26,7 @@ func attach(p_sim: Sim, label: String = "") -> void:
 	_file = FileAccess.open(path, FileAccess.WRITE)
 	sim.events.decision_made.connect(_on_decision)
 	sim.events.hour_passed.connect(_on_hour)
+	sim.events.ticked.connect(_drain)
 	sim.events.colonist_died.connect(_on_died)
 
 
@@ -60,12 +64,19 @@ func _on_hour(_d: int, _h: int) -> void:
 			var c := sim.colonists.get(int(e["colonist_id"])) as Colonist
 			e["outcome"] = {"hours": (sim.clock - float(e["t"])) / 60.0, "alive": c != null,
 				"needs_after": c.needs.duplicate() if c != null else {}}
-			_write(e)
+			_ready.append(e)
 		else:
 			keep.append(e)
 	_pending = keep
-	if _file != null:
+
+
+## Lines whose outcome is known go out a few per tick, not all at once on the hour (a hitch).
+func _drain(_clock: float) -> void:
+	for i in mini(WRITE_PER_TICK, _ready.size()):
+		_write(_ready.pop_front())
+	if _ready.is_empty() and _unflushed and _file != null:
 		_file.flush()
+		_unflushed = false
 
 
 func _on_died(c: Colonist, cause: String) -> void:
@@ -80,6 +91,9 @@ func _on_died(c: Colonist, cause: String) -> void:
 
 
 func close() -> void:
+	for e in _ready:
+		_write(e)
+	_ready.clear()
 	for e in _pending:
 		var c := sim.colonists.get(int(e["colonist_id"])) as Colonist
 		e["outcome"] = {"hours": (sim.clock - float(e["t"])) / 60.0, "alive": c != null, "partial": true,
@@ -95,3 +109,4 @@ func _write(e: Dictionary) -> void:
 	if _file != null:
 		_file.store_line(JSON.stringify(e))
 		written += 1
+		_unflushed = true

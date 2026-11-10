@@ -39,6 +39,8 @@ var teacher_id: String = ""
 var describer: StateDescriber = StateDescriber.new()
 var action_types: Dictionary = {}       # type name -> Script
 
+var decision_budget_usec := -1   # per-frame time for decisions (set by the game; -1 = no limit)
+var decisions_spent_usec := 0
 var stats := {"births": 0, "deaths": {}, "decisions": 0, "failed_decisions": 0, "requests_made": 0, "requests_followed": 0}
 
 var weather: String = "clear"
@@ -177,7 +179,12 @@ func tick(dt: float = 1.0) -> void:
 			if st != ActionBase.RUNNING:
 				_finish_action(c, st == ActionBase.DONE)
 		if c.state == "idle" and clock >= c.hesitate_until:
-			_request_decision(c)
+			# In the game each frame has a little time for decisions; past it, the rest decide
+			# next frame (a moment later). Headless runs have no limit.
+			if decision_budget_usec < 0 or decisions_spent_usec < decision_budget_usec:
+				var t0 := Time.get_ticks_usec()
+				_request_decision(c)
+				decisions_spent_usec += Time.get_ticks_usec() - t0
 	for c in to_bury:
 		colonists.erase(c.id)
 		graveyard.append(c)
@@ -415,14 +422,23 @@ func _roll_weather() -> void:
 
 
 ## Warmth per hour a colonist gets right now: near a fire, or asleep in a heated home.
+var _warm_spots: Array = []     # [[centre, reach, warmth]] of finished buildings that warm, this tick
+var _warm_clock := -1.0
+
+
 func warmth_gain(c: Colonist) -> float:
+	if _warm_clock != clock:
+		_warm_clock = clock
+		_warm_spots.clear()
+		for b: Building in buildings.values():
+			if b.complete:
+				var w := float(b.provides("warmth", 0.0))
+				if w > 0.0:
+					_warm_spots.append([b.center(), float(b.provides("warm_radius", 2.0)) + b.size.x * 0.5, w])
 	var g := 0.0
-	for b: Building in buildings.values():
-		if not b.complete:
-			continue
-		var w := float(b.provides("warmth", 0.0))
-		if w > 0.0 and c.pos.distance_to(b.center()) <= float(b.provides("warm_radius", 2.0)) + b.size.x * 0.5:
-			g = maxf(g, w)
+	for spot in _warm_spots:
+		if c.pos.distance_to(spot[0]) <= spot[1]:
+			g = maxf(g, spot[2])
 	if c.action != null and c.action.phase == "sleeping" and c.home_id >= 0:
 		var home := buildings.get(c.home_id) as Building
 		if home != null and home.heated:
@@ -829,7 +845,7 @@ func share_places(from: Colonist, to: Colonist, limit: int = PLACES_PER_TALK) ->
 	# meetings call this for every pair of people there).
 	var lacks := {}
 	for t in content.nodes:
-		lacks[t] = 0 if to.knowledge.usable_places_of(t, to.cell, clock, false).is_empty() else 1
+		lacks[t] = 1 if to.knowledge.has_usable(t, clock, false) else 0
 	var key := {}
 	for nid in known:
 		var pl: Dictionary = from.knowledge.places[nid]
@@ -843,7 +859,7 @@ func share_places(from: Colonist, to: Colonist, limit: int = PLACES_PER_TALK) ->
 		told += 1
 		if rng.randf() > 0.4 + 0.6 * tr:
 			continue    # mentioned, but it didn't stick
-		var had_type := not to.knowledge.places_of(p["type"], to.cell).is_empty()
+		var had_type := to.knowledge.knows_type(String(p["type"]))
 		if to.knowledge.hear_place(nid, p["type"], p["cell"], float(p["t"]), from.name, float(p.get("amt", -1.0))):
 			if not had_type:
 				news[String(content.nodes.get(p["type"], {}).get("resource", p["type"]))] = p["cell"]
@@ -1276,7 +1292,13 @@ func build_context(c: Colonist) -> Dictionary:
 	var has_build := false
 	var has_social := false
 	for def in available_actions(c):
-		opts.append({"id": def["id"], "label": def["label"], "description": def["description"]})
+		var o := {"id": def["id"], "label": def["label"], "description": def["description"]}
+		# Which follow-up question this choice needs (so Laya is only asked it when it matters).
+		if def["type"] == "build":
+			o["asks"] = "build_what"
+		elif def["type"] in ["socialize", "inform"]:
+			o["asks"] = "with_whom"
+		opts.append(o)
 		has_build = has_build or def["type"] == "build"
 		has_social = has_social or def["type"] in ["socialize", "inform"]
 	var bopts := []
@@ -1490,11 +1512,18 @@ func find_sources(specs: Array, resource: String, from: Vector2i, amount: float,
 		elif spec == "tile:water":
 			for s in map.shore_cells:
 				cands.append({"kind": "tile", "ref": s, "cells": [s], "d": Vector2(s - from).length_squared()})
-	cands.sort_custom(func(a, b) -> bool: return a["d"] < b["d"])
+	# Nearest first (a native sort on distance, ties in list order: much faster than sort_custom).
+	assert(cands.size() < 8192)
+	var keys := PackedFloat64Array()
+	keys.resize(cands.size())
+	for i in cands.size():
+		keys[i] = float(cands[i]["d"]) * 8192.0 + i
+	keys.sort()
 	# The nearest few that have somewhere to stand next to them. Walled-in ones (no free side) are
 	# skipped, and a colonist who knows of one learns it's no use for now.
 	var out := []
-	for cand in cands:
+	for key in keys:
+		var cand: Dictionary = cands[int(key) % 8192]
 		if out.size() >= 4:
 			break
 		var typed: Array[Vector2i] = []
@@ -1689,6 +1718,17 @@ const NEAR_VILLAGE := 14.0
 
 
 func room_for(type: String) -> Vector2i:
+	# (Same map, same buildings: same answer. A hall placement asks this three times.)
+	var key := "%d|%d" % [map.version, buildings.size()]
+	if key != _room_cache_key:
+		_room_cache.clear()
+		_room_cache_key = key
+	if not _room_cache.has(type):
+		_room_cache[type] = _room_for(type)
+	return _room_cache[type]
+
+
+func _room_for(type: String) -> Vector2i:
 	var near := float(content.buildings.get(type, {}).get("near_village", NEAR_VILLAGE))
 	var base := footprint_of(type)
 	var levels: Array = content.buildings.get(type, {}).get("levels", [])
@@ -1698,7 +1738,7 @@ func room_for(type: String) -> Vector2i:
 		sizes.append(Vector2i(int(f[0]), int(f[1])))
 	sizes.reverse()
 	for sz in sizes:
-		for origin in _spots(sz):
+		for origin in _spots(sz, true):
 			if Vector2(origin + sz / 2 - map.center).length() <= near:
 				return sz
 			break
@@ -1709,18 +1749,31 @@ func find_build_spot(type: String, from: Vector2i) -> Vector2i:
 	## First free spot (spiralling out from the centre) that `from` can actually walk to. For
 	## buildings that grow, there must be room for the size they'll grow to (room_for).
 	var size := room_for(type) if content.buildings.get(type, {}).has("levels") else footprint_of(type)
+	# Candidates in the same spiral order as _spots, checked as they're found (stops at the first
+	# reachable one instead of listing them all first). Gives up after 31, as before.
 	var checked := 0
-	for origin in _spots(size):
-		var cells: Array[Vector2i] = []
-		for y in size.y:
-			for x in size.x:
-				cells.append(origin + Vector2i(x, y))
-		if reach_cell(from, cells).x >= 0:
-			return origin
-		checked += 1
-		if checked > 30:
-			break
-	return Vector2i(-1, -1)
+	var found := Vector2i(-1, -1)
+	var c := map.center
+	var lands := _land_rects()
+	var grid := fit_grid()
+	for r in range(0, map.size / 2):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var origin := c + Vector2i(dx, dy)
+				if not _fits(origin, size, lands, grid):
+					continue
+				var cells: Array[Vector2i] = []
+				for y in size.y:
+					for x in size.x:
+						cells.append(origin + Vector2i(x, y))
+				if reach_cell(from, cells).x >= 0:
+					return origin
+				checked += 1
+				if checked > 30:
+					return found
+	return found
 
 
 func reach_cell(from: Vector2i, cells: Array[Vector2i]) -> Vector2i:
@@ -1805,7 +1858,7 @@ func _relocation_spot(b: Building) -> Vector2i:
 	var fp: Array = b.level_def(b.level + 1).get("footprint", [b.size.x, b.size.y])
 	var size := Vector2i(int(fp[0]), int(fp[1]))
 	var near := float(b.def().get("near_village", NEAR_VILLAGE)) * 1.3
-	for origin in _spots(size):
+	for origin in _spots(size, true):
 		if Vector2(origin + size / 2 - map.center).length() <= near:
 			return origin
 		break
@@ -1919,6 +1972,7 @@ func _relocate(old: Building, by: Colonist) -> Building:
 
 ## Take a building down (the old hall once its bigger replacement is finished).
 func remove_building(b: Building) -> void:
+	_warm_clock = -1.0
 	buildings.erase(b.id)
 	for cell in b.cells():
 		if map.building_at.get(cell, -1) == b.id:
@@ -1938,6 +1992,7 @@ func _finish_expansion(b: Building, by: Colonist) -> void:
 
 
 func complete_building(b: Building, by: Colonist, quiet: bool = false) -> void:
+	_warm_clock = -1.0     # (a new fire or house: the warm spots list is rebuilt)
 	if b.expanding:
 		_finish_expansion(b, by)
 		return
@@ -1967,31 +2022,63 @@ func complete_building(b: Building, by: Colonist, quiet: bool = false) -> void:
 
 
 func _find_spot(size: Vector2i) -> Vector2i:
-	for origin in _spots(size):
+	for origin in _spots(size, true):
 		return origin
 	return Vector2i(-1, -1)
 
 
-func _spots(size: Vector2i) -> Array[Vector2i]:
-	## Every valid origin, spiralling out from the colony centre (nearest first).
+func _spots(size: Vector2i, first_only: bool = false) -> Array[Vector2i]:
+	## Every valid origin, spiralling out from the colony centre (nearest first); with first_only,
+	## just the nearest (same answer, without scanning the rest).
 	var out: Array[Vector2i] = []
 	var c := map.center
+	var lands := _land_rects()
+	var grid := fit_grid()
 	for r in range(0, map.size / 2):
 		for dy in range(-r, r + 1):
 			for dx in range(-r, r + 1):
 				if maxi(absi(dx), absi(dy)) != r:
 					continue
 				var origin := c + Vector2i(dx, dy)
-				if _fits(origin, size):
+				if _fits(origin, size, lands, grid):
 					out.append(origin)
+					if first_only:
+						return out
 		if out.size() >= 40:
 			break
 	return out
 
 
-func _fits(origin: Vector2i, size: Vector2i) -> bool:
+var _fit_grid: FitGrid
+var _fit_grid_version := -1
+var _room_cache := {}         # type -> size, valid for _room_cache_key
+var _room_cache_key := ""
+
+
+## The fast fit check for the current map (rebuilt only when a cell has changed).
+func fit_grid() -> FitGrid:
+	if _fit_grid == null or _fit_grid_version != map.version:
+		_fit_grid = FitGrid.new(map)
+		_fit_grid_version = map.version
+	return _fit_grid
+
+
+## Every building's land with a 1-tile margin (what a new footprint mustn't overlap).
+func _land_rects() -> Array[Rect2i]:
+	var out: Array[Rect2i] = []
+	for b: Building in buildings.values():
+		var land := b.land()
+		out.append(Rect2i(land.position - Vector2i.ONE, land.size + Vector2i(2, 2)))
+	return out
+
+
+func _fits(origin: Vector2i, size: Vector2i, lands: Variant = null, grid: FitGrid = null) -> bool:
 	## Clear footprint plus a 1-tile walkway ring (no buildings, trees or rocks in the ring),
 	## so buildings never wall each other off.
+	if grid != null:
+		if not grid.fits(origin, size):
+			return false
+		return _clear_of_lands(origin, size, lands)
 	for y in range(-1, size.y + 1):
 		for x in range(-1, size.x + 1):
 			var cell := origin + Vector2i(x, y)
@@ -2004,10 +2091,14 @@ func _fits(origin: Vector2i, size: Vector2i) -> bool:
 				return false
 			if inside and map.height_at(cell) != map.height_at(origin):
 				return false     # buildings need flat ground
-	# Walkable farm plots also must not overlap other walkable sites, nor land kept to grow into.
-	for b: Building in buildings.values():
-		var land := b.land()
-		if Rect2i(land.position - Vector2i.ONE, land.size + Vector2i(2, 2)).intersects(Rect2i(origin, size)):
+	return _clear_of_lands(origin, size, lands)
+
+
+## Walkable farm plots also must not overlap other walkable sites, nor land kept to grow into.
+func _clear_of_lands(origin: Vector2i, size: Vector2i, lands: Variant) -> bool:
+	var foot := Rect2i(origin, size)
+	for land: Rect2i in (lands if lands != null else _land_rects()):
+		if land.intersects(foot):
 			return false
 	return true
 

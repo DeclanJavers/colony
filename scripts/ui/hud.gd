@@ -13,6 +13,8 @@ var _stock := Label.new()
 var _tier := Label.new()
 var _lag := Label.new()
 var _brain := Label.new()
+var _fps := Label.new()
+var _fps_t := 0.0
 var _speed_buttons: Array[Button] = []
 var _feed := RichTextLabel.new()
 var _feed_lines: PackedStringArray = []
@@ -47,6 +49,15 @@ func _ready() -> void:
 	status.alignment = BoxContainer.ALIGNMENT_END
 	status.add_theme_constant_override("separation", 12)
 	hb.add_child(status)
+	_fps.add_theme_font_size_override("font_size", 13)
+	_fps.add_theme_color_override("font_color", Color(0.72, 0.70, 0.66))
+	_fps.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_fps.tooltip_text = "Frames per second (Settings: Show FPS)"
+	_fps.mouse_filter = Control.MOUSE_FILTER_PASS
+	_fps.visible = bool(GameSettings.get_value("fps"))
+	status.add_child(_fps)
+	GameSettings.instance().changed.connect(func(k: String, v: Variant) -> void:
+		if k == "fps": _fps.visible = bool(v))
 	_lag.add_theme_color_override("font_color", Color(1, 0.8, 0.3))
 	_lag.add_theme_font_size_override("font_size", 13)
 	_lag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -265,6 +276,14 @@ func _build_settings(root: Control) -> void:
 	cb.focus_mode = Control.FOCUS_NONE
 	cb.toggled.connect(func(on: bool) -> void: GameSettings.set_value("bubbles", on))
 	grid.add_child(cb)
+	var fl := Label.new()
+	fl.text = "Show FPS"
+	grid.add_child(fl)
+	var fc := CheckButton.new()
+	fc.button_pressed = bool(GameSettings.get_value("fps"))
+	fc.focus_mode = Control.FOCUS_NONE
+	fc.toggled.connect(func(on: bool) -> void: GameSettings.set_value("fps", on))
+	grid.add_child(fc)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	var save_btn := Button.new()
@@ -337,6 +356,10 @@ func _process(_delta: float) -> void:
 	_stock.text = "%s   [%d/%d]" % ["  ".join(parts), int(sim.stock_total()), int(sim.storage_capacity())]
 	_tier.text = "Tier %d" % sim.unlocked_tier
 	_lag.text = "waiting on Laya..." if runner.lag_paused else ""
+	_fps_t -= _delta
+	if _fps.visible and _fps_t <= 0.0:
+		_fps_t = 0.5
+		_fps.text = "%d fps" % Engine.get_frames_per_second()
 	if runner.laya != null:
 		_brain.text = runner.laya.status()
 		_brain.add_theme_color_override("font_color", Color(0.6, 0.9, 0.6) if runner.laya.online else Color(1, 0.55, 0.45))

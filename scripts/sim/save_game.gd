@@ -13,6 +13,11 @@ static var pending: Dictionary = {}   # set before reloading the scene; main.gd 
 
 
 static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array = []) -> Error:
+	return write(snapshot(sim, history, chronicle), path)
+
+
+## Everything a save holds, as plain data (copies: safe to write from another thread).
+static func snapshot(sim: Sim, history: Array, chronicle: Array = []) -> Dictionary:
 	var data := {
 		"format": FORMAT, "seed": sim.seed_value, "clock": sim.clock, "stock": sim.stock.duplicate(),
 		"tier": sim.unlocked_tier, "stats": sim.stats.duplicate(true), "next_id": sim._next_id,
@@ -32,11 +37,18 @@ static func save(sim: Sim, history: Array, path: String = PATH, chronicle: Array
 		data["colonists"].append(_colonist(c))
 	for g in sim.graveyard:
 		data["graveyard"].append(_colonist(g))
-	var f := FileAccess.open(path, FileAccess.WRITE)
+	return data
+
+
+## Write a snapshot to disk (whole file first, then swapped in, so a save is never half-written).
+static func write(data: Dictionary, path: String) -> Error:
+	var tmp := path + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		return FileAccess.get_open_error()
 	f.store_string(var_to_str(data))
-	return OK
+	f.close()
+	return DirAccess.rename_absolute(ProjectSettings.globalize_path(tmp), ProjectSettings.globalize_path(path))
 
 
 static func read(path: String = PATH) -> Dictionary:

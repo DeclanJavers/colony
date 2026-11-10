@@ -25,6 +25,15 @@ var talks: ConversationLLM
 
 func _ready() -> void:
 	var args := _parse(OS.get_cmdline_user_args())
+	# Test hooks for measuring (not saved): --pixels fine|chunky|off --talk all|near|quick
+	for k in ["pixels", "talk_mode"]:
+		var arg: String = "talk" if k == "talk_mode" else k
+		if args.has(arg):
+			GameSettings.instance().values[k] = String(args[arg])
+	if args.has("scale3d"):
+		get_viewport().scaling_3d_scale = float(args["scale3d"])
+	if args.has("msaa"):
+		get_viewport().msaa_3d = int(args["msaa"]) as Viewport.MSAA
 	var content := Content.get_instance()
 	var seed_v := int(args.get("seed", str(content.cfg("default_seed", 1234))))
 	var brain := String(args.get("brain", ""))
@@ -107,8 +116,8 @@ func _ready() -> void:
 			cam.focus(view.target_position(people[0]), true)
 			runner.sim.converse(people[0], people[1], String(args["talk"]) if args["talk"] != "1" else "chat")
 
-	# Autosave every morning (not in automated screenshot runs).
-	if not args.has("shot"):
+	# Autosave every morning (not in automated screenshot or timing runs: they'd overwrite yours).
+	if not args.has("shot") and not args.has("perf"):
 		runner.sim.events.hour_passed.connect(func(_d: int, h: int) -> void:
 			if h == 7:
 				runner.autosave())
@@ -124,6 +133,9 @@ func _ready() -> void:
 
 	if args.has("shot"):
 		_take_shot(String(args["shot"]), float(args.get("shot-delay", "2.0")))
+
+	if args.has("perf"):   # test hook: measure frame times for N seconds (vsync off), print PERF {...}, quit
+		_measure_perf(float(args["perf"]), float(args.get("perf-warmup", "3")))
 
 
 ## Test hook (--hunt): the first adult gets a spear, stands a few tiles from a deer, and starts
@@ -189,6 +201,59 @@ func _take_shot(path: String, delay: float) -> void:
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(path)
 	print("screenshot: ", path)
+	get_tree().quit()
+
+
+## Test hook (--perf seconds): with vsync off, record every frame's time and the GPU's render time,
+## then print one PERF json line (fps percentiles, CPU process time, GPU ms, draw calls) and quit.
+func _measure_perf(seconds: float, warmup: float) -> void:
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	var vp := get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp, true)
+	await get_tree().create_timer(warmup).timeout
+	var frames: Array[float] = []
+	var gpu: Array[float] = []
+	var cpu: Array[float] = []
+	var proc: Array[float] = []
+	var draws: Array[float] = []
+	var slow: Array[String] = []
+	var last_clock := runner.sim.clock
+	var t0 := Time.get_ticks_usec()
+	var last := t0
+	while Time.get_ticks_usec() - t0 < int(seconds * 1e6):
+		await RenderingServer.frame_post_draw
+		var now := Time.get_ticks_usec()
+		frames.append((now - last) / 1000.0)
+		last = now
+		gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(vp))
+		cpu.append(RenderingServer.viewport_get_measured_render_time_cpu(vp))
+		proc.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+		draws.append(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
+		if frames[-1] > 16.0:
+			slow.append("%.0fms (sim ticks %d)" % [frames[-1], runner.sim.clock - last_clock])
+		last_clock = runner.sim.clock
+	var pct := func(a: Array[float], q: float) -> float:
+		var b := a.duplicate()
+		b.sort()
+		return b[clampi(int(q * (b.size() - 1)), 0, b.size() - 1)] if not b.is_empty() else 0.0
+	var mean := func(a: Array[float]) -> float:
+		var s := 0.0
+		for v in a:
+			s += v
+		return s / maxf(1.0, a.size())
+	var win := get_window()
+	print("PERF " + JSON.stringify({
+		"frames": frames.size(), "fps_avg": snappedf(frames.size() / seconds, 0.1),
+		"frame_ms_p50": snappedf(pct.call(frames, 0.5), 0.01), "frame_ms_p95": snappedf(pct.call(frames, 0.95), 0.01),
+		"frame_ms_p99": snappedf(pct.call(frames, 0.99), 0.01),
+		"gpu_ms": snappedf(mean.call(gpu), 0.01), "render_cpu_ms": snappedf(mean.call(cpu), 0.01),
+		"process_ms": snappedf(mean.call(proc), 0.01), "draw_calls": snappedf(mean.call(draws), 1.0),
+		"objects": Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME),
+		"window": "%dx%d" % [win.size.x, win.size.y], "scale_3d": get_viewport().scaling_3d_scale,
+		"msaa": get_viewport().msaa_3d, "pop": runner.sim.alive_count(), "zoom": cam.camera.size,
+		"screen": DisplayServer.window_get_current_screen(), "refresh_hz": DisplayServer.screen_get_refresh_rate(DisplayServer.window_get_current_screen())}))
+	print("SLOW %d: %s" % [slow.size(), " | ".join(slow.slice(0, 25))])
 	get_tree().quit()
 
 

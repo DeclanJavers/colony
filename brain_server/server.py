@@ -41,7 +41,10 @@ def agent():
     global _agent
     if _agent is None:
         import laya  # heavy import, only when first needed
+        import torch
 
+        # On the CPU, leave cores for the game (and the chat model): LAYA_THREADS, default 3.
+        torch.set_num_threads(int(os.environ.get("LAYA_THREADS", "3")))
         t = time.time()
         _agent = laya.load(LAYA_MODEL, subfolder=LAYA_SUBFOLDER, device=LAYA_DEVICE)
         _agent_info.update(model=LAYA_MODEL, subfolder=LAYA_SUBFOLDER, device=str(_agent.device),
@@ -66,7 +69,19 @@ def decide_one(ctx: dict) -> dict:
 
     t = time.time()
     with _agent_lock:
-        res = agent().predict(ctx["state_text"], questions)
+        if any("asks" in o for o in opts):
+            # Ask what to do first; ask what to build / who with only if that's the choice (the game
+            # marks which actions need it). Each answer is computed on its own, so this gives the
+            # same answers as asking everything at once, for about a third of the work.
+            res = agent().predict(ctx["state_text"], {"action": questions["action"]})
+            first = res["answers"]["action"]["probabilities"]
+            chosen = label_to_id(opts).get(max(first, key=first.get)) if first else None
+            follow = next((o.get("asks") for o in opts if str(o["id"]) == chosen), None)
+            if follow and follow in questions:
+                more = agent().predict(ctx["state_text"], {follow: questions[follow]})
+                res["answers"].update(more["answers"])
+        else:
+            res = agent().predict(ctx["state_text"], questions)
     ms = (time.time() - t) * 1000.0
     ans = res["answers"]
 

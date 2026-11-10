@@ -204,7 +204,8 @@ func _update_game(delta: float) -> void:
 			node.scale = Vector3.ONE * rng.randf_range(0.9, 1.1)
 			node.rotation.y = rng.randf() * TAU
 			add_child(node)
-			g = {"node": node, "pos": a["pos"], "phase": rng.randf() * TAU}
+			g = {"node": node, "pos": a["pos"], "phase": rng.randf() * TAU,
+				"anim": _anim_of(node), "clip": "", "rest": "graze", "rest_t": rng.randf_range(2.0, 12.0)}
 			_game[id] = g
 		var node: Node3D = g["node"]
 		var was: Vector2 = g["pos"]
@@ -218,10 +219,52 @@ func _update_game(delta: float) -> void:
 			node.rotation.y = lerp_angle(node.rotation.y, atan2(step.x, step.y), clampf(delta * 10.0, 0.0, 1.0))
 		g["phase"] = float(g["phase"]) + delta * (2.0 if a["state"] == "flee" else 1.0)
 		var y := 0.0
-		if moving:
+		var anim := g["anim"] as AnimationPlayer
+		if anim != null:
+			_animate(g, anim, moving, a["state"] == "flee", step.length() / maxf(delta, 0.0001), delta)
+		elif moving:
 			y = absf(sin(float(g["phase"]) * 9.0)) * 0.12 if a["kind"] == "rabbit" else absf(sin(float(g["phase"]) * 5.0)) * 0.03
 		node.visible = sim.is_discovered(Vector2i(now.round()))
 		node.position = Vector3(now.x, y + (view.ground.y_at(now) if view.ground != null else 0.0), now.y)
+
+
+## Rigged animals (the deer, tools/blender/deer.py): run when fleeing and walk when wandering, each
+## sped up to match how fast it's actually going; when resting, mostly grazing, now and then
+## lifting its head to look round.
+const WALK_REF := 0.7     # m/s the walk clip covers at speed 1
+const RUN_REF := 3.4      # m/s the run clip covers at speed 1
+
+
+func _anim_of(node: Node3D) -> AnimationPlayer:
+	var ap := node.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if ap != null:
+		for n in ap.get_animation_list():
+			ap.get_animation(n).loop_mode = Animation.LOOP_LINEAR
+	return ap
+
+
+func _animate(g: Dictionary, ap: AnimationPlayer, moving: bool, fleeing: bool, speed: float, delta: float) -> void:
+	var clip: String
+	var rate := 1.0
+	if moving and fleeing:
+		clip = "run"
+		rate = clampf(speed / RUN_REF, 0.8, 2.5)
+	elif moving:
+		clip = "walk"
+		rate = clampf(speed / WALK_REF, 0.6, 2.5)
+	else:
+		g["rest_t"] = float(g["rest_t"]) - delta
+		if float(g["rest_t"]) <= 0.0:
+			var grazing: bool = g["rest"] == "graze"
+			g["rest"] = "idle" if grazing else "graze"
+			g["rest_t"] = rng.randf_range(3.0, 6.0) if grazing else rng.randf_range(6.0, 16.0)
+		clip = String(g["rest"])
+	if not ap.has_animation(clip):
+		return
+	if clip != g["clip"]:
+		g["clip"] = clip
+		ap.play(clip, 0.25)
+	ap.speed_scale = rate
 
 
 func _fall(node: Node3D) -> void:

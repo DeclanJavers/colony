@@ -6,7 +6,9 @@ does, and **LFM3-1.7B** (a local LLM) lets you talk to any of them. Full design:
 ## Run it
 
 ```bash
-# 1. AI services: Laya brain server (:8765) + LFM3 via llama.cpp (:8766)
+# 1. AI services: Laya brain server (:8765) + LFM3 via llama.cpp (:8766). Laya runs on the CPU
+#    (3 threads) and the chat model on the GPU, the split that keeps the game's frame rate best;
+#    LAYA_DEVICE / LAYA_THREADS / LLM_GPU_LAYERS / LLM_THREADS change it (see run.sh).
 brain_server/run.sh
 
 # 2. Play it. It opens on the title screen: Continue, New game (seed and map options, with the
@@ -23,6 +25,10 @@ brain_server/run.sh
 # 4. Replay logged colonist states through Laya and compare with the baseline
 brain_server/.venv/bin/python tests/smoke_brain.py logs/decisions/<run>.jsonl 30 --chat
 ```
+
+Frame rate: the top bar shows FPS (Settings: Show FPS). `tools/perf.sh 12 --prewarm 30 --zoom 34`
+measures it in a window on screen 0 (vsync off) and prints frame-time percentiles; test runs never
+autosave over your game.
 
 Requirements: Godot 4.6, `uv` (Python 3.12 venv in `brain_server/.venv`), `brew install llama.cpp`,
 LFM3 GGUF at `~/.lmstudio/models/LiquidAI/LFM3-1.7B-GGUF/LFM3-1.7B-QAD-Q4_0.gguf`.
@@ -148,6 +154,9 @@ skeleton, made in place and looped smoothly.
 - **Retarget and export:** `Blender -b -P tools/blender/villager.py -- --out assets/models --bvh assets/anim_src/bvh_v1 --takes tools/animation/takes.json`
   (add `--preview DIR` to render frames for picking takes).
 - **In game:** `ColonistAvatar` plays the clip that matches each action; missing clips fall back to idle or walk.
+- **Deer** are rigged and hand-keyed in `tools/blender/deer.py` (stag, doe, pale doe; idle, graze,
+  walk, run): `Blender -b -P tools/blender/deer.py -- --out assets/models`. `WildlifeView` plays run
+  when fleeing and walk when wandering (sped to match), and grazing with look-rounds at rest.
 
 ## Fine-tuning Laya
 

@@ -53,6 +53,10 @@ func is_walkable(c: Vector2i) -> bool:
 func _refresh_solid(c: Vector2i) -> void:
 	var solid := tile(c) == Tile.WATER or node_at.has(c) or building_at.has(c)
 	astar.set_point_solid(c, solid)
+	version += 1
+
+
+var version := 0     # bumped whenever a cell changes (buildings, nodes, tiles): caches key on it
 
 
 func refresh_cell(c: Vector2i) -> void:

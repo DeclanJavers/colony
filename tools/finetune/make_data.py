@@ -5,7 +5,8 @@ server asks (brain_server/laya_format.py), and the teacher's probabilities as th
 By default the teacher is the hand-made UtilityBrain, so this distils it into Laya; later the
 same script can train on labelled or outcome-filtered logs.
 
-  python tools/finetune/make_data.py --out data_dir --eval-seeds 901,902 logs/decisions/*utility*.jsonl
+  python tools/finetune/make_data.py --out data_dir --eval-seeds 901,902 logs/decisions/*utility*.jsonl*
+  (old logs are gzipped: .jsonl.gz is read the same way)
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ def main() -> None:
     random.seed(0)
     train, evals, seen = [], [], set()
     for path in a.logs:
-        for line in open(path):
+        for line in (gzip.open(path, "rt") if path.endswith(".gz") else open(path)):
             r = json.loads(line)
             if r.get("brain") != a.brain:
                 continue

@@ -24,7 +24,8 @@ var _hover_t := 0.0
 
 var _models: Dictionary = {}       # type -> PackedScene (or null)
 var _variants: Dictionary = {}     # type -> [PackedScene] (type_2, type_3, ...)
-var _nodes: Dictionary = {}        # ResNode id -> Node3D
+var _nodes: Dictionary = {}        # ResNode id -> Node3D (only types with no model file: labelled boxes)
+var _batch := NodeBatch.new()      # every resource node with a model, drawn in a few MultiMeshes
 var _buildings: Dictionary = {}    # Building id -> {root, model, frame, crops, light}
 var _colonists: Dictionary = {}    # Colonist id -> {root, model, label, ring}
 var _fire_lights: Array[OmniLight3D] = []
@@ -50,8 +51,13 @@ func bind(p_sim: Sim, p_camera: Camera3D) -> void:
 	add_child(fog)
 	var wildlife := WildlifeView.new()
 	add_child(wildlife)
+	add_child(_batch)
+	var per_kind := {}
 	for n: ResNode in sim.nodes.values():
-		_add_node(n)
+		var k := _node_kind(n)
+		per_kind[k] = int(per_kind.get(k, 0)) + 1
+	for n: ResNode in sim.nodes.values():
+		_add_node(n, int(per_kind.get(_node_kind(n), 16)))
 	for b: Building in sim.buildings.values():
 		_add_building(b)
 	for c: Colonist in sim.colonists.values():
@@ -123,6 +129,30 @@ func _build_terrain() -> void:
 ## A model by type. Variants (<type>_2.glb, <type>_3.glb...) are picked by `key` (an object id),
 ## so the same tree or house always looks the same.
 func _model(type: String, key: int = 0) -> Node3D:
+	var v := _variant(type, key)
+	var ps: PackedScene = v[0]
+	if ps != null:
+		var inst := ps.instantiate() as Node3D
+		if not (_variants.get(type, []) as Array).is_empty():
+			inst.set_meta("variant", int(v[1]))
+		return inst
+	# Fallback: a box with the type name, so new data-only content still shows up.
+	var root := Node3D.new()
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.8, 0.8, 0.8)
+	mi.mesh = bm
+	mi.position.y = 0.4
+	mi.material_override = _flat_mat(Color.from_hsv(float(type.hash() % 360) / 360.0, 0.5, 0.8))
+	root.add_child(mi)
+	var lbl := _make_label(type, 32)
+	lbl.position.y = 1.1
+	root.add_child(lbl)
+	return root
+
+
+## Which model file a type and key use: [PackedScene or null, variant number (1 = the base model)].
+func _variant(type: String, key: int) -> Array:
 	if not _models.has(type):
 		var path := MODEL_DIR + type + ".glb"
 		_models[type] = load(path) if ResourceLoader.exists(path) else null
@@ -138,24 +168,8 @@ func _model(type: String, key: int = 0) -> Node3D:
 		var k := int(_hash01(key * 97 + 13) * (vs.size() + 1)) % (vs.size() + 1)
 		if k > 0:
 			ps = vs[k - 1]
-		var inst := ps.instantiate() as Node3D
-		inst.set_meta("variant", k + 1)
-		return inst
-	if ps != null:
-		return ps.instantiate() as Node3D
-	# Fallback: a box with the type name, so new data-only content still shows up.
-	var root := Node3D.new()
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.8, 0.8, 0.8)
-	mi.mesh = bm
-	mi.position.y = 0.4
-	mi.material_override = _flat_mat(Color.from_hsv(float(type.hash() % 360) / 360.0, 0.5, 0.8))
-	root.add_child(mi)
-	var lbl := _make_label(type, 32)
-	lbl.position.y = 1.1
-	root.add_child(lbl)
-	return root
+		return [ps, k + 1]
+	return [ps, 1]
 
 
 ## A model by type (with its variants), for other views (wildlife).
@@ -193,11 +207,23 @@ func _hash01(i: int) -> float:
 
 ## ---- Resource nodes ---------------------------------------------------------
 
-func _add_node(n: ResNode) -> void:
+## Which batch a node goes in: its type and model variant ("tree#3"), or "" (no model: a box).
+func _node_kind(n: ResNode) -> String:
+	var v := _variant(n.type, n.id)
+	return "%s#%d" % [n.type, int(v[1])] if v[0] != null else ""
+
+
+func _add_node(n: ResNode, capacity: int = 16) -> void:
+	var rot := _hash01(n.id) * TAU
+	var s := 0.85 + 0.3 * _hash01(n.id * 7)
+	var kind := _node_kind(n)
+	if kind != "":
+		var scene := (_variant(n.type, n.id)[0] as PackedScene).instantiate() as Node3D
+		_batch.add(n.id, kind, scene, Transform3D(Basis(Vector3.UP, rot).scaled(Vector3.ONE * s), at(Vector2(n.cell))), capacity)
+		return
 	var m := _model(n.type, n.id)
 	m.position = at(Vector2(n.cell))
-	m.rotation.y = _hash01(n.id) * TAU
-	var s := 0.85 + 0.3 * _hash01(n.id * 7)
+	m.rotation.y = rot
 	m.scale = Vector3(s, s, s)
 	m.set_meta("base_scale", s)
 	add_child(m)
@@ -205,6 +231,7 @@ func _add_node(n: ResNode) -> void:
 
 
 func _on_node_depleted(n: ResNode) -> void:
+	_batch.remove(n.id)
 	var m: Node3D = _nodes.get(n.id)
 	if m != null:
 		m.queue_free()
@@ -929,6 +956,16 @@ func _snow_roof(model: Node3D, on: bool) -> void:
 
 ## Seasonal tree tops: autumn colours (picked per tree), snow-dusted in winter, natural otherwise.
 func tint_trees(season: String, autumn: Array, winter: Color) -> void:
+	for nid in _batch.ids():
+		var n := sim.nodes.get(nid) as ResNode
+		if n == null or not (n.type == "tree" or n.type == "berry_bush"):
+			continue
+		var col: Variant = null
+		if season == "autumn" and n.type == "tree" and _batch.variant_of(nid) != 3:   # pines stay green
+			col = autumn[int(_hash01(nid * 3) * autumn.size()) % autumn.size()]
+		elif season == "winter":
+			col = winter
+		_batch.set_tint(nid, col)
 	for nid in _nodes:
 		var n := sim.nodes.get(nid) as ResNode
 		var m: Node3D = _nodes[nid]
@@ -958,6 +995,12 @@ func set_fog(is_seen: Callable) -> void:
 
 ## Trees and rocks shrink as they're used up; ones nobody has seen yet stay hidden in the fog.
 func _update_nodes() -> void:
+	for nid in _batch.ids():
+		var n := sim.nodes.get(nid) as ResNode
+		if n == null:
+			continue
+		_batch.set_state(nid, not _fog.is_valid() or bool(_fog.call(n.cell)),
+			0.55 + 0.45 * clampf(n.amount / maxf(n.max_amount, 1.0), 0.0, 1.0))
 	for nid in _nodes:
 		var n := sim.nodes.get(nid) as ResNode
 		var m: Node3D = _nodes[nid]

@@ -26,23 +26,49 @@ static func new_id() -> String:
 
 
 ## Save the colony to a slot, with a thumbnail of what's on screen (if a viewport is given).
-static func save(id: String, sim: Sim, history: Array, chronicle: Array, viewport: Viewport = null, name: String = "") -> Error:
+## background: the colony is copied now, but written (and the thumbnail shrunk and encoded) on a
+## worker thread, so the game doesn't hitch (the morning autosave).
+static func save(id: String, sim: Sim, history: Array, chronicle: Array, viewport: Viewport = null, name: String = "", background: bool = false) -> Error:
 	DirAccess.make_dir_recursive_absolute(DIR)
-	var err := SaveGame.save(sim, history, path_of(id), chronicle)
-	if err != OK:
-		return err
+	var data := SaveGame.snapshot(sim, history, chronicle)
 	var meta := {"id": id, "name": name if name != "" else _default_name(id, sim), "day": sim.day(),
 		"season": sim.season(), "pop": sim.alive_count(), "tier": sim.unlocked_tier, "seed": sim.seed_value,
 		"saved_at": int(Time.get_unix_time_from_system())}
-	var f := FileAccess.open(DIR + id + ".json", FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify(meta))
-	if viewport != null:
-		var img := viewport.get_texture().get_image()
+	var img: Image = viewport.get_texture().get_image() if viewport != null else null
+	var job := func() -> Error:
+		var err := SaveGame.write(data, path_of(id))
+		if err != OK:
+			return err
+		var f := FileAccess.open(DIR + id + ".json", FileAccess.WRITE)
+		if f != null:
+			f.store_string(JSON.stringify(meta))
 		if img != null:
 			img.resize(320, 180, Image.INTERPOLATE_LANCZOS)
 			img.save_png(thumb_of(id))
-	return OK
+		return OK
+	if background:
+		finish_background()          # (one at a time)
+		_task = WorkerThreadPool.add_task(job, false, "autosave")
+		return OK
+	finish_background()
+	return job.call()
+
+
+static var _task := -1     # the background save being written, or -1
+
+
+## Godot needs every worker task waited on once it's done (or the game crashes when it quits).
+## The game calls this each frame (cheap: only waits when it's finished) and before leaving.
+static func poll_background() -> void:
+	if _task >= 0 and WorkerThreadPool.is_task_completed(_task):
+		finish_background()
+
+
+## Wait for a background save to finish (it takes a fraction of a second).
+static func finish_background() -> void:
+	if _task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_task)
+		_task = -1
 
 
 static func _default_name(id: String, sim: Sim) -> String:

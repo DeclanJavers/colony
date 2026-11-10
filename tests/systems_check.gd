@@ -138,7 +138,7 @@ func _meetings_and_story() -> void:
 	sim.events.week_summarized.connect(func(w: Dictionary) -> void: weeks.append(w))
 	var saved_mid := {}
 	# (Two weeks: a meeting nobody can come to, say everyone's asleep, isn't held; the next one is.)
-	while sim.clock < 15.5 * 1440.0 and (held.is_empty() or saved_mid.is_empty()):
+	while sim.clock < 15.5 * 1440.0 and (held.is_empty() or saved_mid.is_empty() or weeks.is_empty()):
 		sim.tick(1.0)
 		if saved_mid.is_empty() and not sim.meetings.current.is_empty() and not bool(sim.meetings.current["talked"]):
 			SaveGame.save(sim, [], "user://test_mid_meeting.tres")

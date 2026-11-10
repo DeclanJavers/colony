@@ -724,24 +724,6 @@ def rabbit(fur="#9C8064"):
     blob("eye", 0.012, (-0.04, -0.15, 0.19), M("iron"), sub=1)
 
 
-def deer(antlers=True):
-    m = mat("fur_deer", "#A0683A")
-    light = mat("fur_deer_light", "#D9B98C")
-    blob("body", 0.2, (0, 0.02, 0.58), m, sub=2, scale=(0.8, 1.6, 0.85))
-    blob("belly", 0.15, (0, 0.03, 0.5), light, sub=1, scale=(0.75, 1.5, 0.6))
-    beam("neck", (0, -0.22, 0.62), (0, -0.32, 0.88), 0.09, m)
-    blob("head", 0.08, (0, -0.37, 0.92), m, sub=2, scale=(0.9, 1.4, 0.9))
-    for x in (-0.05, 0.05):
-        box("ear", (0.03, 0.02, 0.07), (x, -0.33, 1.0), m, rot=(0, 0.5 * (1 if x > 0 else -1), 0))
-    for i, (x, y) in enumerate([(-0.08, -0.2), (0.08, -0.2), (-0.08, 0.22), (0.08, 0.22)]):
-        beam("leg_%d" % i, (x, y, 0.45), (x, y, 0.02), 0.045, m)
-    blob("tail", 0.04, (0, 0.33, 0.66), light, sub=1)
-    if antlers:
-        for s in (-1, 1):
-            beam("antler", (s * 0.03, -0.35, 0.99), (s * 0.12, -0.32, 1.2), 0.02, M("sack"))
-            beam("antler", (s * 0.1, -0.33, 1.13), (s * 0.06, -0.42, 1.26), 0.018, M("sack"))
-
-
 def bird(col="#6B4F3A"):
     m = mat("feather_" + col, col)
     blob("body", 0.05, (0, 0, 0.0), m, sub=1, scale=(0.9, 1.4, 0.8))
@@ -789,7 +771,7 @@ MODELS = {
     "rock": rock, "rock_2": rock_2, "rock_3": rock_3, "berry_bush": berry_bush,
     "sticks": sticks, "pebbles": pebbles,
     "rabbit": lambda: rabbit("#9C8064"), "rabbit_2": lambda: rabbit("#B7A58C"), "rabbit_3": lambda: rabbit("#6E5A4A"),
-    "deer": lambda: deer(True), "deer_2": lambda: deer(False), "deer_3": lambda: deer(False),
+    # (deer, deer_2, deer_3 are rigged and animated: tools/blender/deer.py)
     "bird": lambda: bird("#6B4F3A"), "bird_2": lambda: bird("#3F5E8C"), "bird_3": lambda: bird("#A8452F"),
     "fish": fish,
     "meeting_hall": lambda: meeting_hall(3, 1), "meeting_hall_lv2": lambda: meeting_hall(4, 2),

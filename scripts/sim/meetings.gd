@@ -277,7 +277,7 @@ func _wishes(p: Colonist, meeting: Dictionary, ids: Dictionary) -> Array:
 		add.call("gather_wood")
 		add.call("farm")
 	for res in ["stone", "wood", "food"]:
-		if p.knowledge.usable_places_of(_node_for(res), p.cell, sim.clock, res == "food").is_empty():
+		if not p.knowledge.has_usable(_node_for(res), sim.clock, res == "food"):
 			add.call("explore")
 	return out
 

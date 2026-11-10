@@ -93,13 +93,13 @@ func places_phrase(sim: Sim, c: Colonist) -> String:
 	for t in sim.content.nodes:
 		var d: Dictionary = sim.content.nodes[t]
 		var res := String(d.get("resource", t))
-		var usable := c.knowledge.usable_places_of(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0)
-		if usable.size() < c.knowledge.places_of(t, c.cell).size():
+		var u := c.knowledge.usable_summary(t, c.cell, sim.clock, float(d.get("regrow_per_hour", 0)) > 0.0)
+		if int(u["usable"]) < int(u["known"]):
 			spent[res] = true
-		for p in usable:
+		if int(u["usable"]) > 0:
 			var e: Dictionary = by_res.get(res, {"n": 0, "d": INF})
-			e["n"] = int(e["n"]) + 1
-			e["d"] = minf(float(e["d"]), float(p["d"]))
+			e["n"] = int(e["n"]) + int(u["usable"])
+			e["d"] = minf(float(e["d"]), float(u["nearest"]))
 			by_res[res] = e
 	var out: PackedStringArray = []
 	for t in sim.content.nodes:

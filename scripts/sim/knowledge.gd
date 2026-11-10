@@ -22,7 +22,13 @@ const STOCK_KEYS := ["food", "water", "wood", "stone"]
 
 var owner_id: int = 0
 var facts: Dictionary = {}     # key -> {v: float, t: float, src: "seen"|"heard", from: String}
-var places: Dictionary = {}    # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from, amt}
+var places: Dictionary = {}:   # resource node id -> {type, cell: Vector2i, t, src: "seen"|"heard", from, amt}
+	set(v):
+		places = v
+		_by_type.clear()
+		_indexed = false
+var _by_type: Dictionary = {}  # type -> {node id: true}: the same places, grouped (rebuilt when replaced)
+var _indexed := false
 var seen := PackedByteArray()  # land this colonist has seen with their own eyes (y * size + x)
 var roles: Dictionary = {}     # colonist id -> skill id they're known for (as last heard or seen)
 var game: Dictionary = {}      # animal kind -> last sighting {cell: Vector2i, t, src: "seen"|"heard", from, n}
@@ -101,6 +107,7 @@ func uncertainty(now: float) -> float:
 ## `amount`: how much they saw there (-1 = didn't notice).
 func see_place(node_id: int, type: String, cell: Vector2i, now: float, amount: float = -1.0) -> void:
 	places[node_id] = {"type": type, "cell": cell, "t": now, "src": "seen", "from": "", "amt": amount}
+	_index_add(node_id, type)
 
 
 ## Told where something is (and roughly how much the teller remembers there). Fresher news replaces
@@ -110,6 +117,7 @@ func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, fro
 		return false
 	var is_new := not places.has(node_id)
 	places[node_id] = {"type": type, "cell": cell, "t": t_source, "src": "heard", "from": from, "amt": amount}
+	_index_add(node_id, type)
 	return is_new
 
 
@@ -117,12 +125,55 @@ func hear_place(node_id: int, type: String, cell: Vector2i, t_source: float, fro
 ## they don't know how much), or it regrows and they last saw it long enough ago.
 func usable_places_of(type: String, from: Vector2i, now: float, regrows: bool) -> Array:
 	# (Callers that care whether they can work it with what they carry check the tool themselves.)
-	return places_of(type, from).filter(func(p: Dictionary) -> bool:
-		var e: Dictionary = places[p["id"]]
-		if float(e.get("blocked_until", -1.0)) > now:
-			return false     # they found they couldn't get there
-		var amt := float(e.get("amt", -1.0))
-		return amt < 0.0 or amt >= 1.0 or (regrows and (now - float(e["t"])) / 60.0 > 24.0))
+	return places_of(type, from).filter(func(p: Dictionary) -> bool: return _usable(places[p["id"]], now, regrows))
+
+
+func _usable(e: Dictionary, now: float, regrows: bool) -> bool:
+	if float(e.get("blocked_until", -1.0)) > now:
+		return false     # they found they couldn't get there
+	var amt := float(e.get("amt", -1.0))
+	return amt < 0.0 or amt >= 1.0 or (regrows and (now - float(e["t"])) / 60.0 > 24.0)
+
+
+## Is there anywhere of this type worth going to? (usable_places_of without the list.)
+func has_usable(type: String, now: float, regrows: bool) -> bool:
+	for nid in _ids_of(type):
+		if _usable(places[nid], now, regrows):
+			return true
+	return false
+
+
+## {usable: how many, nearest: tiles to the nearest usable one (INF if none), known: how many in all}.
+func usable_summary(type: String, from: Vector2i, now: float, regrows: bool) -> Dictionary:
+	var n := 0
+	var known := 0
+	var best := INF
+	for nid in _ids_of(type):
+		var e: Dictionary = places[nid]
+		known += 1
+		if _usable(e, now, regrows):
+			n += 1
+			best = minf(best, Vector2(e["cell"] - from).length())
+	return {"usable": n, "nearest": best, "known": known}
+
+
+func knows_type(type: String) -> bool:
+	return not _ids_of(type).is_empty()
+
+
+func _ids_of(type: String) -> Array:
+	if not _indexed:
+		_by_type.clear()
+		for nid in places:
+			_index_add(nid, String(places[nid]["type"]))
+		_indexed = true
+	return (_by_type.get(type, {}) as Dictionary).keys()
+
+
+func _index_add(nid: int, type: String) -> void:
+	if not _by_type.has(type):
+		_by_type[type] = {}
+	_by_type[type][nid] = true
 
 
 ## They tried and couldn't get there (cut off by water or buildings): not worth heading for
@@ -133,6 +184,9 @@ func block_place(node_id: int, until: float) -> void:
 
 
 func forget_place(node_id: int) -> void:
+	if places.has(node_id):
+		var g: Dictionary = _by_type.get(String(places[node_id]["type"]), {})
+		g.erase(node_id)
 	places.erase(node_id)
 
 
@@ -143,11 +197,18 @@ func knows_place(node_id: int) -> bool:
 ## Known places of a type, nearest first: [{id, cell, d}].
 func places_of(type: String, from: Vector2i) -> Array:
 	var out := []
-	for nid in places:
+	var ids := _ids_of(type)
+	assert(ids.size() < 8192)
+	var keys := PackedFloat64Array()
+	keys.resize(ids.size())
+	for i in ids.size():
+		var p: Dictionary = places[ids[i]]
+		keys[i] = Vector2(p["cell"] - from).length_squared() * 8192.0 + i
+	keys.sort()     # native sort on distance (ties in list order): much faster than sort_custom
+	for k in keys:
+		var nid: int = ids[int(k) % 8192]
 		var p: Dictionary = places[nid]
-		if p["type"] == type:
-			out.append({"id": nid, "cell": p["cell"], "d": Vector2(p["cell"] - from).length()})
-	out.sort_custom(func(a, b) -> bool: return a["d"] < b["d"])
+		out.append({"id": nid, "cell": p["cell"], "d": Vector2(p["cell"] - from).length()})
 	return out
 
 
