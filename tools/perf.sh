@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 log="$(mktemp -t colony_perf)"
 tag="perf$$"
 perl -e "alarm ${PERF_TIMEOUT:-90}; exec @ARGV" open -W -g -n -a /Applications/Godot.app --stdout "$log" --stderr "$log" \
-  --args --path "$PWD" --screen "${SCREEN:-0}" -- "$@" --perf "$secs" --perf-tag "$tag" || {
+  --args --path "$PWD" --screen "${SCREEN:-0}" ${GODOT_ARGS:-} -- "$@" --perf "$secs" --perf-tag "$tag" || {
   pkill -f -- "--perf-tag $tag" 2>/dev/null || true
   echo "perf.sh: timed out" >&2
 }

@@ -6,7 +6,7 @@ extends RefCounted
 ##              "quick" never use the chat model: colonists just exchange facts
 ##   names:     "auto" (when zoomed in / hovered / selected) | "always" | "never"
 ##   bubbles:   show speech bubbles
-##   pixels:    "fine" | "chunky" | "off" (how big the pixel-art pixels are; see docs/STYLE.md)
+##   pixels:    "fine" | "chunky" | "off" (art pixels per tile: 16 / 10 / none; see docs/STYLE.md)
 ##   fps:       show the frame rate in the top bar
 
 signal changed(key: String, value: Variant)

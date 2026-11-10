@@ -405,10 +405,15 @@ func _process(delta: float) -> void:
 		var root: Node3D = e["root"]
 		var model: Node3D = e["model"]
 		var target: Vector3 = at(c.pos) + (_nudge.get(cid, Vector3.ZERO) as Vector3)
+		var sleeping := c.action != null and c.action.phase == "sleeping"
+		# Asleep at home: they're inside, so their badge and name sit over the house (not on the
+		# doorstep with nobody under them); on waking they come back out of the door.
+		var home := sim.buildings.get(c.home_id) as Building if sleeping and c.action.get("where") == "at home" else null
+		if home != null:
+			target = at(home.center()) + (_nudge.get(cid, Vector3.ZERO) as Vector3) * 0.5
 		var move := target - root.position
 		var before := root.position
 		root.position = root.position.lerp(target, follow)
-		var sleeping := c.action != null and c.action.phase == "sleeping"
 		var avatar := model as ColonistAvatar
 		if avatar != null:
 			avatar.update_for(c, (root.position - before).length() / maxf(delta, 0.0001))
@@ -445,7 +450,7 @@ func _process(delta: float) -> void:
 		var names_mode := String(GameSettings.get_value("names"))
 		var show_name: bool = names_mode == "always" or (names_mode == "auto" and (camera.size < NAME_ZOOM or c == selected or InspectText.same(c, _hover)))
 		over.visible = not in_hall or c == selected     # inside the hall: the hall's own label says who's there
-		over.position.y = 0.75 if sleeping else (1.3 * s + 0.12)
+		over.position.y = (2.5 if home != null else 0.75) if sleeping else (1.3 * s + 0.12)
 		if show_name and not _name_room(c, root):
 			show_name = false     # another name is already there on screen
 		over.update_for(c, show_name, delta)
@@ -1125,11 +1130,15 @@ static func describe_short(t: Variant) -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var t: Variant = pick(event.position)
-		select_target(t)
-		if event.double_click and t is Colonist:
-			follow_requested.emit(t)
+	# Select on release, unless the press turned into a drag of the map (IsoCamera).
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed and event.double_click:
+			var t: Variant = pick(event.position)
+			if t is Colonist:
+				select_target(t)
+				follow_requested.emit(t)
+		elif not event.pressed and not IsoCamera.left_dragged:
+			select_target(pick(event.position))
 	elif event is InputEventMouseMotion:
 		_hover = pick(event.position)
 		hovered.emit(_hover, event.position)

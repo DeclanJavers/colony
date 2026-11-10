@@ -1,7 +1,9 @@
 class_name IsoCamera
 extends Node3D
 ## Orthographic isometric camera rig.
-##   WASD / arrows / right- or middle-drag: pan    Wheel: zoom    Q / E: rotate 90°    F: focus selection
+##   Drag (left, right or middle) / WASD / arrows / two-finger swipe: pan
+##   Wheel / pinch: zoom    Q / E: rotate 90°    F: focus selection
+## A left press only becomes a drag once it moves a few pixels, so clicks still select things.
 
 const PITCH_DEG := -35.264   # true isometric
 const MIN_SIZE := 6.0
@@ -14,6 +16,12 @@ var _pitch := Node3D.new()
 var _yaw_target := deg_to_rad(45.0)
 var _size_target := 18.0
 var _dragging := false
+var _left_down := false
+var _left_from := Vector2.ZERO
+const DRAG_START_PX := 6.0
+const PAN_GESTURE_PX := 20.0      # screen pixels per unit of trackpad swipe
+## The current left press has turned into a drag (WorldView doesn't select on its release).
+static var left_dragged := false
 var _glide: Variant = null      # Vector3 the camera is gliding to
 var follow_node: Node3D = null    # when set, the camera glides after it (any manual pan stops it)
 
@@ -38,6 +46,16 @@ func focus(p: Vector3, instant := false) -> void:
 		_glide = null
 	else:
 		_glide = Vector3(p.x, 0, p.z)
+
+
+## Move as if the ground were dragged by `rel` screen pixels (vertical is foreshortened by the pitch).
+func _drag_by(rel: Vector2) -> void:
+	follow_node = null
+	_glide = null
+	var ax := _ground_axes()
+	var px_to_world := camera.size / float(get_viewport().get_visible_rect().size.y)
+	position -= ax[0] * rel.x * px_to_world
+	position += ax[1] * rel.y * px_to_world / sin(deg_to_rad(-PITCH_DEG))
 
 
 func _ground_axes() -> Array[Vector3]:
@@ -88,14 +106,21 @@ func _unhandled_input(event: InputEvent) -> void:
 				_size_target = clampf(_size_target * 1.1, MIN_SIZE, MAX_SIZE)
 			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
 				_dragging = event.pressed
-	elif event is InputEventMouseMotion and _dragging:
-		follow_node = null
-		_glide = null
-		var ax := _ground_axes()
-		var px_to_world := camera.size / float(get_viewport().get_visible_rect().size.y)
-		# Moving the mouse drags the ground with it; vertical motion is foreshortened by the pitch.
-		position -= ax[0] * event.relative.x * px_to_world
-		position += ax[1] * event.relative.y * px_to_world / sin(deg_to_rad(-PITCH_DEG))
+			MOUSE_BUTTON_LEFT:
+				_left_down = event.pressed
+				if event.pressed:
+					_left_from = event.position
+					left_dragged = false
+	elif event is InputEventMouseMotion and _left_down and not left_dragged \
+			and event.position.distance_to(_left_from) > DRAG_START_PX:
+		left_dragged = true
+		_drag_by(event.position - _left_from)
+	elif event is InputEventMouseMotion and (_dragging or left_dragged and _left_down):
+		_drag_by(event.relative)
+	elif event is InputEventPanGesture:        # trackpad: two-finger swipe
+		_drag_by(-event.delta * PAN_GESTURE_PX)
+	elif event is InputEventMagnifyGesture:    # trackpad: pinch
+		_size_target = clampf(_size_target / maxf(event.factor, 0.01), MIN_SIZE, MAX_SIZE)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_Q:

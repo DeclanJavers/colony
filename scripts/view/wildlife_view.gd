@@ -18,7 +18,6 @@ var rng := RandomNumberGenerator.new()
 var _animals: Array = []      # birds: {kind, node, pos: Vector2, target: Vector2, state, timer, speed, flee, phase, y}
 var _game: Dictionary = {}    # sim animal id -> {node, pos: Vector2 (as drawn), phase}
 var _fish_t := 3.0
-var _ripple_t := 0.0
 var _ripples: Array[MeshInstance3D] = []
 var _butterflies: GPUParticles3D
 var _fireflies: GPUParticles3D
@@ -403,14 +402,7 @@ func _update_ambient(delta: float) -> void:
 		var c := _water_near(focus, ext)
 		if c.x >= 0 and sim.is_discovered(c) and season != "winter":
 			_fish_jump(c, false)
-	# Rain makes rings on the water.
-	if wet:
-		_ripple_t -= delta
-		if _ripple_t <= 0.0:
-			_ripple_t = 0.08 if sim.weather == "storm" else 0.15
-			var c := _water_near(focus, ext)
-			if c.x >= 0:
-				_ripple(Vector3(c.x + rng.randf_range(-0.45, 0.45), 0.03, c.y + rng.randf_range(-0.45, 0.45)), 0.5)
+	# (No rain rings on the water: rain isn't drawn, see SeasonView.)
 
 
 func _water_near(focus: Vector3, ext: float) -> Vector2i:

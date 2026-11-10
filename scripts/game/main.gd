@@ -132,7 +132,10 @@ func _ready() -> void:
 		_inspect_for_test(String(args["inspect"]))
 
 	if args.has("shot"):
-		_take_shot(String(args["shot"]), float(args.get("shot-delay", "2.0")))
+		if args.has("shot-zooms"):   # test hook: one screenshot per zoom, <shot>_<zoom>.png, in one run
+			_take_zoom_shots(String(args["shot"]), String(args["shot-zooms"]), float(args.get("shot-delay", "2.0")))
+		else:
+			_take_shot(String(args["shot"]), float(args.get("shot-delay", "2.0")))
 
 	if args.has("perf"):   # test hook: measure frame times for N seconds (vsync off), print PERF {...}, quit
 		_measure_perf(float(args["perf"]), float(args.get("perf-warmup", "3")))
@@ -192,6 +195,20 @@ func _inspect_for_test(what: String) -> void:
 	var pos: Variant = view.target_position(t)
 	if pos != null:
 		cam.focus(pos, true)
+
+
+func _take_zoom_shots(path: String, zooms: String, delay: float) -> void:
+	await get_tree().create_timer(delay).timeout
+	runner.set_speed_index(0)
+	for z in zooms.split(","):
+		cam._size_target = float(z)
+		cam.camera.size = float(z)
+		for i in 4:
+			await RenderingServer.frame_post_draw
+		var out := path.get_basename() + "_" + z + ".png"
+		get_viewport().get_texture().get_image().save_png(out)
+		print("screenshot: ", out)
+	get_tree().quit()
 
 
 func _take_shot(path: String, delay: float) -> void:

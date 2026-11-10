@@ -26,6 +26,8 @@ brain_server/run.sh
 brain_server/.venv/bin/python tests/smoke_brain.py logs/decisions/<run>.jsonl 30 --chat
 ```
 
+The UI scales with the window, so full screen is the same layout, larger; full screen renders the
+3D world at half resolution (the pixel art doesn't need more), which keeps it above 120 fps.
 Frame rate: the top bar shows FPS (Settings: Show FPS). `tools/perf.sh 12 --prewarm 30 --zoom 34`
 measures it in a window on screen 0 (vsync off) and prints frame-time percentiles; test runs never
 autosave over your game.
@@ -89,12 +91,14 @@ weighed for its last choice.
 | Key / button | What it does |
 |---|---|
 | Click anything | Inspect it: colonists, buildings, sites, farms, trees, rocks, graves, ground |
+| Drag, two-finger swipe, `WASD` | Move the camera (a click that doesn't move still selects) |
+| Wheel, pinch | Zoom; `Q` / `E` turn the view |
 | `C` / Colony | Colony overview: trends, stock, next tier, buildings, people, history |
 | `Tab` / `Shift+Tab` | Next / previous colonist |
 | `F` / double-click | Follow the selected colonist |
 | `Space`, `1` `2` `3` | Pause, 1x / 3x / 10x speed |
 | `F5` / `F9` | Save to this game's slot / load the latest save (an autosave is made every morning) |
-| Settings | Who writes conversations (chat model for all / on-screen only / quick), names, speech bubbles |
+| Settings | Who writes conversations (chat model for all / on-screen only / quick), names, speech bubbles, pixel size, FPS |
 | `Esc` | Close the panel; with nothing open, the pause menu (Resume, Save, Load, Main menu, Quit) |
 
 **What you see on screen:**

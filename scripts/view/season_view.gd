@@ -112,8 +112,7 @@ func _process(_delta: float) -> void:
 			p.emission_box_extents = Vector3(ext, 0.5, ext)
 			p.global_position = focus + Vector3(0, 7.5, 0)
 	var w := sim.weather
-	_rain.emitting = w == "rain" or w == "storm"
-	var want := 1200 if w == "storm" else 700
-	if _rain.amount != want:          # setting amount restarts the particles, so only on change
-		_rain.amount = want
+	# No falling rain drawn (it made the view busy and felt like it never stopped). Rainy weather
+	# still matters in the sim (water, work, colonists talk about it) and shows in the top bar.
+	_rain.emitting = false
 	_snow.emitting = w == "snow"

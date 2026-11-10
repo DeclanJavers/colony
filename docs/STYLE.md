@@ -21,11 +21,14 @@ We build in 3D (Godot) and make it read as pixel art:
 2. **Flat colours from the palette below.** No photo textures, no gradients baked into models, at
    most a base and a darker accent per material. Light and shadow come from the renderer.
 3. **The pixel pass** (`scripts/view/pixel_pass.gd` + `.gdshader`) draws the world in big pixels
-   (2 screen px by default; Settings → Pixels: fine 2, chunky 3, smooth 1), puts dark outlines where
+   that belong to the world, like classic pixel art: one art pixel is 1/16 of a tile (the size of a
+   ground texel, so models and ground match), so they grow when you zoom in and shrink when you zoom
+   out (Settings → Pixels: fine 16 per tile, chunky 10, smooth off). It puts dark outlines where
    a shape ends against something further away, adds a softer line where surfaces meet at an angle,
    and applies the night grade. Colour banding is available (`bands`) but off: flat palette colours
    already band. Judge assets *through* the pixel pass in game, never in Blender.
-4. **Text, icons, speech bubbles, smoke, rain and snow stay sharp.** They draw after the pixel pass.
+4. **Text, icons, speech bubbles, smoke and snow stay sharp.** They draw after the pixel pass.
+   (Rain isn't drawn: it made the view busy. Rainy weather shows in the top bar.)
 
 ## Palette
 
