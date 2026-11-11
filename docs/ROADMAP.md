@@ -277,7 +277,7 @@ inspector and traffic lens: 261 fps average.
 - **Not done (needs you):** the local LLM (llama.cpp needs a model download), so chat and
   speaking use only their code rungs. Medium and High wait for M9's models.
 
-## M9: Brains II (distilled models and the arena) (in progress)
+## M9: Brains II (distilled models and the arena) (partly done; the rest after M10)
 
 - **`colony-run export`:** datasets from traces, with held-out seeds.
 - **Experiment A, the scorer:** trained on subagent traces, run natively. Compare agreement, speed
@@ -296,38 +296,51 @@ inspector and traffic lens: 261 fps average.
 - **played:** the Arena ledger makes the differences between brains clear at a glance.
 
 **So far (2026-11-11):**
-- **The scorer** (`crates/brains/src/scorer.rs`) is trained in Rust by `colony-run train`
-  (section 9 of ARCHITECTURE.md says why).
-  - **Speed:** about 73 µs per decision.
-  - **Trained on rules** (38k decisions from 10 seeds): it picks the teacher's option 72% of the
-    time on held-out seeds.
-- **The arena** (`colony-run arena`), seeds 1 to 3, 48 days, scorer trained on rules:
+- **The scorer** (`crates/brains/src/scorer.rs`) is trained in Rust (section 9 of ARCHITECTURE.md
+  says why).
+  - **Speed:** about 140 µs per decision.
+  - **v1** learned from rules colonies only (`colony-run train`). It agreed with rules 72% of
+    the time on held-out seeds, but only 54% in play: its own mistakes took it into situations
+    the training data never showed, and it harvested a third of the grain.
+  - **v3** is distilled by `colony-run distill`. Round 0 learns from rules colonies (seeds 1 to
+    12, 48 days); in each later round the scorer runs the colonies itself and the rules brain
+    says what it would have done in every situation the scorer got into. The model also gained
+    per-kind option weights, plain minutes, and "knee" versions of amounts (food_days and the
+    like), which is how the rules weigh them. Round 1's model (`scorer@rules-v3-r1`) plays best.
+- **The arena** (`colony-run arena`), on 30 seeds no brain trained on (43 to 72), 48 days:
 
-  | Brain | Alive | Died of hunger, thirst or cold | Grain | Things made | Hobbies |
-  |---|---|---|---|---|---|
-  | rules | 18.3 | 0 | 468 | 20.7 | 8.3 |
-  | scorer@rules-v1 | 16.7 | 2.7 | 166 | 12.7 | 1.7 |
+  | Brain | Alive | Died of hunger, thirst or cold | Grain | Things made | Hobbies | Agrees with rules |
+  |---|---|---|---|---|---|---|
+  | rules | 17.1 | 0.3 | 495 | 19.4 | 8.3 | 100% |
+  | scorer@rules-v1 | 17.0 | 0.7 | 175 | 13.2 | 3.7 | 54% |
+  | scorer@rules-v3-r1 | 17.0 | 0.0 | 423 | 15.4 | 7.0 | 74% |
 
-  It agrees with rules only 54% of the time in play. Its own mistakes take it into situations
-  the training data never showed.
+  v3 keeps colonies alive as well as rules, and gets 85% of the grain, 79% of the things made
+  and 84% of the hobbies. The report also lists where each brain parts from rules most; for v3
+  the biggest is resting or talking when rules would sing (about 1% of decisions each).
 - **Branching:** `colony-run fork` makes a branch whose chance events go their own way.
 - **Export:** `colony-run export` writes `features.jsonl` and `text.jsonl`, each row marked train
   or held-out by seed. 512 Haiku decisions are in `brain/data/haiku`.
-- **The Arena ledger** in game (developer view: the Arena button) shows the last report as bars.
-- **The beauty question** (`--beauty-off`): with beauty not mattering, rules colonies still make
-  24 things each and scorer colonies 13. Both make them for the fun of it.
-- **Still to do:**
+- **The Arena ledger** in game (developer view: the Arena button) shows the last report as bars,
+  and where each brain parts from rules.
+- **The beauty question** (`--beauty-off`, seeds 43 to 52): with beauty not mattering, rules
+  colonies still make 20 things each and v3 colonies 16. Both make them for the fun of it.
+- **Still to do, after M10** (you chose on 2026-11-11 to finish the base first):
   - the text model (Colab);
   - the Laya adapter;
-  - a scorer trained on Haiku, compared in the arena with Haiku colonies.
+  - a scorer trained on Haiku, compared in the arena with Haiku colonies (it needs more Haiku
+    decisions, on your plan). Until then the "about as well as the subagent's" check is measured
+    against rules instead.
 
-## M10: Finishing the base
+## M10: Finishing the base (done, signed off 2026-11-11)
+
+Started 2026-11-11, before M9's last parts (the base comes first).
 
 - **The other ledgers:** Society, Economy (stock only), Knowledge, Map.
 - **God tool: gift** (food, materials, a building).
 - **Polish:** settings, main menu, new world (seed, size, packs: none yet, beauty switch),
   save slots, a lower-power preset.
-- **Audio** basics (optional here, or later).
+- ~~**Audio** basics (optional here, or later).~~ Moved to LATER.md (your call, 2026-11-11).
 - **The pack interface,** proven by moving one small system (e.g. hunting) behind it without
   changing behaviour.
 - **A blind playthrough** by a fresh agent, plus your own.
@@ -337,3 +350,30 @@ inspector and traffic lens: 261 fps average.
 - **measured:** all tests green, the performance budgets met, and hunting works the same as a
   pack;
 - **played:** you sign off the base, and the first expansion is chosen from LATER.md.
+
+**So far (2026-11-11):**
+- **Gift** (the god toolbar): food and materials into the stores, or a finished shelter, house
+  or storehouse near the camp (`crates/sim/tests/gifts.rs`).
+- **The ledgers:** Society, Economy, Knowledge and Map, beside History and Arena under one
+  Ledgers button.
+- **Menus and saves:** main and pause menus, a new world (seed, size, beauty, packs), five save
+  slots and an autosave, and settings (the lower-power preset, text size, full screen). Tested
+  in the real window by driving it (`colony --drive`).
+- **The pack interface:** hunting moved behind it with no change at all. The behaviour digest
+  for seeds 1 to 3 over 48 days (with 2, 5 and 3 animals hunted) is identical before and after,
+  and so are the arena's numbers for every seed (43 to 47, rules and scorer).
+- **Also:** song bubbles draw a music note (the fonts have none); the save format is 6.
+- **Blind playthrough 1** (`docs/playtests/blind-01.md`): a fresh agent played two seasons
+  through the real window. Its verdict: "worth an evening to watch, not yet to play". Fixed
+  since:
+  - losing the world on a load (it's kept as "Your previous world");
+  - god tools waiting for time to run;
+  - speaking with no reply or sign it worked;
+  - no way to find someone (names now move the camera; Follow; the lenses list who's low);
+  - developer surfaces shown to players;
+  - the bottom bar under the inspector, and the wording slips.
+
+  Its "clicks land at 1.2x" turned out to be its own coordinate conversion from scaled
+  screenshots, so the driver's shots now come at point size. Its screenshots dying was real:
+  a covered window gave no image, and the UI lost its new glyphs; both are fixed.
+- **Signed off** 2026-11-11. Audio moved to LATER.md; a second blind playtest is optional.

@@ -222,8 +222,8 @@ impl RulesBrain {
                     Kind::Sow { .. } => 0.45 + 0.3 * (1.0 - req.s("food_days") / 6.0).clamp(0.0, 1.0) - 0.6 * sleepy,
                     Kind::Tend { .. } => 0.15 + 0.8 * o.f("weeds") * (1.0 - o.f("growth")).max(0.2) - 0.6 * sleepy,
                     Kind::Harvest { .. } => 0.6 - 0.6 * sleepy,
-                    Kind::MakeSpear => 0.12 + 0.2 * o.f("game_known") - 0.15 * o.f("spears") - 0.6 * sleepy,
-                    Kind::Hunt { .. } => 0.12 + 0.1 * curiosity + 0.15 * o.f("skill") - 0.8 * sleepy,
+                    // What packs add (pack.rs): the pack weighs its own actions.
+                    Kind::Pack { pack, act, .. } => crate::pack::get(*pack).rules_score(*act, o, req),
                     // Free time (M7): what suits them, their hobbies, and (when beauty matters)
                     // somewhere lovely. Not while food is short.
                     Kind::Leisure { .. } => {

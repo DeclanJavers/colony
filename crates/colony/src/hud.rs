@@ -12,6 +12,11 @@ use ui::{Font, Rect, Text, Ui};
 
 use crate::view::Pick;
 
+mod ledgers;
+mod menu;
+pub use ledgers::Ledger;
+pub use menu::Menu;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
     Mind,
@@ -103,6 +108,19 @@ pub enum Action {
     Command(sim::Command),
     /// Change the AI budget.
     SetAi(Ai),
+    /// Move the camera to look at this spot (tiles), from the Map ledger.
+    Look((f32, f32)),
+    /// Keep the camera on someone (or stop).
+    Follow(Option<PersonId>),
+    // Menus (M10)
+    OpenMenu(Menu),
+    /// Close the menu and carry on.
+    CloseMenu,
+    NewWorld { seed: u64, size: u32, beauty: bool, packs: Vec<String> },
+    Save(u32),
+    Load(u32),
+    Settings(crate::saves::AppSettings),
+    Quit,
 }
 
 /// The AI budget (ARCHITECTURE.md section 6): which brain does each job. Low is the rules brain
@@ -130,6 +148,13 @@ pub struct Status {
     pub deciding: usize,
     /// Where each person's head is on screen, for speech bubbles.
     pub heads: Vec<(PersonId, (f32, f32))>,
+    /// A world is being played (false at launch, while the main menu shows over a backdrop).
+    pub in_game: bool,
+    /// Who the camera is following, if anyone.
+    pub following: Option<PersonId>,
+    /// The saved worlds (for the menus).
+    pub slots: Vec<crate::saves::SlotInfo>,
+    pub app: crate::saves::AppSettings,
 }
 
 pub struct Hud {
@@ -140,12 +165,23 @@ pub struct Hud {
     pub lens: Lens,
     /// The decision trace being viewed: (person, index into their traces, counting back from the newest).
     pub trace: Option<(PersonId, usize)>,
-    /// The History ledger is open (scrolled this many entries from the newest).
+    /// The ledger page that's open (M10), if any.
+    pub ledger: Option<Ledger>,
+    /// The one the Ledgers button opens (the last one looked at).
+    last_ledger: Ledger,
+    /// The History ledger's scroll (entries from the newest).
     pub history: Option<usize>,
     /// The world settings panel is open.
     pub settings: bool,
     /// Speaking to someone (M8): who, and the words typed so far.
     pub speaking: Option<(PersonId, String)>,
+    /// The gift menu is open (M10).
+    pub gifting: bool,
+    /// The Map ledger's ground, worked out once per change (map version, cells explored, size).
+    map_runs: Option<MapRuns>,
+    /// The menu showing (M10), if any, and the one "Back" returns to.
+    pub menu: Option<Menu>,
+    pub menu_home: Menu,
     /// The Arena ledger is open (M9), with the report it read.
     pub arena: Option<String>,
     /// The repository root (for runs/arena/report.md).
@@ -154,6 +190,50 @@ pub struct Hud {
     log_offset: usize,
     /// Trace view scrolling: (lines of the prompt text, options).
     trace_scroll: (usize, usize),
+}
+
+/// (map version, cells explored, size) and the colour runs (row, first tile, length, colour).
+type MapRuns = ((u64, usize, usize), Vec<(u16, u16, u16, [f32; 4])>);
+
+/// "Chop the pine" -> "chop the pine".
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_lowercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+fn saves_describe(sim: &Sim) -> String {
+    crate::saves::describe(sim)
+}
+
+impl Hud {
+    /// A different world is being played: forget the last one's views, and start the feed from
+    /// its history (so a loaded world isn't a blank page).
+    pub fn reset_world(&mut self, sim: &Sim) {
+        self.feed.clear();
+        let recent: Vec<&sim::chronicle::Entry> = sim.chronicle.entries.iter().filter(|e| e.importance >= 0.3).collect();
+        for e in recent.iter().skip(recent.len().saturating_sub(6)) {
+            let kind = match e.kind {
+                sim::chronicle::Kind::Life => FeedKind::Life,
+                sim::chronicle::Kind::Social => FeedKind::Social,
+                sim::chronicle::Kind::Knowledge => FeedKind::Knowledge,
+                sim::chronicle::Kind::World => FeedKind::World,
+                sim::chronicle::Kind::Trouble => FeedKind::Trouble,
+            };
+            self.feed.push_front(FeedItem { kind, text: e.text.trim_end_matches('.').to_string(), tick: e.tick, person: e.people.first().copied(), group: None });
+        }
+        self.trace = None;
+        self.ledger = None;
+        self.history = None;
+        self.speaking = None;
+        self.gifting = false;
+        self.settings = false;
+        self.menu = None;
+    }
+
+    /// A line from the game itself in the story feed ("Saved to slot 2").
+    pub fn note(&mut self, text: impl Into<String>, tick: u64) {
+        self.feed.push_front(FeedItem { kind: FeedKind::Acts, text: text.into(), tick, person: None, group: None });
+    }
 }
 
 fn t(font: Font, size: f32, colour: [f32; 4]) -> Text {
@@ -220,7 +300,7 @@ impl Hud {
             ui: Ui::new(&read("PixelifySans.ttf")?, &read("Inter.ttf")?)?,
             tab: Tab::Mind,
             detail: Detail::Normal,
-            dev: true,
+            dev: false,
             lens: Lens::Off,
             trace: None,
             feed: VecDeque::new(),
@@ -229,6 +309,12 @@ impl Hud {
             history: None,
             settings: false,
             speaking: None,
+            gifting: false,
+            ledger: None,
+            last_ledger: Ledger::Society,
+            map_runs: None,
+            menu: None,
+            menu_home: Menu::Main,
             arena: None,
             root: assets.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
         })
@@ -283,6 +369,9 @@ impl Hud {
                 Event::HobbyFound { person, name, hobby } => Some(FeedItem { kind: FeedKind::Life, text: format!("{name} took up {hobby}"), tick, person: Some(person), group: None }),
                 Event::Made { person, name, what } => Some(FeedItem { kind: FeedKind::World, text: format!("{name} {what}"), tick, person: Some(person), group: None }),
                 Event::SettingChanged { what } => Some(FeedItem { kind: FeedKind::World, text: what, tick, person: None, group: None }),
+                Event::Gifted { what, stores } => Some(FeedItem { kind: FeedKind::Acts, text: format!("You gave {what}{}", if stores { " to the stores" } else { "" }), tick, person: None, group: None }),
+                Event::DidAsked { person, name, what, asked } => Some(FeedItem { kind: FeedKind::Acts, text: format!("{name} did as you asked ({asked}): {}", lower_first(&what)), tick, person: Some(person), group: None }),
+                Event::GiftRefused { what, why } => Some(FeedItem { kind: FeedKind::Acts, text: format!("Your gift of {what} couldn't be placed: {why}"), tick, person: None, group: None }),
                 Event::Spoken { person, name, words, read_as } => Some(FeedItem { kind: FeedKind::Acts, text: format!("You told {name}: \"{words}\" ({read_as})"), tick, person: Some(person), group: None }),
                 Event::Weather { sky, snap } => {
                     let text = if snap { "A cold snap came".to_string() } else { match sky.as_str() { "rain" => "It began to rain".to_string(), "snow" => "Snow began to fall".to_string(), s => format!("The weather turned {s}") } };
@@ -322,6 +411,10 @@ impl Hud {
             let d = if self.ui.input.scroll > 0.0 { -1 } else { 1 };
             self.log_offset = (self.log_offset as i64 + d).max(0) as usize;
         }
+        if self.menu.is_some() {
+            self.menu_view(sim, st, &mut acts);
+            return acts;
+        }
         // Speech bubbles first, so panels sit over them.
         self.bubbles(sim, st);
         self.top_bar(sim, st, &mut acts);
@@ -329,16 +422,12 @@ impl Hud {
             self.trace_view(sim, pid, k, st, &mut acts);
             return acts;
         }
-        if self.history.is_some() {
-            self.history_view(sim, &mut acts);
-            return acts;
-        }
-        if self.arena.is_some() {
-            self.arena_view();
+        if self.ledger.is_some() {
+            self.ledger_view(sim, &mut acts);
             return acts;
         }
         self.story(sim, &mut acts);
-        self.lenses(sim);
+        self.lenses(sim, &mut acts);
         match st.selected {
             Some(Pick::Person(id)) => self.inspector(sim, id, st, &mut acts),
             Some(thing) => self.thing_inspector(sim, thing, &mut acts),
@@ -352,7 +441,7 @@ impl Hud {
                 thing => self.thing_card(sim, thing, st.selected.is_some()),
             }
         }
-        self.toolbar(sim);
+        self.toolbar(sim, st, &mut acts);
         // Settings float over everything else, in the middle under the top bar.
         if self.settings {
             self.settings_panel(sim, st, &mut acts);
@@ -389,7 +478,7 @@ impl Hud {
             Detail::Normal => "Detail: normal",
             Detail::Analyst => "Detail: analyst",
         };
-        let right_w = ui.measure("000 fps", t(Font::Sans, 11.5, FAINT)) + pad + ui.button_width(dev_label) + ui.button_width(det_label) + ui.button_width("History") + ui.button_width("World") + if self.dev { ui.button_width("Arena") + ui.px(6.0) } else { 0.0 } + ui.px(18.0);
+        let right_w = ui.measure("000 fps", t(Font::Sans, 11.5, FAINT)) + pad + ui.button_width(dev_label) + ui.button_width(det_label) + ui.button_width("Ledgers") + ui.button_width("World") + if self.dev { ui.button_width("Arena") + ui.px(6.0) } else { 0.0 } + ui.px(18.0);
         let speed_w: f32 = ["II", "1x", "3x", "10x"].iter().map(|l| ui.button_width(l).max(ui.px(36.0)) + ui.px(4.0)).sum();
         let alive = sim.alive();
         let young = sim.people.iter().filter(|(_, p)| p.alive && !p.grown(tick, &sim.content)).count();
@@ -460,14 +549,19 @@ impl Hud {
         }
         // Right side: toggles and fps.
         let mut rx = w - pad;
-        let fps = format!("{:.0} fps", st.fps);
-        let faint = t(Font::Sans, 11.5, FAINT);
-        let fw = ui.measure(&fps, faint);
-        rx -= fw;
-        ui.text(rx, mid(ui, faint), &fps, faint);
-        let fr = Rect::new(rx, 0.0, fw, h);
-        if ui.hovered(fr) {
-            ui.tooltip(vec![format!("{:.1} ms per frame", st.frame_ms)]);
+        // The frame rate is for the developer view.
+        if self.dev {
+            let fps = format!("{:.0} fps", st.fps);
+            let faint = t(Font::Sans, 11.5, FAINT);
+            let fw = ui.measure(&fps, faint);
+            rx -= fw;
+            ui.text(rx, mid(ui, faint), &fps, faint);
+            let fr = Rect::new(rx, 0.0, fw, h);
+            if ui.hovered(fr) {
+                ui.tooltip(vec![format!("{:.1} ms per frame", st.frame_ms)]);
+            }
+        } else {
+            rx += pad - ui.px(12.0);
         }
         rx -= pad;
         let dw = ui.button_width(dev_label);
@@ -493,13 +587,13 @@ impl Hud {
             ui.tooltip(vec!["Minimal: words only. Normal: words and reasons.".into(), "Analyst: the numbers too.".into()]);
         }
         rx -= ui.px(6.0);
+        let mut arena_click = None;
         if self.dev {
             let aw = ui.button_width("Arena");
             rx -= aw;
-            let open = self.arena.is_some();
+            let open = self.ledger == Some(Ledger::Arena);
             if ui.button(Rect::new(rx, by, aw, bh), "Arena", open) {
-                self.arena = if open { None } else { Some(std::fs::read_to_string(self.root.join("runs/arena/report.md")).unwrap_or_default()) };
-                self.history = None;
+                arena_click = Some(!open);
             }
             if ui.hovered(Rect::new(rx, by, aw, bh)) {
                 ui.tooltip(vec!["The Arena: the same worlds with different brains, compared (colony-run arena).".into()]);
@@ -515,17 +609,23 @@ impl Hud {
             ui.tooltip(vec!["World settings: the rules of this world.".into()]);
         }
         rx -= ui.px(6.0);
-        let hw = ui.button_width("History");
+        let hw = ui.button_width("Ledgers");
         rx -= hw;
-        let open = self.history.is_some();
-        if ui.button(Rect::new(rx, by, hw, bh), "History", open) {
-            self.history = if open { None } else { Some(0) };
-            self.trace = None;
-        }
+        let open = self.ledger.is_some() && self.ledger != Some(Ledger::Arena);
+        let ledgers_click = ui.button(Rect::new(rx, by, hw, bh), "Ledgers", open);
         if ui.hovered(Rect::new(rx, by, hw, bh)) {
-            ui.tooltip(vec!["The camp's history: births, deaths, partners, skills learned and lost.".into()]);
+            ui.tooltip(vec!["Ledgers: society, economy, knowledge, the map and the history.".into()]);
         }
         let _ = x;
+        if ledgers_click {
+            let l = if open { None } else { Some(self.last_ledger) };
+            self.open_ledger(l);
+        }
+        match arena_click {
+            Some(true) => self.open_ledger(Some(Ledger::Arena)),
+            Some(false) => self.open_ledger(None),
+            None => {}
+        }
     }
 
     fn story(&mut self, sim: &Sim, acts: &mut Vec<Action>) {
@@ -590,7 +690,7 @@ impl Hud {
         }
     }
 
-    fn lenses(&mut self, sim: &Sim) {
+    fn lenses(&mut self, sim: &Sim, acts: &mut Vec<Action>) {
         let ui = &mut self.ui;
         let mut x = ui.px(16.0) + ui.px(300.0) + ui.px(16.0);
         let y = ui.px(44.0) + ui.px(16.0);
@@ -648,7 +748,8 @@ impl Hud {
                 let now = st.trail_saving(season).or(st.trail_saving(season.saturating_sub(1)));
                 let pace = st.pace(season).or(st.pace(season.saturating_sub(1)));
                 let line = match (now, pace, st.pace(0)) {
-                    (Some(s), Some(p), Some(p0)) => format!("Trails save {:.0}% of walking time · {p:.0} min/100 m (at first {p0:.0})", s * 100.0),
+                    (Some(s), Some(p), Some(p0)) if self.detail == Detail::Analyst => format!("Trails save {:.0}% of walking time · {p:.0} min/100 m (at first {p0:.0})", s * 100.0),
+                    (Some(s), _, _) => format!("Trails save {:.0}% of walking time on the walks people make", s * 100.0),
                     _ => "Trip times: not enough walking yet".to_string(),
                 };
                 let r = Rect::new(lx + pad, note_y, w - 2.0 * pad, ui.px(16.0));
@@ -666,6 +767,48 @@ impl Hud {
             }
             if self.lens == Lens::Soil {
                 ui.text(lx + pad, note_y, "Darker is wetter. Rain wets it; sun dries it.", t(Font::Sans, 11.0, MUTED));
+            }
+            // Mood and needs: who needs looking at, by name (the rings are hard to read in a crowd).
+            if matches!(self.lens, Lens::Mood | Lens::Needs) {
+                let c = &sim.content;
+                let mut who: Vec<(PersonId, String, String)> = Vec::new();
+                for (id, p) in sim.people.iter().filter(|(_, p)| p.alive && !p.asleep) {
+                    if self.lens == Lens::Mood {
+                        let (score, _) = p.mood(c, near_others(sim, p), by_fire(sim, p), sim.beauty_for(p.pos));
+                        if score <= -2 {
+                            who.push((id, p.name.clone(), Person::mood_word(score).to_lowercase()));
+                        }
+                    } else if let Some((i, n)) = c.needs.iter().enumerate().filter(|(_, n)| n.kind == sim::content::NeedKind::Body).max_by(|a, b| p.needs[a.0].total_cmp(&p.needs[b.0]))
+                        && p.needs[i] >= 0.6
+                    {
+                        who.push((id, p.name.clone(), n.word(p.needs[i]).to_lowercase()));
+                    }
+                }
+                let ny = ly + h + ui.px(6.0);
+                let lines = who.len().clamp(1, 8) as f32;
+                let r = Rect::new(lx, ny, w, pad * 2.0 + ui.px(18.0) * lines + ui.px(18.0));
+                ui.panel(r);
+                ui.block(r);
+                let head = if self.lens == Lens::Mood { "Low in spirits" } else { "In need now" };
+                ui.text(lx + pad, ny + pad, head, t(Font::Sans, 12.0, MUTED));
+                if who.is_empty() {
+                    ui.text(lx + pad, ny + pad + ui.px(20.0), if self.lens == Lens::Mood { "Nobody: everyone's all right." } else { "Nobody: no one's needs are pressing." }, t(Font::Sans, 11.5, FAINT));
+                }
+                for (k, (id, name, word)) in who.iter().take(8).enumerate() {
+                    let yy = ny + pad + ui.px(20.0) + k as f32 * ui.px(18.0);
+                    let nt = t(Font::Sans, 12.0, GOLD);
+                    let nw = ui.measure(name, nt);
+                    let nr = Rect::new(lx + pad - ui.px(2.0), yy - ui.px(1.0), nw + ui.px(4.0), ui.px(17.0));
+                    if ui.hovered(nr) {
+                        ui.rect(nr, CHIP, ui.px(4.0));
+                        ui.tooltip(vec![format!("Click to find {name}.")]);
+                    }
+                    if ui.clicked(nr) {
+                        acts.push(Action::Select(Some(Pick::Person(*id))));
+                    }
+                    ui.text(lx + pad, yy, name, nt);
+                    ui.text(lx + pad + nw + ui.px(8.0), yy, word, t(Font::Sans, 11.5, MUTED));
+                }
             }
         }
     }
@@ -690,8 +833,12 @@ impl Hud {
         let pad = ui.px(7.0);
         let mut placed: Vec<Rect> = Vec::new();
         for (x, y, line) in items {
-            let w = (ui.measure(&line, tt) + 2.0 * pad).min(ui.px(230.0));
-            let h = ui.wrapped_height(w - 2.0 * pad, &line, tt) + 2.0 * pad;
+            // Songs: the fonts have no music note, so the bubble draws one and keeps the words.
+            let song = line.starts_with('\u{266A}');
+            let line = if song { line.trim_matches(|c: char| c == '\u{266A}' || c.is_whitespace()).to_string() } else { line };
+            let note_w = if song { ui.px(14.0) } else { 0.0 };
+            let w = (ui.measure(&line, tt) + 2.0 * pad + note_w).min(ui.px(230.0));
+            let h = ui.wrapped_height(w - 2.0 * pad - note_w, &line, tt) + 2.0 * pad;
             let r = Rect::new(x - w * 0.5, y - h - ui.px(10.0), w, h);
             if r.y < ui.px(46.0) || r.x < 0.0 || r.right() > ui.size.0 {
                 continue;
@@ -705,7 +852,17 @@ impl Hud {
             // The tail, pointing at the speaker.
             let tail = ui.px(6.0);
             ui.rect(Rect::new(x - tail * 0.5, r.bottom() - 1.0, tail, tail), hex_c("#F3EADB"), ui.px(2.0));
-            ui.wrapped(r.x + pad, r.y + pad, w - 2.0 * pad, &line, t(Font::Sans, 12.0, hex_c("#2A1E1A")));
+            if song {
+                // A quaver: a round head, a stem, a flag.
+                let (nx, ny) = (r.x + pad, r.y + pad + ui.px(1.0));
+                let ink = hex_c("#6B4FA8");
+                ui.rect(Rect::new(nx, ny + ui.px(8.0), ui.px(6.0), ui.px(5.0)), ink, ui.px(2.5));
+                ui.rect(Rect::new(nx + ui.px(4.6), ny, ui.px(1.4), ui.px(10.5)), ink, 0.0);
+                ui.rect(Rect::new(nx + ui.px(4.6), ny, ui.px(4.5), ui.px(1.6)), ink, ui.px(0.8));
+                ui.rect(Rect::new(nx + ui.px(8.0), ny + ui.px(1.0), ui.px(1.4), ui.px(3.5)), ink, ui.px(0.7));
+            }
+            let ink = if song { hex_c("#4A3778") } else { hex_c("#2A1E1A") };
+            ui.wrapped(r.x + pad + note_w, r.y + pad, w - 2.0 * pad - note_w, &line, t(Font::Sans, 12.0, ink));
             placed.push(r);
         }
     }
@@ -716,7 +873,7 @@ impl Hud {
         let (w, _) = ui.size;
         let pad = ui.px(12.0);
         let pw = ui.px(330.0);
-        let r = Rect::new((w - pw) * 0.5, ui.px(102.0), pw, ui.px(270.0));
+        let r = Rect::new((w - pw) * 0.5, ui.px(102.0), pw, ui.px(318.0));
         ui.panel(r);
         ui.block(r);
         let mut y = r.y + pad;
@@ -756,7 +913,7 @@ impl Hud {
             if ui.hovered(br) {
                 ui.tooltip(match ai {
                     Ai::Low => vec!["Low: the rules brain decides. No servers, no models.".into()],
-                    Ai::Medium | Ai::High => vec![format!("{label}: not yet. It needs the scorer and text model (M9) and a local language model (a download)."), "Until then it's Low.".into()],
+                    Ai::Medium | Ai::High => vec![format!("{label}: not ready yet. It needs a trained text model and a local language model."), "Until then it's Low.".into()],
                     Ai::Max => vec!["Max: Claude Haiku makes everyday decisions, through the bridge (tools/haiku_driver).".into(), "The game pauses while it decides, a few seconds at a time. It uses your Claude plan.".into()],
                 });
             }
@@ -767,16 +924,28 @@ impl Hud {
             Ai::Max => "Claude Haiku decides for everyone; the game waits while it thinks. Rules decide when an answer can't be used.",
             _ => "The rules brain decides for everyone. Speaking to someone is read by keyword.",
         };
-        ui.wrapped(r.x + pad, y, pw - 2.0 * pad, note, t(Font::Sans, 11.5, MUTED));
+        y += ui.wrapped(r.x + pad, y, pw - 2.0 * pad, note, t(Font::Sans, 11.5, MUTED)) + ui.px(14.0);
+        // Packs: chosen when the world was made.
+        ui.rect(Rect::new(r.x + pad, y - ui.px(6.0), pw - 2.0 * pad, 1.0), BORDER, 0.0);
+        ui.text(r.x + pad, y + ui.px(2.0), "Packs", t(Font::Sans, 13.0, TEXT));
+        let on: Vec<&str> = sim::pack::PACKS.iter().filter(|p| sim.settings.packs.iter().any(|i| i == p.id())).map(|p| p.name()).collect();
+        let list = if on.is_empty() { "none".to_string() } else { on.join(", ") };
+        let lt = t(Font::Sans, 12.5, GOLD);
+        let lw = ui.measure(&list, lt);
+        ui.text(r.right() - pad - lw, y + ui.px(2.0), &list, lt);
+        ui.text(r.x + pad, y + ui.px(22.0), "Chosen when the world was made.", t(Font::Sans, 11.5, MUTED));
     }
 
-    fn toolbar(&mut self, sim: &Sim) {
+    fn toolbar(&mut self, sim: &Sim, st: &Status, acts: &mut Vec<Action>) {
+        // With an inspector open on the right, the bottom bar sits in the space left of it.
+        let clear = |ui: &Ui| if st.selected.is_some() { ui.size.0 - ui.px(432.0) } else { ui.size.0 };
         if let Some((id, words)) = self.speaking.clone() {
             let ui = &mut self.ui;
-            let (w, h) = ui.size;
+            let (_, h) = ui.size;
+            let w = clear(ui);
             let name = sim.people.get(id).map_or("them".to_string(), |p| p.name.clone());
             let bw = ui.px(560.0).min(w - ui.px(32.0));
-            let bh = ui.px(64.0);
+            let bh = ui.px(82.0);
             let r = Rect::new((w - bw) * 0.5, h - bh - ui.px(16.0), bw, bh);
             ui.panel(r);
             ui.block(r);
@@ -788,19 +957,108 @@ impl Hud {
             let (_, read) = sim::speak::read(&words, &sim.content);
             let hint = if words.trim().is_empty() { "For example: \"fetch some wood\", \"plant flowers\", \"go and rest\"".to_string() } else if read.is_empty() { "Not understood yet: try words like wood, water, food, fire, build, farm, hunt, rest".to_string() } else { format!("Read as: {}", read.join(", ")) };
             let ht = t(Font::Sans, 11.0, if read.is_empty() { FAINT } else { GOLD });
-            let hw = ui.measure(&hint, ht);
-            ui.text(r.right() - pad - hw, r.y + pad * 0.7, &hint, ht);
+            ui.text(r.x + pad, r.bottom() - pad - ui.px(14.0), &hint, ht);
             return;
         }
+        let who = match st.selected {
+            Some(Pick::Person(id)) => sim.people.get(id).filter(|p| p.alive).map(|p| (id, p.name.clone())),
+            _ => None,
+        };
         let ui = &mut self.ui;
-        let (w, h) = ui.size;
-        let text = "God tools: speak to someone from their panel. Gifts arrive later (M10)";
-        let tt = t(Font::Sans, 11.5, FAINT);
-        let tw = ui.measure(text, tt) + ui.px(28.0);
-        let bh = ui.px(32.0);
+        let (_, h) = ui.size;
+        let w = clear(ui);
+        let lt = t(Font::Sans, 11.5, FAINT);
+        let label = "God tools";
+        let speak = match &who {
+            Some((_, name)) => format!("Speak to {name}"),
+            None => "Speak".to_string(),
+        };
+        let gift = "Gift";
+        let pad = ui.px(10.0);
+        let gap = ui.px(8.0);
+        let (sw, gw) = (ui.button_width(&speak), ui.button_width(gift));
+        let lw = ui.measure(label, lt);
+        let bh = ui.px(40.0);
+        let tw = pad + lw + gap * 1.5 + sw + gap + gw + pad;
         let r = Rect::new((w - tw) * 0.5, h - bh - ui.px(16.0), tw, bh);
         ui.panel(r);
-        ui.text(r.x + ui.px(14.0), r.y + (bh - ui.line_height(tt)) * 0.5, text, tt);
+        ui.block(r);
+        let by = r.y + ui.px(7.0);
+        let bhh = bh - ui.px(14.0);
+        ui.text(r.x + pad, r.y + (bh - ui.line_height(lt)) * 0.5, label, lt);
+        let mut x = r.x + pad + lw + gap * 1.5;
+        let sr = Rect::new(x, by, sw, bhh);
+        if ui.button(sr, &speak, false)
+            && let Some((id, _)) = &who
+        {
+            self.speaking = Some((*id, String::new()));
+            self.gifting = false;
+        }
+        if ui.hovered(sr) {
+            ui.tooltip(match &who {
+                Some((_, name)) => vec![format!("Say something to {name}: they may do what you ask."), "Your words and how they were read go in the story feed.".into()],
+                None => vec!["Click someone first, then speak to them.".into()],
+            });
+        }
+        x += sw + gap;
+        if ui.button(Rect::new(x, by, gw, bhh), gift, self.gifting) {
+            self.gifting = !self.gifting;
+        }
+        if self.gifting {
+            self.gift_menu(sim, r, acts);
+        }
+    }
+
+    /// The gift menu (M10): food and materials go into the stores; a building appears finished
+    /// on the next free spot near the camp.
+    fn gift_menu(&mut self, sim: &Sim, bar: Rect, acts: &mut Vec<Action>) {
+        use sim::commands::Gift;
+        let c = &sim.content;
+        let item = |id: &str, n: u32| (format!("{n} {}", c.items[c.item(id)].name.to_lowercase()), Gift::Items { item: id.into(), amount: n });
+        let building = |id: &str| (c.buildings[c.building(id) as usize].name.clone(), Gift::Building { kind: id.into() });
+        let groups: [(&str, Vec<(String, Gift)>); 3] = [
+            ("Food", vec![item("berries", 30), item("grain", 30), item("meat", 15), item("water", 20)]),
+            ("Materials", vec![item("wood", 20), item("sticks", 30), item("stone", 10)]),
+            ("Buildings", vec![building("shelter"), building("house"), building("storehouse")]),
+        ];
+        let ui = &mut self.ui;
+        let pad = ui.px(12.0);
+        let col = ui.px(150.0);
+        let row = ui.px(30.0);
+        let head = ui.px(24.0);
+        let rows = groups.iter().map(|g| g.1.len()).max().unwrap_or(0) as f32;
+        let pw = pad * 2.0 + col * 3.0 + ui.px(16.0);
+        let ph = pad * 2.0 + head + rows * row + ui.px(38.0);
+        let mut info: Option<Vec<String>> = None;
+        let r = Rect::new((bar.x + bar.w * 0.5 - pw * 0.5).max(ui.px(8.0)), bar.y - ph - ui.px(8.0), pw, ph);
+        ui.panel(r);
+        ui.block(r);
+        for (k, (title, gifts)) in groups.iter().enumerate() {
+            let x = r.x + pad + k as f32 * (col + ui.px(8.0));
+            ui.text(x, r.y + pad, title, t(Font::Sans, 12.0, MUTED));
+            for (j, (label, g)) in gifts.iter().enumerate() {
+                let b = Rect::new(x, r.y + pad + head + j as f32 * row, col, row - ui.px(6.0));
+                if ui.button(b, label, false) {
+                    acts.push(Action::Command(sim::Command::Gift(g.clone())));
+                }
+                if ui.hovered(b) {
+                    info = Some(match g {
+                        Gift::Items { item, .. } => {
+                            let have = sim.camp.stores[c.item(item)];
+                            vec![format!("Put {label} straight into the camp's stores (they have {have})."), "Food left in the open spoils; a storehouse keeps it.".into()]
+                        }
+                        Gift::Building { kind } if kind == "storehouse" => vec!["A finished storehouse near the camp: food in the stores spoils much more slowly.".into()],
+                        Gift::Building { .. } => vec![format!("A finished {} on the next clear spot near the camp.", label.to_lowercase()), "It goes to someone without a home the next morning (families first).".into()],
+                    });
+                }
+            }
+        }
+        let info_on = info.is_some();
+        // What the hovered gift does, in the menu's own footer (a tooltip would cover the buttons).
+        let lines = info.unwrap_or_else(|| vec!["Gifts arrive at once, even while paused, and go in the story feed and the history.".into()]);
+        for (k, l) in lines.iter().enumerate() {
+            ui.text(r.x + pad, r.bottom() - pad - ui.px(28.0) + k as f32 * ui.px(15.0), l, t(Font::Sans, 11.0, if info_on { MUTED } else { FAINT }));
+        }
     }
 
     /// A small card for a thing under the cursor.
@@ -1068,18 +1326,37 @@ impl Hud {
                 if ui.button(Rect::new(x0, y, bw, ui.px(24.0)), &label, self.speaking.as_ref().is_some_and(|s| s.0 == id)) {
                     self.speaking = Some((id, String::new()));
                 }
+                let following = st.following == Some(id);
+                let fl = if following { "Following" } else { "Follow" };
+                let fw = ui.button_width(fl);
+                let fr = Rect::new(x0 + bw + ui.px(6.0), y, fw, ui.px(24.0));
+                if ui.button(fr, fl, following) {
+                    acts.push(Action::Follow(if following { None } else { Some(id) }));
+                }
+                if ui.hovered(fr) {
+                    ui.tooltip(vec![if following { "The camera keeps them in view. Click, drag or Esc to stop.".into() } else { format!("Keep the camera on {}.", p.name) }]);
+                }
                 y += ui.px(30.0);
             }
         }
         if self.dev && p.alive && stage != Stage::Baby {
             let chip_t = t(Font::Sans, 11.5, TEXT);
             let mut cx = x0;
-            for s in [format!("Brain: {}", p.brain), format!("{} decisions", p.tally.decisions)] {
+            let n = p.tally.decisions;
+            let chips = [(format!("Brain: {}", p.brain), "Which mind makes their choices (World: AI budget).", false), (format!("{n} {}", if n == 1 { "decision" } else { "decisions" }), "Every choice they've made, and why: click for the Log.", true)];
+            for (s, tip, to_log) in chips {
                 let cw = ui.measure(&s, chip_t) + ui.px(16.0);
                 let r = Rect::new(cx, y, cw, ui.px(22.0));
-                ui.rect(r, CHIP, ui.px(11.0));
+                ui.rect(r, if to_log && ui.hovered(r) { CHIP_HOVER } else { CHIP }, ui.px(11.0));
                 ui.outline(r, BORDER, ui.px(11.0));
                 ui.text(cx + ui.px(8.0), y + ui.px(3.0), &s, chip_t);
+                if ui.hovered(r) {
+                    ui.tooltip(vec![tip.into()]);
+                }
+                if to_log && ui.clicked(r) {
+                    self.tab = Tab::Log;
+                }
+                ui.block(r);
                 cx += cw + ui.px(6.0);
             }
             y += ui.px(28.0);
@@ -1282,7 +1559,7 @@ impl Hud {
             let nw = ui.text(x, y, &name, t(Font::Sans, 12.5, TEXT));
             let (word, col) = match h.since {
                 Some(t0) => (format!("a hobby since {}", when_long(sim, t0)), GOLD),
-                None => (format!("enjoying it ({} times)", h.times), MUTED),
+                None => (format!("enjoying it ({})", if h.times == 1 { "once".to_string() } else { format!("{} times", h.times) }), MUTED),
             };
             ui.text(x + nw + ui.px(8.0), y, &word, t(Font::Sans, 12.0, col));
             let share = if h.since.is_some() { 1.0 } else { (h.joy / l.acts[h.act as usize].hobby_joy).min(1.0) };
@@ -1370,17 +1647,22 @@ impl Hud {
             let lx = x + ui.px(46.0);
             let used = ui.wrapped(lx, y, w - ui.px(46.0), &chosen.label, t(Font::Sans, 12.5, TEXT));
             y += used + ui.px(2.0);
-            let (agree, colour) = if tr.choice == tr.rules_choice {
-                ("Rules agreed".to_string(), GOOD)
-            } else {
-                (format!("Rules: {}", tr.request.options[tr.rules_choice].label), WARN)
-            };
-            let chip_t = t(Font::Sans, 11.0, colour);
-            let cw = ui.measure(&agree, chip_t).min(w * 0.6) + ui.px(14.0);
-            let cr = Rect::new(lx, y, cw, ui.px(20.0));
-            ui.rect(cr, CHIP, ui.px(10.0));
-            ui.text(lx + ui.px(7.0), y + ui.px(2.0), &agree, chip_t);
-            let mut ox = lx + cw + ui.px(8.0);
+            // Whether the rules brain would have chosen the same (a comparison of minds: shown in
+            // the developer view).
+            let mut ox = lx;
+            if self.dev {
+                let (agree, colour) = if tr.choice == tr.rules_choice {
+                    ("Rules agreed".to_string(), GOOD)
+                } else {
+                    (format!("Rules: {}", tr.request.options[tr.rules_choice].label), WARN)
+                };
+                let chip_t = t(Font::Sans, 11.0, colour);
+                let cw = ui.measure(&agree, chip_t).min(w * 0.6) + ui.px(14.0);
+                let cr = Rect::new(lx, y, cw, ui.px(20.0));
+                ui.rect(cr, CHIP, ui.px(10.0));
+                ui.text(lx + ui.px(7.0), y + ui.px(2.0), &agree, chip_t);
+                ox = lx + cw + ui.px(8.0);
+            }
             if tr.outcome.is_none() {
                 ox += ui.text(ox, y + ui.px(2.0), "under way", t(Font::Sans, 11.0, GOLD)) + ui.px(8.0);
             }
@@ -1595,32 +1877,18 @@ impl Hud {
 
     /// The Arena ledger (M9): the last arena report, each measure as bars so the brains compare
     /// at a glance.
-    fn arena_view(&mut self) {
+    fn arena_view(&mut self, y: f32) {
         let report = self.arena.clone().unwrap_or_default();
         let ui = &mut self.ui;
         let (sw, sh) = ui.size;
-        let top = ui.px(44.0);
-        let page = Rect::new(0.0, top, sw, sh - top);
-        ui.rect(page, hex_c("#1E1A1F"), 0.0);
-        ui.block(page);
         let pad = ui.px(24.0);
-        let mut y = top + ui.px(18.0);
-        let bh = ui.px(30.0);
-        let back = "< Back to the camp";
-        let bw = ui.button_width(back);
-        if ui.button(Rect::new(pad, y, bw, bh), back, false) {
-            self.arena = None;
-            return;
-        }
-        let x = pad + bw + ui.px(14.0);
-        let tw = ui.text(x, y + ui.px(2.0), "Arena", t(Font::Pixel, 24.0, TEXT));
         let title = report.lines().find(|l| l.starts_with("# ")).map_or("No arena run yet".to_string(), |l| l.trim_start_matches("# ").trim_start_matches("Arena: ").to_string());
-        ui.text(x + tw + ui.px(14.0), y + ui.px(9.0), &title, t(Font::Sans, 13.0, MUTED));
-        y += ui.px(56.0);
+        ui.text(pad, y, &title, t(Font::Sans, 13.0, MUTED));
+        let mut y = y + ui.px(30.0);
         // The table: a header row, then one row per brain.
         let rows: Vec<Vec<String>> = report.lines().filter(|l| l.starts_with('|') && !l.starts_with("|---")).map(|l| l.trim_matches('|').split('|').map(|c| c.trim().to_string()).collect()).collect();
         if rows.len() < 2 {
-            ui.wrapped(pad, y, sw - 2.0 * pad, "Run the arena from the repository folder, for example: colony-run arena --seeds 1..3 --days 48 --brains rules,scorer@rules-v1. Its report shows here.", t(Font::Sans, 13.0, MUTED));
+            ui.wrapped(pad, y, sw - 2.0 * pad, "Run the arena from the repository folder, for example: colony-run arena --seeds 1..3 --days 48 --brains rules,scorer@rules-v3-r1. Its report shows here.", t(Font::Sans, 13.0, MUTED));
             return;
         }
         let head = &rows[0];
@@ -1640,7 +1908,10 @@ impl Hud {
         for (i, name) in head.iter().enumerate().skip(1) {
             let cx = pad + ((i - 1) % 3) as f32 * col_w;
             let cy = y + ((i - 1) / 3) as f32 * ui.px(30.0 + 22.0 * brains.len() as f32);
-            ui.text(cx, cy, name, t(Font::Sans, 12.5, MUTED));
+            let w = ui.text(cx, cy, name, t(Font::Sans, 12.5, MUTED));
+            if name.starts_with("Died") || name.starts_with("Of hunger") {
+                ui.text(cx + w + ui.px(6.0), cy, "(fewer is better)", t(Font::Sans, 11.5, MUTED));
+            }
             let max = brains.iter().map(|b| num(b.get(i).map_or("0", |s| s.as_str()))).fold(0.0f32, f32::max).max(1e-6);
             for (k, b) in brains.iter().enumerate() {
                 let v = b.get(i).cloned().unwrap_or_default();
@@ -1650,9 +1921,43 @@ impl Hud {
                 ui.text(cx + w + ui.px(8.0), by, &v, t(Font::Sans, 12.0, TEXT));
             }
         }
+        // Where each brain parts from rules most: what rules would have done, and what it did.
+        let groups = (head.len() - 1).div_ceil(3);
+        let mut y = y + groups as f32 * ui.px(30.0 + 22.0 * brains.len() as f32) + ui.px(10.0);
+        let mut parts: Vec<(String, Vec<String>)> = Vec::new();
+        for l in report.lines() {
+            if let Some(rest) = l.strip_prefix("**Where ") {
+                let name = rest.split(" parts from rules").next().unwrap_or("").to_string();
+                parts.push((name, Vec::new()));
+            } else if let (Some(item), Some(last)) = (l.strip_prefix("- "), parts.last_mut()) {
+                last.1.push(item.to_string());
+            }
+        }
+        if parts.is_empty() || y > sh - ui.px(80.0) {
+            return;
+        }
+        ui.text(pad, y, "Where each brain parts from rules most", t(Font::Sans, 13.0, TEXT));
+        ui.text(pad, y + ui.px(18.0), "What rules would have done → what it did instead, as a share of all its decisions", t(Font::Sans, 12.0, MUTED));
+        y += ui.px(44.0);
+        let n = parts.len().clamp(1, 4);
+        let pw = ((sw - 2.0 * pad) / n as f32).floor();
+        for (j, (name, items)) in parts.iter().take(n).enumerate() {
+            let k = brains.iter().position(|b| &b[0] == name).unwrap_or(j + 1);
+            let px0 = pad + j as f32 * pw;
+            let d = ui.px(10.0);
+            ui.rect(Rect::new(px0, y + ui.px(4.0), d, d), palette[k % palette.len()], d * 0.5);
+            ui.text(px0 + d + ui.px(6.0), y, name, t(Font::Sans, 12.5, TEXT));
+            for (r, item) in items.iter().take(5).enumerate() {
+                let iy = y + ui.px(22.0 + 19.0 * r as f32);
+                if iy > sh - ui.px(24.0) {
+                    break;
+                }
+                ui.text(px0, iy, &item.replace('_', " "), t(Font::Sans, 12.0, MUTED));
+            }
+        }
     }
 
-    fn history_view(&mut self, sim: &Sim, acts: &mut Vec<Action>) {
+    fn history_view(&mut self, sim: &Sim, top_y: f32, acts: &mut Vec<Action>) {
         let c = &sim.content;
         let min_importance = match self.detail {
             Detail::Minimal => 0.6,
@@ -1668,21 +1973,10 @@ impl Hud {
         self.history = Some(first);
         let ui = &mut self.ui;
         let (sw, sh) = ui.size;
-        let top = ui.px(44.0);
-        let page = Rect::new(0.0, top, sw, sh - top);
-        ui.rect(page, hex_c("#1E1A1F"), 0.0);
-        ui.block(page);
         let pad = ui.px(24.0);
-        let mut y = top + ui.px(18.0);
+        let mut y = top_y;
         let bh = ui.px(30.0);
-        let back = "< Back to the camp";
-        let bw = ui.button_width(back);
-        if ui.button(Rect::new(pad, y, bw, bh), back, false) {
-            self.history = None;
-            return;
-        }
-        let mut x = pad + bw + ui.px(14.0);
-        x += ui.text(x, y + ui.px(2.0), "History", t(Font::Pixel, 24.0, TEXT)) + ui.px(14.0);
+        let x = pad;
         // The camp in numbers.
         let living = sim.alive();
         let born = sim.people.iter().filter(|(_, p)| p.family.mother.is_some()).count();
@@ -1700,7 +1994,7 @@ impl Hud {
         if !lost.is_empty() {
             summary += &format!(" · lost: {}", lost.join(", "));
         }
-        ui.text(x, y + ui.px(8.0), &summary, t(Font::Sans, 13.0, MUTED));
+        ui.text(x, y, &summary, t(Font::Sans, 13.0, MUTED));
         let shown = match self.detail {
             Detail::Minimal => "Showing the great events (Detail: minimal)",
             Detail::Normal => "Showing the main events (Detail: normal)",
@@ -1708,8 +2002,8 @@ impl Hud {
         };
         let st = t(Font::Sans, 11.5, FAINT);
         let stw = ui.measure(shown, st);
-        ui.text(sw - pad - stw, y + ui.px(9.0), shown, st);
-        y += bh + ui.px(18.0);
+        ui.text(sw - pad - stw, y + ui.px(1.0), shown, st);
+        y += bh - ui.px(2.0);
         let panel = Rect::new(pad, y, sw - 2.0 * pad, sh - y - ui.px(20.0));
         ui.panel(panel);
         let ip = ui.px(18.0);
@@ -1719,6 +2013,7 @@ impl Hud {
         let text_x = panel.x + ip + ui.px(170.0);
         let text_w = panel.right() - ip - text_x;
         let mut last_year = 0;
+        let mut go = None;
         // Newest first.
         let order: Vec<&sim::chronicle::Entry> = entries.iter().rev().copied().collect();
         if order.is_empty() {
@@ -1763,11 +2058,15 @@ impl Hud {
             if let Some(q) = person
                 && ui.clicked(row)
             {
-                acts.push(Action::Select(Some(Pick::Person(q))));
-                self.history = None;
-                self.tab = Tab::Life;
+                go = Some(q);
             }
             ey += h + ui.px(8.0);
+        }
+        if let Some(q) = go {
+            acts.push(Action::Select(Some(Pick::Person(q))));
+            self.open_ledger(None);
+            self.tab = Tab::Life;
+            return;
         }
         let more = order.len().saturating_sub(first);
         if first > 0 || more > 0 {
@@ -2676,7 +2975,7 @@ mod tests {
         let who = sim.people.iter().find(|(_, p)| p.alive).map(|(id, _)| id).unwrap();
         // Inspect a grown person, and a baby or child if there is one.
         let young = sim.people.iter().find(|(_, p)| p.alive && !p.grown(sim.tick, &sim.content)).map(|(id, _)| id);
-        let mut st = Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: Some(Pick::Person(who)), hovered: young.map(Pick::Person), pause_on: None, ai: Ai::Low, deciding: 0, heads: Vec::new() };
+        let mut st = Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: Some(Pick::Person(who)), hovered: young.map(Pick::Person), pause_on: None, ai: Ai::Low, deciding: 0, heads: Vec::new(), in_game: true, following: None, slots: Vec::new(), app: crate::saves::AppSettings::default() };
         if let Some(y) = young {
             for tab in [Tab::Mind, Tab::Life, Tab::Body] {
                 hud.tab = tab;
@@ -2694,6 +2993,7 @@ mod tests {
                     for detail in [Detail::Minimal, Detail::Normal, Detail::Analyst] {
                         for (trace, history) in [(None, None), (Some((who, 0)), None), (Some((who, 3)), None), (None, Some(0)), (None, Some(5))] {
                             (hud.tab, hud.lens, hud.detail, hud.trace, hud.history) = (tab, lens, detail, trace, history);
+                            hud.ledger = history.map(|_| Ledger::History);
                             for k in 0..12 {
                                 let cursor = (size.0 * (k as f32 + 0.5) / 12.0, size.1 * ((k * 7) % 12) as f32 / 12.0);
                                 hud.ui.begin(size, scale, ui::Input { cursor, clicked: false, scroll: -1.0 });
@@ -2708,7 +3008,7 @@ mod tests {
             let node = sim.nodes.iter().next().map(|(id, _)| Pick::Node(id));
             let grave = sim.nodes.iter().find(|(_, n)| sim.content.nodes[n.kind as usize].id == "grave").map(|(id, _)| Pick::Node(id));
             for thing in [Some(Pick::Fire), Some(Pick::Stores), node, grave].into_iter().flatten() {
-                let st = Status { selected: Some(thing), hovered: Some(Pick::Stores), ..Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: None, hovered: None, pause_on: None, ai: Ai::Low, deciding: 0, heads: Vec::new() } };
+                let st = Status { selected: Some(thing), hovered: Some(Pick::Stores), ..Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: None, hovered: None, pause_on: None, ai: Ai::Low, deciding: 0, heads: Vec::new(), in_game: true, following: None, slots: Vec::new(), app: crate::saves::AppSettings::default() } };
                 for k in 0..6 {
                     let cursor = (size.0 * (k as f32 + 0.5) / 6.0, size.1 * 0.5);
                     hud.ui.begin(size, scale, ui::Input { cursor, clicked: false, scroll: 0.0 });
@@ -2717,6 +3017,17 @@ mod tests {
                 }
             }
             // The inspector sits on the right: the middle of its panel is UI, the middle of the screen isn't.
+            // Every ledger lays out at this size.
+            for l in [Ledger::Society, Ledger::Economy, Ledger::Knowledge, Ledger::Map, Ledger::History, Ledger::Arena] {
+                hud.ledger = Some(l);
+                for k in 0..6 {
+                    let cursor = (size.0 * (k as f32 + 0.5) / 6.0, size.1 * (k as f32 + 0.5) / 6.0);
+                    hud.ui.begin(size, scale, ui::Input { cursor, clicked: false, scroll: -1.0 });
+                    hud.frame(&sim, &st);
+                    hud.ui.finish();
+                }
+            }
+            hud.ledger = None;
             hud.trace = None;
             hud.history = None;
             hud.ui.begin(size, scale, ui::Input { cursor: (size.0 - 200.0 * scale, size.1 * 0.6), clicked: false, scroll: 0.0 });

@@ -104,6 +104,7 @@ impl Chronicle {
             Event::Made { person, name, what } if what.contains("flower bed") && self.first("flower bed") => {
                 self.add(tick, Kind::World, format!("{name} planted the camp's first flower bed."), vec![*person], 0.5);
             }
+            Event::Gifted { what, stores } => self.add(tick, Kind::World, format!("A gift from the sky: {what}{}.", if *stores { " for the stores" } else { "" }), Vec::new(), 0.5),
             Event::SettingChanged { what } => self.add(tick, Kind::World, format!("{what}: the rules of the world changed."), Vec::new(), 0.6),
             Event::Hunted { person, name, animal, .. } if self.first(&format!("hunted {animal}")) => {
                 self.add(tick, Kind::World, format!("{name} killed the camp's first {animal}."), vec![*person], 0.7);

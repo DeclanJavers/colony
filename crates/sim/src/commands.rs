@@ -14,4 +14,16 @@ pub enum Command {
     SetBeautyMatters { on: bool },
     /// Speak to someone (M8, god tool): your words, read into a request.
     Speak { person: crate::people::PersonId, words: String },
+    /// A gift (M10, god tool).
+    Gift(Gift),
+}
+
+/// What a gift is. Ids are content ids ("berries", "house"), so the log reads plainly.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Gift {
+    /// Food or materials, put straight into the camp's stores.
+    Items { item: String, amount: u32 },
+    /// A finished building, on the next free spot near the camp. A home goes to whoever has
+    /// none at the next morning's rehousing; nobody owns a storehouse.
+    Building { kind: String },
 }

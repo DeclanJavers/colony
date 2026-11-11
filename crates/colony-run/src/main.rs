@@ -79,6 +79,7 @@ fn main() {
         "bridge" => cmd_bridge(&a),
         "train" => cmd_train(&a),
         "arena" => cmd_arena(&a),
+        "distill" => cmd_distill(&a),
         "fork" => cmd_fork(&a),
         "export" => cmd_export(&a),
         _ => {
@@ -101,6 +102,9 @@ colony-run train --traces a.jsonl[,b.jsonl.zst...] [--teacher rules|subagent] [-
                                                        train the scorer on a teacher's decisions
 colony-run arena --seeds 1..5 [--days 48] --brains rules,scorer@v1 [--beauty-off] [--out runs/arena]
                                                        the same worlds with different brains, compared
+colony-run distill [--seeds 1..12] [--days 12] [--rounds 3] [--keep 0.5] [--out brain/models/scorer@rules-v2.json]
+                                                       distil the rules brain into a scorer, with rounds
+                                                       of its own play relabelled by the rules brain
 colony-run export --traces a.jsonl[,...] [--teacher subagent] --out brain/data/name
                                                        datasets from traces: features.jsonl (for the
                                                        scorer) and text.jsonl (for a text model),
@@ -665,81 +669,133 @@ struct Outcome {
     micros: f64,
 }
 
+/// Run one colony for some days with everyone under one brain (the rules brain, or a scorer),
+/// handing each finished decision to `sink`. Returns the world and the seconds it took.
+fn run_colony(seed: u64, days: u64, size: u32, name: &str, scorer: Option<brains::Scorer>, beauty_off: bool, sink: sim::sim::TraceSink) -> (Sim, f64) {
+    let mut sim = Sim::new(seed, size);
+    sim.mode = "lockstep".into();
+    // The beauty question: does a brain make beauty when it doesn't matter?
+    if beauty_off {
+        sim.command(sim::Command::SetBeautyMatters { on: false });
+    }
+    if let Some(s) = scorer {
+        sim.brains.map.insert(name.to_string(), Box::new(brains::ScorerBrain::new(s)));
+    }
+    sim.trace_sink = Some(sink);
+    let per_day = sim.content.calendar.ticks_per_day();
+    let t0 = Instant::now();
+    for _ in 0..days * per_day {
+        if name != "rules" {
+            let ids: Vec<sim::PersonId> = sim.people.iter().filter(|(_, p)| p.alive && p.brain != name).map(|(id, _)| id).collect();
+            for id in ids {
+                sim.set_brain(id, name);
+            }
+        }
+        sim.step();
+    }
+    (sim, t0.elapsed().as_secs_f64())
+}
+
+/// How a colony ended up.
+fn outcome(sim: &Sim) -> Outcome {
+    let c = &sim.content;
+    let mut o = Outcome { alive: sim.alive() as f64, ..Default::default() };
+    for (_, p) in sim.people.iter() {
+        if p.family.mother.is_some() {
+            o.born += 1.0;
+        }
+        if let Some((_, cause)) = &p.died {
+            o.died += 1.0;
+            if matches!(cause.as_str(), "starvation" | "thirst" | "the cold") {
+                o.starved_or_cold += 1.0;
+            }
+        }
+        if p.alive {
+            o.hobbies += p.hobby_acts().len() as f64;
+        }
+    }
+    o.homes = sim.structures.iter().filter(|(_, s)| s.done() && c.buildings[s.kind as usize].sleeps > 0).count() as f64;
+    o.grain = sim.structures.iter().map(|(_, s)| s.harvested as f64).sum();
+    o.made = sim.works.len() as f64 + sim.structures.iter().map(|(_, s)| s.decor as f64).sum::<f64>();
+    o
+}
+
+impl Outcome {
+    fn add(&mut self, o: &Outcome) {
+        for (t, v) in [(&mut self.alive, o.alive), (&mut self.born, o.born), (&mut self.died, o.died), (&mut self.starved_or_cold, o.starved_or_cold), (&mut self.homes, o.homes), (&mut self.grain, o.grain), (&mut self.made, o.made), (&mut self.hobbies, o.hobbies), (&mut self.agree, o.agree), (&mut self.decisions, o.decisions), (&mut self.micros, o.micros)] {
+            *t += v;
+        }
+    }
+}
+
+/// How often a brain's choice was the rules brain's, and where they differed: (what rules would
+/// have done, what the brain did) -> count, by kind of action.
+#[derive(Default)]
+struct Agreement {
+    same: u64,
+    all: u64,
+    differ: Differ,
+}
+
+/// (what rules would have done, what the brain did) -> how often.
+type Differ = BTreeMap<(String, String), u64>;
+
+fn agreement_sink() -> (sim::sim::TraceSink, std::sync::Arc<std::sync::Mutex<Agreement>>) {
+    let agree = std::sync::Arc::new(std::sync::Mutex::new(Agreement::default()));
+    let ag = agree.clone();
+    let content = sim::content::Content::base();
+    let sink: sim::sim::TraceSink = Box::new(move |t: &sim::brain::Trace| {
+        let mut g = ag.lock().unwrap();
+        g.same += (t.choice == t.rules_choice) as u64;
+        g.all += 1;
+        let kind = |i: usize| t.request.options.get(i).map_or("?".to_string(), |o| o.kind.name(&content));
+        let (r, b) = (kind(t.rules_choice), kind(t.choice));
+        if r != b {
+            *g.differ.entry((r, b)).or_default() += 1;
+        }
+    });
+    (sink, agree)
+}
+
 /// The same worlds with different brains, compared (ARCHITECTURE.md section 9).
 fn cmd_arena(a: &Args) {
     let seeds = a.range("seeds", (1, 3));
     let days = a.num("days", 48u64);
     let names: Vec<String> = a.opts.get("brains").cloned().unwrap_or_else(|| "rules".into()).split(',').map(|s| s.trim().to_string()).collect();
     let out = PathBuf::from(a.opts.get("out").cloned().unwrap_or_else(|| "runs/arena".into()));
+    let beauty_off = a.opts.contains_key("beauty-off");
     let mut rows: Vec<(String, Outcome)> = Vec::new();
+    let mut differs: Vec<(String, Differ)> = Vec::new();
     for name in &names {
         let mut total = Outcome::default();
+        let mut differ: Differ = BTreeMap::new();
         for &seed in &seeds {
-            let mut sim = Sim::new(seed, a.num("size", 256u32));
-            sim.mode = "lockstep".into();
-            // The beauty question: does a brain make beauty when it doesn't matter?
-            if a.opts.contains_key("beauty-off") {
-                sim.command(sim::Command::SetBeautyMatters { on: false });
-            }
             let scorer = if name == "rules" {
                 None
             } else {
                 let path = PathBuf::from(format!("brain/models/{name}.json"));
                 Some(brains::Scorer::load(&path).unwrap_or_else(|e| die(&format!("can't load brain '{name}': {e}"))))
             };
-            if let Some(s) = scorer {
-                sim.brains.map.insert(name.clone(), Box::new(brains::ScorerBrain::new(s)));
-            }
-            let agree = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64)));
-            let ag = agree.clone();
-            sim.trace_sink = Some(Box::new(move |t: &sim::brain::Trace| {
-                let mut g = ag.lock().unwrap();
-                g.0 += (t.choice == t.rules_choice) as u64;
-                g.1 += 1;
-            }));
-            let per_day = sim.content.calendar.ticks_per_day();
-            let t0 = Instant::now();
-            for _ in 0..days * per_day {
-                let ids: Vec<sim::PersonId> = sim.people.iter().filter(|(_, p)| p.alive && &p.brain != name).map(|(id, _)| id).collect();
-                for id in ids {
-                    sim.set_brain(id, name);
-                }
-                sim.step();
-            }
-            let secs = t0.elapsed().as_secs_f64();
-            let c = &sim.content;
-            let mut o = Outcome { alive: sim.alive() as f64, ..Default::default() };
-            for (_, p) in sim.people.iter() {
-                if p.family.mother.is_some() {
-                    o.born += 1.0;
-                }
-                if let Some((_, cause)) = &p.died {
-                    o.died += 1.0;
-                    if matches!(cause.as_str(), "starvation" | "thirst" | "the cold") {
-                        o.starved_or_cold += 1.0;
-                    }
-                }
-                if p.alive {
-                    o.hobbies += p.hobby_acts().len() as f64;
-                }
-            }
-            o.homes = sim.structures.iter().filter(|(_, s)| s.done() && c.buildings[s.kind as usize].sleeps > 0).count() as f64;
-            o.grain = sim.structures.iter().map(|(_, s)| s.harvested as f64).sum();
-            o.made = sim.works.len() as f64 + sim.structures.iter().map(|(_, s)| s.decor as f64).sum::<f64>();
+            let (sink, agree) = agreement_sink();
+            let (sim, secs) = run_colony(seed, days, a.num("size", 256u32), name, scorer, beauty_off, sink);
+            let mut o = outcome(&sim);
             let g = agree.lock().unwrap();
-            o.agree = g.0 as f64;
-            o.decisions = g.1 as f64;
+            o.agree = g.same as f64;
+            o.decisions = g.all as f64;
             o.micros = secs * 1e6;
-            println!("  {name} seed {seed}: {} alive, {} died ({} of hunger, thirst or cold), {} homes, {} grain, {} made; {:.1} s", o.alive, o.died, o.starved_or_cold, o.homes, o.grain, o.made, secs);
-            for (t, v) in [(&mut total.alive, o.alive), (&mut total.born, o.born), (&mut total.died, o.died), (&mut total.starved_or_cold, o.starved_or_cold), (&mut total.homes, o.homes), (&mut total.grain, o.grain), (&mut total.made, o.made), (&mut total.hobbies, o.hobbies), (&mut total.agree, o.agree), (&mut total.decisions, o.decisions), (&mut total.micros, o.micros)] {
-                *t += v;
+            for (k, n) in &g.differ {
+                *differ.entry(k.clone()).or_default() += n;
             }
+            println!("  {name} seed {seed}: {} alive, {} died ({} of hunger, thirst or cold), {} homes, {} grain, {} made; {:.1} s", o.alive, o.died, o.starved_or_cold, o.homes, o.grain, o.made, secs);
+            total.add(&o);
         }
         rows.push((name.clone(), total));
+        differs.push((name.clone(), differ));
     }
     let n = seeds.len() as f64;
-    let beauty = if a.opts.contains_key("beauty-off") { " (beauty doesn't matter)" } else { "" };
-    let mut report = format!("# Arena: seeds {}..{}, {days} days each{beauty}\n\nMeans per colony.\n\n| Brain | Alive | Born | Died | Of hunger, thirst or cold | Homes | Grain | Things made | Hobbies | Agrees with rules |\n|---|---|---|---|---|---|---|---|---|---|\n", seeds[0], seeds[seeds.len() - 1]);
+    let beauty = if beauty_off { " (beauty doesn't matter)" } else { "" };
+    let list = if seeds.windows(2).all(|w| w[1] == w[0] + 1) { format!("seeds {}..{}", seeds[0], seeds[seeds.len() - 1]) } else { format!("seeds {}", seeds.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ")) };
+    let mut report = format!("# Arena: {list}, {days} days each{beauty}\n\nMeans per colony.\n\n| Brain | Alive | Born | Died | Of hunger, thirst or cold | Homes | Grain | Things made | Hobbies | Agrees with rules |\n|---|---|---|---|---|---|---|---|---|---|\n");
     for (name, t) in &rows {
         report += &format!(
             "| {name} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.0} | {:.1} | {:.1} | {:.0}% |\n",
@@ -754,11 +810,109 @@ fn cmd_arena(a: &Args) {
             100.0 * t.agree / t.decisions.max(1.0)
         );
     }
+    // Where each brain parts from rules most often, by kind of action.
+    for (name, differ) in differs.iter().filter(|(n, _)| n != "rules") {
+        let all = rows.iter().find(|(r, _)| r == name).map_or(1.0, |(_, t)| t.decisions.max(1.0));
+        let mut top: Vec<_> = differ.iter().collect();
+        top.sort_by(|a, b| b.1.cmp(a.1));
+        report += &format!("\n**Where {name} parts from rules most** (rules would have, it did instead; share of all decisions):\n\n");
+        for ((r, b), k) in top.into_iter().take(8) {
+            report += &format!("- {r} → {b}: {:.1}%\n", 100.0 * *k as f64 / all);
+        }
+    }
     std::fs::create_dir_all(&out).ok();
     let path = out.join("report.md");
     std::fs::write(&path, &report).unwrap_or_else(|e| die(&format!("can't write {}: {e}", path.display())));
     println!("{report}");
     println!("wrote {}", path.display());
+}
+
+/// Distil the rules brain into a scorer, with rounds of relabelled play (ARCHITECTURE.md
+/// section 9). Round 0 learns from rules colonies. Each later round lets the scorer run the
+/// colonies itself, and the rules brain says what it would have done in every situation the
+/// scorer got into; those join the data and the scorer is trained again. A scorer trained only on
+/// the teacher's own colonies never sees its own mistakes, so in play they compound.
+fn cmd_distill(a: &Args) {
+    let seeds = a.range("seeds", (1, 12));
+    let days = a.num("days", 12u64);
+    let rounds = a.num("rounds", 3usize);
+    let epochs = a.num("epochs", 12usize);
+    let size = a.num("size", 256u32);
+    let out = PathBuf::from(a.opts.get("out").cloned().unwrap_or_else(|| "brain/models/scorer@rules-v2.json".into()));
+    let name = out.file_stem().map_or("scorer".into(), |s| s.to_string_lossy().to_string());
+    // Keep this share of decisions (picked by hash, so the same ones each run): two years of a
+    // dozen colonies is a lot of decisions, and neighbouring ones are much alike.
+    let keep = a.num("keep", 0.5f64);
+    let content = sim::content::Content::base();
+    // Decisions from one colony, labelled with the rules brain's choice.
+    let collect = |seed: u64, scorer: Option<brains::Scorer>| -> (Vec<brains::scorer::Example>, Outcome) {
+        let got = std::sync::Arc::new(std::sync::Mutex::new((Vec::new(), 0u64, 0u64)));
+        let g2 = got.clone();
+        let c = content.clone();
+        let sink: sim::sim::TraceSink = Box::new(move |t: &sim::brain::Trace| {
+            let mut g = g2.lock().unwrap();
+            g.1 += (t.choice == t.rules_choice) as u64;
+            g.2 += 1;
+            if (sim::hash::hash2(t.seed ^ 0xD15, t.person.index as i32, t.tick as i32) % 10_000) as f64 >= keep * 10_000.0 {
+                return;
+            }
+            let mut t = t.clone();
+            t.choice = t.rules_choice;
+            t.brain = "rules".into();
+            t.fallback = false;
+            if let Some(e) = brains::scorer::Example::from_trace(&t, &|o: &sim::brain::Choice| o.kind.name(&c)) {
+                g.0.push(e);
+            }
+        });
+        let brain = if scorer.is_some() { name.as_str() } else { "rules" };
+        let (sim, _) = run_colony(seed, days, size, brain, scorer, false, sink);
+        let mut o = outcome(&sim);
+        let mut g = got.lock().unwrap();
+        o.agree = g.1 as f64;
+        o.decisions = g.2 as f64;
+        (std::mem::take(&mut g.0), o)
+    };
+    let mut data = Vec::new();
+    for &seed in &seeds {
+        data.extend(collect(seed, None).0);
+    }
+    let t0 = Instant::now();
+    // Each round's scorer is saved too (name-r0, -r1...), so the arena can say which plays best:
+    // agreement on held-out decisions doesn't tell you that.
+    let save_round = |s: &brains::Scorer, round: usize| {
+        let path = out.with_file_name(format!("{name}-r{round}.json"));
+        let mut s = s.clone();
+        s.name = format!("{name}-r{round}");
+        s.save(&path).unwrap_or_else(|e| die(&format!("can't write {}: {e}", path.display())));
+    };
+    let mut scorer = brains::scorer::train(&name, &data, epochs);
+    save_round(&scorer, 0);
+    println!("round 0: {} from rules colonies; held-out agreement {:.1}% ({:.0} s)", data.len(), scorer.held_out_agreement * 100.0, t0.elapsed().as_secs_f64());
+    // Held-out seeds stay out of the scorer's own play, so the agreement figure stays honest.
+    let play: Vec<u64> = seeds.iter().copied().filter(|s| s % 5 != 0).collect();
+    for round in 1..=rounds {
+        let mut total = Outcome::default();
+        for &seed in &play {
+            let (ex, o) = collect(seed, Some(scorer.clone()));
+            data.extend(ex);
+            total.add(&o);
+        }
+        let n = play.len() as f64;
+        println!(
+            "round {round}: the scorer played {} colonies: {:.1} alive, {:.1} died of hunger, thirst or cold, {:.0} grain, agreeing with rules {:.0}% of the time",
+            play.len(),
+            total.alive / n,
+            total.starved_or_cold / n,
+            total.grain / n,
+            100.0 * total.agree / total.decisions.max(1.0)
+        );
+        scorer = brains::scorer::train(&name, &data, epochs);
+        save_round(&scorer, round);
+        println!("  retrained on {}: held-out agreement {:.1}%", data.len(), scorer.held_out_agreement * 100.0);
+    }
+    scorer.trained_on = format!("{} (rules colonies on seeds {}..{}, {days} days, then {rounds} rounds of its own play relabelled by rules)", scorer.trained_on, seeds[0], seeds[seeds.len() - 1]);
+    scorer.save(&out).unwrap_or_else(|e| die(&format!("can't write {}: {e}", out.display())));
+    println!("wrote {}", out.display());
 }
 
 /// Branch a saved world (M9): load it, give its chance events a new branch, optionally put

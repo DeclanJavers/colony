@@ -437,6 +437,9 @@ pub struct Renderer {
     tiles_beauty: Option<u64>,
     /// The map version the nodes and tiles were last built from.
     pub world_version: u64,
+    /// Draw shadows (off in the lower-power preset: the shadow map is only cleared, so
+    /// everything is lit).
+    pub shadows: bool,
     ground: terrain::Ground,
 }
 
@@ -741,6 +744,7 @@ impl Renderer {
             tiles_cache: Vec::new(),
             tiles_beauty: None,
             world_version: map.version,
+            shadows: true,
             ground: terrain::Ground::new(map),
         };
         r.build_terrain(map);
@@ -1409,19 +1413,21 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, &self.globals_bg, &[]);
-            pass.set_pipeline(&self.shadow_terrain_pipe);
-            for c in &self.chunks {
-                if visible(&sun_vp, c.min, c.max) {
-                    pass.set_vertex_buffer(0, c.vb.slice(..));
-                    pass.set_index_buffer(c.ib.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..c.count, 0, 0..1);
+            if self.shadows {
+                pass.set_bind_group(0, &self.globals_bg, &[]);
+                pass.set_pipeline(&self.shadow_terrain_pipe);
+                for c in &self.chunks {
+                    if visible(&sun_vp, c.min, c.max) {
+                        pass.set_vertex_buffer(0, c.vb.slice(..));
+                        pass.set_index_buffer(c.ib.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..c.count, 0, 0..1);
+                    }
                 }
+                pass.set_pipeline(&self.shadow_model_pipe);
+                Self::draw_models(&mut pass, &self.models, &sun_vp);
+                self.draw_dynamic(&mut pass);
+                self.draw_people(&mut pass, true);
             }
-            pass.set_pipeline(&self.shadow_model_pipe);
-            Self::draw_models(&mut pass, &self.models, &sun_vp);
-            self.draw_dynamic(&mut pass);
-            self.draw_people(&mut pass, true);
         }
         // 2. The scene, at low resolution
         let low = self.low.as_ref().unwrap();

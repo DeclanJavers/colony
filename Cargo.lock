@@ -311,6 +311,8 @@ dependencies = [
  "png",
  "pollster",
  "render",
+ "serde",
+ "serde_json",
  "sim",
  "ui",
  "wgpu",

@@ -16,6 +16,11 @@ pub mod hash;
 pub mod ids;
 pub mod leisure;
 pub mod life;
+pub mod pack;
+/// Expansions compiled in (pack.rs).
+pub mod packs {
+    pub mod hunting;
+}
 pub mod path;
 pub mod people;
 pub mod rng;

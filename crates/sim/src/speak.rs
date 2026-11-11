@@ -23,6 +23,14 @@ pub fn read(words: &str, c: &Content) -> (Vec<String>, Vec<String>) {
     let lower = words.to_lowercase();
     let said: Vec<&str> = lower.split(|ch: char| !ch.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
     let exact = |w: &str| c.speak.topics.iter().any(|t| t.words.iter().any(|k| k == w));
+    // A phrase ("nowhere to sleep") takes its words with it: they don't count again alone.
+    let mut taken: Vec<&str> = Vec::new();
+    for t in &c.speak.topics {
+        for k in t.words.iter().filter(|k| k.contains(' ') && lower.contains(k.as_str())) {
+            taken.extend(k.split(' '));
+        }
+    }
+    let said: Vec<&str> = said.into_iter().filter(|w| !taken.contains(w)).collect();
     let mut acts: Vec<String> = Vec::new();
     let mut read_as: Vec<String> = Vec::new();
     for t in &c.speak.topics {

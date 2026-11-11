@@ -376,6 +376,11 @@ impl Ui {
         self.tooltip = Some((x, y, lines));
     }
 
+    /// The frame's glyphs never reached the GPU (nothing was drawn): send the atlas again next time.
+    pub fn resend_atlas(&mut self) {
+        self.atlas_dirty = true;
+    }
+
     /// Finish the frame: draw the tooltip and hand over the triangles (and the atlas if changed).
     pub fn finish(&mut self) -> Output<'_> {
         if let Some((x, y, lines)) = self.tooltip.take() {

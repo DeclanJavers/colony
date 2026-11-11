@@ -12,12 +12,17 @@
 //! the nearest node of a kind to the camp, e.g. grave, berry_bush), --lens traffic|mood|needs,
 //! --detail minimal|normal|analyst, --cursor X,Y (hover there), --no-ui.
 //!
+//! Menus (M10) show at launch, over the world from --seed; --no-menu skips them. For shots,
+//! --menu main|pause|new|load|save|settings shows one, and --ledger NAME opens a ledger.
+//!
 //! Controls: drag or two-finger scroll to pan, pinch or wheel to zoom, WASD/arrows, Z/X zoom,
 //! Space pause, 1/2/3 speed, T +1 hour, Y +1 day, F full screen, F3 hide the UI, L next lens,
-//! Esc close.
+//! Esc close (or the pause menu).
 
+mod drive;
 mod gpu;
 mod hud;
+mod saves;
 mod view;
 
 use glam::{Vec2, Vec3};
@@ -126,6 +131,17 @@ const MINUTES_PER_SECOND: f32 = 3.0;
 impl World {
     fn new(a: &Args) -> World {
         let mut sim = Sim::new(a.num("seed", 2u64), a.num("size", 256u32));
+        // `--give house,berries`: gifts at the start (for screenshots of them).
+        if let Some(list) = a.get("give") {
+            for what in list.split(',') {
+                let g = if sim.content.buildings.iter().any(|b| b.id == what) {
+                    sim::commands::Gift::Building { kind: what.into() }
+                } else {
+                    sim::commands::Gift::Items { item: what.into(), amount: 30 }
+                };
+                sim.command(sim::Command::Gift(g));
+            }
+        }
         let cal = &sim.content.calendar;
         let day = a.num("day", 1u64).max(1) - 1;
         let hour: f32 = a.num("time", 10.0);
@@ -133,6 +149,11 @@ impl World {
         if target > sim.tick {
             sim.run_ticks(target - sim.tick);
         }
+        World::from_sim(sim)
+    }
+
+    /// A world for a sim (new, or loaded from a save).
+    fn from_sim(sim: Sim) -> World {
         let prev = view::poses(&sim);
         let ground = render::terrain::Ground::new(&sim.map);
         World { sim, paused: false, speed: 1.0, carry: 0.0, prev, ground, pause_on: None, caught: None, ai: hud::Ai::Low, driver: None }
@@ -193,6 +214,8 @@ impl World {
 
     fn advance(&mut self, dt: f32) {
         if self.paused {
+            // God tools still land while paused (at this tick, as they would on the next).
+            self.sim.apply_commands();
             return;
         }
         // On Max, time waits while Haiku decides (it answers in a few seconds).
@@ -279,12 +302,21 @@ impl World {
     }
 
     fn status(&self, fps: f32, frame_ms: f32, selected: Option<view::Pick>, hovered: Option<view::Pick>) -> hud::Status {
-        hud::Status { paused: self.paused, speed: self.speed, fps, frame_ms, selected, hovered, pause_on: self.pause_on.map(|w| w.0), ai: self.ai, deciding: self.sim.brains_in_flight(), heads: Vec::new() }
+        hud::Status { paused: self.paused, speed: self.speed, fps, frame_ms, selected, hovered, pause_on: self.pause_on.map(|w| w.0), ai: self.ai, deciding: self.sim.brains_in_flight(), heads: Vec::new(), in_game: true, following: None, slots: Vec::new(), app: saves::AppSettings::default() }
     }
 
     fn nodes(&self) -> Vec<sim::Node> {
         self.sim.nodes.iter().map(|(_, n)| n.clone()).collect()
     }
+}
+
+/// The camera on the start site, at the usual zoom.
+fn home_camera(sim: &Sim) -> Camera {
+    let (sx, sy) = sim.map.start;
+    let (x, z) = (sx as f32 + 0.5, sy as f32 + 0.5);
+    let mut cam = Camera::new(Vec3::new(x, render::terrain::Ground::new(&sim.map).height(x, z), z));
+    cam.size = 16.0;
+    cam
 }
 
 fn start_camera(sim: &Sim, a: &Args) -> Camera {
@@ -392,8 +424,24 @@ fn stage_ui(a: &Args, world: &mut World, size: (u32, u32)) -> Option<Staged> {
     });
     let selected = thing.or(person.map(view::Pick::Person));
     hud.settings = a.has("settings");
+    hud.gifting = a.has("gifting");
+    if let Some(l) = a.get("ledger").and_then(hud::Ledger::from_name) {
+        hud.open_ledger(Some(l));
+    }
+    hud.menu = match a.get("menu") {
+        Some("main") => Some(hud::Menu::Main),
+        Some("pause") => Some(hud::Menu::Pause),
+        Some("new") => Some(hud::Menu::new_world(world.sim.seed)),
+        Some("load") => Some(hud::Menu::Slots { saving: false }),
+        Some("save") => Some(hud::Menu::Slots { saving: true }),
+        Some("settings") => Some(hud::Menu::Settings),
+        _ => None,
+    };
+    if matches!(hud.menu, Some(hud::Menu::Pause)) {
+        hud.menu_home = hud::Menu::Pause;
+    }
     if a.has("arena") {
-        hud.arena = Some(std::fs::read_to_string("runs/arena/report.md").unwrap_or_default());
+        hud.open_ledger(Some(hud::Ledger::Arena));
     }
     if let (Some(words), Some(p)) = (a.get("speak"), person) {
         hud.speaking = Some((p, words.to_string()));
@@ -423,6 +471,7 @@ fn stage_ui(a: &Args, world: &mut World, size: (u32, u32)) -> Option<Staged> {
     }
     if a.has("history") {
         hud.history = Some(a.get("history").and_then(|v| v.parse().ok()).unwrap_or(0));
+        hud.ledger = Some(hud::Ledger::History);
     }
     let cursor = a
         .get("cursor")
@@ -442,6 +491,11 @@ fn headless_scale(size: (u32, u32)) -> f32 {
 
 fn shot(a: &Args, path: PathBuf) {
     let mut world = World::new(a);
+    // `--make-save N`: save this world into slot N first (for shots of the save menus; point
+    // COLONY_DATA at a scratch folder).
+    if let Some(slot) = a.get("make-save").and_then(|v| v.parse().ok()) {
+        saves::save(&world.sim, slot).and_then(|j| j.wait()).unwrap_or_else(|e| panic!("save: {e}"));
+    }
     let size = a.size("shot-size", (1600, 1000));
     let mut r = headless_renderer(&world);
     let mut cam = start_camera(&world.sim, a);
@@ -483,6 +537,8 @@ fn shot(a: &Args, path: PathBuf) {
     let shot_heads = heads(&r, &world.sim, &people, size);
     let ui = staged.as_mut().map(|st| {
         let mut status = world.status(60.0, 16.7, st.selected, st.hovered);
+        status.slots = saves::list();
+        status.in_game = a.get("menu") != Some("main");
         status.heads = shot_heads.clone();
         st.hud.ui.begin((size.0 as f32, size.1 as f32), headless_scale(size), ui::Input { cursor: st.cursor, clicked: false, scroll: 0.0 });
         st.hud.frame(&world.sim, &status);
@@ -681,7 +737,26 @@ struct App {
     perf_secs: Option<f64>,
     hovered: Option<view::Pick>,
     selected: Option<view::Pick>,
+    // Menus, saves and settings (M10)
+    /// A world is being played (false while the launch menu shows over the backdrop world).
+    in_game: bool,
+    slots: Vec<saves::SlotInfo>,
+    app: saves::AppSettings,
+    save_job: Option<(sim::save::SaveJob, u32)>,
+    last_autosave: Instant,
+    /// Whether the world was paused when the pause menu opened.
+    was_paused: bool,
+    quit: bool,
+    /// Driven from outside (`--drive DIR`), and a screenshot it asked for.
+    drive: Option<drive::Drive>,
+    shot_next: Option<PathBuf>,
+    /// The camera keeping someone in view, or gliding to a spot.
+    follow: Option<sim::PersonId>,
+    glide: Option<Vec2>,
 }
+
+/// Autosave at most this often (real seconds), on the next morning in the game.
+const AUTOSAVE_SECS: u64 = 180;
 
 impl App {
     fn new(args: Args) -> App {
@@ -709,7 +784,298 @@ impl App {
             perf_secs,
             hovered: None,
             selected: None,
+            in_game: false,
+            slots: saves::list(),
+            app: saves::AppSettings::load(),
+            save_job: None,
+            last_autosave: Instant::now(),
+            was_paused: false,
+            quit: false,
+            drive: args.get("drive").map(|d| drive::Drive::new(PathBuf::from(d))),
+            shot_next: None,
+            follow: None,
+            glide: None,
             args,
+        }
+    }
+
+    /// Play another world (new, or loaded): a fresh renderer for its map, the camera at its camp.
+    /// The world being played is kept first ("Your previous world"), so nothing is lost.
+    fn replace_world(&mut self, sim: Sim) {
+        if self.in_game && self.args.get("perf").is_none() {
+            if let Some((job, _)) = self.save_job.take() {
+                let _ = job.wait();
+            }
+            if let Ok(job) = saves::save(&self.world.sim, saves::BEFORE) {
+                let _ = job.wait();
+            }
+        }
+        let paused = self.in_game && (self.world.paused || self.was_paused);
+        self.world = World::from_sim(sim);
+        self.world.paused = paused;
+        self.was_paused = paused;
+        self.follow = None;
+        self.glide = None;
+        self.camera = home_camera(&self.world.sim);
+        self.size_target = self.camera.size;
+        self.selected = None;
+        self.hovered = None;
+        if let Some(g) = self.gfx.as_mut() {
+            let nodes = self.world.nodes();
+            let (d, q) = (g.renderer.device().clone(), g.renderer.queue().clone());
+            match Renderer::new(d, q, g.config.format, &self.world.sim.map, &nodes, &self.world.sim.content, &assets_dir()) {
+                Ok(r) => g.renderer = r,
+                Err(e) => eprintln!("colony: renderer for the new world: {e}"),
+            }
+        }
+        if let Some(h) = self.hud.as_mut() {
+            h.reset_world(&self.world.sim);
+        }
+        self.slots = saves::list();
+        self.in_game = true;
+        self.last_autosave = Instant::now();
+        self.apply_settings();
+    }
+
+    fn new_world(&mut self, seed: u64, size: u32, beauty: bool, packs: Vec<String>) {
+        let mut sim = Sim::new(seed, size);
+        // Packs are chosen when a world is made, and kept with it.
+        sim.settings.packs = packs;
+        if !beauty {
+            sim.command(sim::Command::SetBeautyMatters { on: false });
+        }
+        self.replace_world(sim);
+        // A new world starts running (a loaded one keeps the pause it was loaded in).
+        self.world.paused = false;
+        self.was_paused = false;
+    }
+
+    fn save(&mut self, slot: u32, quiet: bool) {
+        // One save at a time: finish the last first.
+        if let Some((job, _)) = self.save_job.take() {
+            let _ = job.wait();
+        }
+        match saves::save(&self.world.sim, slot) {
+            Ok(job) => {
+                self.save_job = Some((job, slot));
+                if !quiet && let Some(h) = self.hud.as_mut() {
+                    let name = if slot == saves::AUTOSAVE { "the autosave".to_string() } else { format!("slot {slot}") };
+                    h.note(format!("Saved to {name}: {}", saves::describe(&self.world.sim)), self.world.sim.tick);
+                }
+            }
+            Err(e) => {
+                if let Some(h) = self.hud.as_mut() {
+                    h.note(format!("Couldn't save: {e}"), self.world.sim.tick);
+                }
+            }
+        }
+    }
+
+    fn load(&mut self, slot: u32) {
+        if let Some((job, _)) = self.save_job.take() {
+            let _ = job.wait();
+        }
+        match saves::load(slot) {
+            Ok(sim) => {
+                self.replace_world(sim);
+                if let Some(h) = self.hud.as_mut() {
+                    h.menu = None;
+                    h.note(format!("Loaded: {}", saves::describe(&self.world.sim)), self.world.sim.tick);
+                }
+            }
+            Err(e) => {
+                if let Some(h) = self.hud.as_mut() {
+                    h.note(format!("Couldn't load that save: {e}"), self.world.sim.tick);
+                    h.menu = Some(h.menu_home.clone());
+                }
+            }
+        }
+    }
+
+    /// Put the app settings into effect.
+    fn apply_settings(&mut self) {
+        let lower = self.app.power == saves::Power::Lower;
+        if let Some(g) = self.gfx.as_mut() {
+            g.renderer.shadows = !lower;
+            let full = g.window.fullscreen().is_some();
+            if full != self.app.fullscreen {
+                g.window.set_fullscreen(if self.app.fullscreen { Some(Fullscreen::Borderless(None)) } else { None });
+            }
+        }
+        if lower {
+            self.world.set_ai(hud::Ai::Low);
+        }
+    }
+
+    /// A key, from the keyboard or the driver: the menus first, then typing, then the shortcuts.
+    fn key(&mut self, code: KeyCode, text: Option<&str>, pressed: bool, repeat: bool) {
+        // The menus (M10): Esc goes back; the new-world menu takes the seed's digits.
+        if let Some(h) = self.hud.as_mut()
+            && h.menu.is_some()
+        {
+            if pressed {
+                match code {
+                    KeyCode::Escape => {
+                        if h.menu_back(self.in_game) && h.menu.is_none() {
+                            self.close_menu();
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::NumpadEnter => {
+                        if let Some(hud::Menu::NewWorld { seed, size, beauty, packs }) = h.menu.clone()
+                            && let Ok(seed) = seed.trim().parse::<u64>()
+                            && seed > 0
+                        {
+                            self.new_world(seed, size, beauty, packs);
+                            if let Some(h) = self.hud.as_mut() {
+                                h.menu = None;
+                            }
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        if let Some(seed) = h.typing_seed() {
+                            seed.pop();
+                        }
+                    }
+                    KeyCode::KeyF => {
+                        self.app.fullscreen = !self.app.fullscreen;
+                        self.app.store();
+                        self.apply_settings();
+                    }
+                    _ => {
+                        if let (Some(seed), Some(text)) = (h.typing_seed(), text) {
+                            for ch in text.chars().filter(|c| c.is_ascii_digit()) {
+                                if seed.len() < 12 {
+                                    seed.push(ch);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        // Typing words to someone (M8): keys go to the text, not the game's shortcuts.
+        if let Some(h) = self.hud.as_mut()
+            && let Some((who, words)) = h.speaking.as_mut()
+        {
+            if pressed {
+                match code {
+                    KeyCode::Enter | KeyCode::NumpadEnter => {
+                        let (who, said) = (*who, words.trim().to_string());
+                        h.speaking = None;
+                        if !said.is_empty() {
+                            self.world.sim.command(sim::Command::Speak { person: who, words: said });
+                        }
+                    }
+                    KeyCode::Escape => h.speaking = None,
+                    KeyCode::Backspace => {
+                        words.pop();
+                    }
+                    _ => {
+                        if let Some(text) = text {
+                            for ch in text.chars().filter(|c| !c.is_control()) {
+                                if words.chars().count() < 120 {
+                                    words.push(ch);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if pressed {
+            if !repeat {
+                match code {
+                    KeyCode::Space => self.world.paused = !self.world.paused,
+                    KeyCode::Digit1 => self.world.speed = 1.0,
+                    KeyCode::Digit2 => self.world.speed = 3.0,
+                    KeyCode::Digit3 => self.world.speed = 10.0,
+                    KeyCode::KeyT => self.world.sim.run_ticks(60 / self.world.sim.content.calendar.minutes_per_tick as u64),
+                    KeyCode::KeyY => {
+                        let d = self.world.sim.content.calendar.ticks_per_day();
+                        self.world.sim.run_ticks(d);
+                    }
+                    KeyCode::F3 => self.show_ui = !self.show_ui,
+                    KeyCode::KeyL => {
+                        if let Some(h) = self.hud.as_mut() {
+                            h.lens = match h.lens {
+                                hud::Lens::Off => hud::Lens::Traffic,
+                                hud::Lens::Traffic => hud::Lens::Mood,
+                                hud::Lens::Mood => hud::Lens::Needs,
+                                hud::Lens::Needs => hud::Lens::Soil,
+                                hud::Lens::Soil => hud::Lens::Beauty,
+                                hud::Lens::Beauty => hud::Lens::Off,
+                            };
+                        }
+                    }
+                    KeyCode::Escape => {
+                        // Close the nearest thing open; with nothing open, the pause menu.
+                        let h = self.hud.as_mut();
+                        match h {
+                            Some(h) if h.trace.is_some() => h.trace = None,
+                            Some(h) if h.ledger.is_some() => h.open_ledger(None),
+                            Some(h) if h.gifting || h.settings => {
+                                h.gifting = false;
+                                h.settings = false;
+                            }
+                            _ if self.follow.is_some() => self.take_camera(),
+                            _ if self.selected.is_some() => self.selected = None,
+                            Some(_) => self.open_pause(),
+                            None => {}
+                        }
+                    }
+                    KeyCode::KeyF => {
+                        self.app.fullscreen = !self.app.fullscreen;
+                        self.app.store();
+                        self.apply_settings();
+                    }
+                    _ => {}
+                }
+            }
+            self.keys.insert(code);
+        } else {
+            self.keys.remove(&code);
+        }
+    }
+
+    fn open_pause(&mut self) {
+        if let Some(h) = self.hud.as_mut() {
+            self.was_paused = self.world.paused;
+            self.world.paused = true;
+            h.menu_home = hud::Menu::Pause;
+            h.menu = Some(hud::Menu::Pause);
+            self.slots = saves::list();
+        }
+    }
+
+    fn close_menu(&mut self) {
+        if let Some(h) = self.hud.as_mut() {
+            h.menu = None;
+        }
+        if self.in_game {
+            self.world.paused = self.was_paused;
+        }
+        self.in_game = true;
+        self.was_paused = false;
+    }
+
+    /// Saves finishing, and the autosave each morning (at most every few minutes).
+    fn tend_saves(&mut self) {
+        if self.save_job.as_ref().is_some_and(|(j, _)| j.is_done()) {
+            if let Some((job, _)) = self.save_job.take()
+                && let Err(e) = job.wait()
+                && let Some(h) = self.hud.as_mut()
+            {
+                h.note(format!("Saving failed: {e}"), self.world.sim.tick);
+            }
+            self.slots = saves::list();
+        }
+        let cal = &self.world.sim.content.calendar;
+        let morning = cal.minute_of_day(self.world.sim.tick) < 60 * 7;
+        if self.in_game && self.save_job.is_none() && morning && self.last_autosave.elapsed().as_secs() >= AUTOSAVE_SECS && self.args.get("perf").is_none() {
+            self.last_autosave = Instant::now();
+            self.save(saves::AUTOSAVE, true);
         }
     }
 
@@ -745,8 +1111,15 @@ impl App {
         self.pan_pixels(Vec2::new(d.x, -d.y));
     }
 
+    /// The player moved the camera themselves: stop following or gliding.
+    fn take_camera(&mut self) {
+        self.follow = None;
+        self.glide = None;
+    }
+
     /// Pan by `d` window pixels (trackpad scrolling).
     fn pan_pixels(&mut self, d: Vec2) {
+        self.take_camera();
         let mpp = self.metres_per_pixel();
         let right = self.camera.right();
         let up = self.camera.ground_up();
@@ -799,6 +1172,7 @@ impl App {
             pan.y -= 1.0;
         }
         if pan != Vec2::ZERO {
+            self.take_camera();
             let r = self.camera.right();
             let u = self.camera.ground_up();
             let p = pan.normalize() * speed;
@@ -820,10 +1194,122 @@ impl App {
             self.camera.size = self.size_target;
         }
         self.settle_focus();
+        // Following someone, or gliding to a spot picked from a link.
+        if let Some(id) = self.follow {
+            match self.world.sim.people.get(id).filter(|p| p.alive) {
+                Some(p) => self.glide = Some(Vec2::new(p.pos.0, p.pos.1)),
+                None => self.follow = None,
+            }
+        }
+        if let Some(to) = self.glide {
+            let k = 1.0 - (-dt * 5.0).exp();
+            self.camera.focus.x += (to.x - self.camera.focus.x) * k;
+            self.camera.focus.z += (to.y - self.camera.focus.z) * k;
+            if self.follow.is_none() && (Vec2::new(self.camera.focus.x, self.camera.focus.z) - to).length() < 0.05 {
+                self.glide = None;
+            }
+            self.clamp_focus();
+        }
         self.world.advance(dt);
     }
 
+    /// Run the driver's commands that are due (`--drive`), through the same paths as real input.
+    fn run_drive(&mut self) {
+        let Some(d) = self.drive.as_mut() else { return };
+        if let Some((k, until)) = d.held
+            && Instant::now() >= until
+        {
+            d.held = None;
+            d.report("ok");
+            self.key(k, None, false, false);
+        }
+        let scale = self.gfx.as_ref().map_or(1.0, |g| g.window.scale_factor() as f32);
+        while let Some(step) = self.drive.as_mut().and_then(|d| d.step()) {
+            let mut said = "ok".to_string();
+            let mut stop = false;
+            match step {
+                drive::Step::Click(x, y) => {
+                    self.cursor = Vec2::new(x * scale, y * scale);
+                    self.click = true;
+                    stop = true;
+                }
+                drive::Step::Move(x, y) => {
+                    self.cursor = Vec2::new(x * scale, y * scale);
+                    stop = true;
+                }
+                drive::Step::Drag(x1, y1, x2, y2) => {
+                    self.drag_pixels(Vec2::new((x2 - x1) * scale, (y2 - y1) * scale));
+                    self.cursor = Vec2::new(x2 * scale, y2 * scale);
+                }
+                drive::Step::Scroll(dy) => {
+                    if self.hud.as_ref().is_some_and(|h| h.ui.over_ui()) {
+                        self.scroll += dy;
+                    } else {
+                        self.zoom_by(0.88f32.powf(dy));
+                    }
+                    stop = true;
+                }
+                drive::Step::Key(k) => {
+                    self.key(k, None, true, false);
+                    self.key(k, None, false, false);
+                    stop = true;
+                }
+                drive::Step::Hold(k, secs) => {
+                    self.key(k, None, true, false);
+                    if let Some(d) = self.drive.as_mut() {
+                        d.held = Some((k, Instant::now() + std::time::Duration::from_secs_f32(secs)));
+                    }
+                    break;
+                }
+                drive::Step::Type(text) => {
+                    let taking = self.hud.as_mut().is_some_and(|h| h.speaking.is_some() || h.typing_seed().is_some());
+                    if taking {
+                        for ch in text.chars() {
+                            let one = ch.to_string();
+                            self.key(KeyCode::F24, Some(&one), true, false);
+                            self.key(KeyCode::F24, None, false, false);
+                        }
+                    } else {
+                        said = "nothing is taking text right now (open the seed box or speak to someone first)".into();
+                    }
+                }
+                drive::Step::Shot(path) => {
+                    self.shot_next = Some(path);
+                    break;
+                }
+                drive::Step::Info => {
+                    let (w, h) = self.gfx.as_ref().map_or((0.0, 0.0), |g| (g.config.width as f32 / scale, g.config.height as f32 / scale));
+                    let who = match self.selected {
+                        Some(view::Pick::Person(id)) => self.world.sim.people.get(id).map_or("someone".into(), |p| p.name.clone()),
+                        Some(_) => "a thing".into(),
+                        None => "nobody".into(),
+                    };
+                    let menu = self.hud.as_ref().and_then(|h| h.menu.as_ref()).map_or("none".to_string(), |m| format!("{m:?}").split([' ', '{']).next().unwrap_or("").to_string());
+                    let ledger = self.hud.as_ref().and_then(|h| h.ledger).map_or("none", |l| l.name());
+                    said = format!(
+                        "window {w:.0}x{h:.0} · {} · {} · speed {}x · selected {who} · menu {menu} · ledger {ledger}",
+                        self.world.sim.describe_time(),
+                        if self.world.paused { "paused" } else { "running" },
+                        self.world.speed
+                    );
+                }
+                drive::Step::Quit => self.quit = true,
+            }
+            if let Some(d) = self.drive.as_mut() {
+                d.report(said);
+                if stop {
+                    // Let the input land (the UI sees it on the next frame) before going on.
+                    d.frames = 2;
+                }
+            }
+            if stop {
+                break;
+            }
+        }
+    }
+
     fn redraw(&mut self) {
+        self.run_drive();
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f64();
         self.last = now;
@@ -856,16 +1342,18 @@ impl App {
         let light = self.world.lighting();
         let Some(g) = self.gfx.as_mut() else { return };
         let t_acquire = Instant::now();
+        // No image from the window (it's covered, or just resized): carry on without one, so the
+        // UI still runs and a driver's screenshot is still taken offscreen.
         let frame = match g.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => Some(f),
             _ => {
                 g.surface.configure(g.renderer.device(), &g.config);
-                return;
+                None
             }
         };
         let acquire_ms = t_acquire.elapsed().as_secs_f64() * 1000.0;
         let t_draw = Instant::now();
-        let view = frame.texture.create_view(&Default::default());
+        let view = frame.as_ref().map(|f| f.texture.create_view(&Default::default()));
         if self.world.sim.map.version != g.renderer.world_version {
             let nodes = self.world.nodes();
             g.renderer.update_world(&self.world.sim.map, &nodes, &self.world.sim.content);
@@ -886,6 +1374,8 @@ impl App {
             self.selected = Some(view::Pick::Person(who));
         }
         let mut ui_out = None;
+        // Menu actions that replace the world or touch the app wait until the frame is drawn.
+        let mut later: Vec<hud::Action> = Vec::new();
         if self.show_ui
             && let Some(h) = self.hud.as_mut()
         {
@@ -895,10 +1385,26 @@ impl App {
             self.hovered = if over { None } else { picked };
             let mut status = self.world.status(self.fps.0, self.fps.1, self.selected, self.hovered);
             status.heads = heads(&g.renderer, &self.world.sim, &people, win);
-            h.ui.begin((win.0 as f32, win.1 as f32), scale, ui::Input { cursor: (self.cursor.x, self.cursor.y), clicked: click && !dragging, scroll });
+            status.in_game = self.in_game;
+            status.following = self.follow;
+            status.slots = self.slots.clone();
+            status.app = self.app.clone();
+            h.ui.begin((win.0 as f32, win.1 as f32), scale * self.app.ui_scale, ui::Input { cursor: (self.cursor.x, self.cursor.y), clicked: click && !dragging, scroll });
             for act in h.frame(&self.world.sim, &status) {
                 match act {
-                    hud::Action::Select(s) => self.selected = s,
+                    hud::Action::Select(s) => {
+                        // Picked from a link, a list or the feed: bring them into view.
+                        if let Some(view::Pick::Person(id)) = s
+                            && let Some(p) = self.world.sim.people.get(id)
+                        {
+                            self.glide = Some(Vec2::new(p.pos.0, p.pos.1));
+                        }
+                        self.selected = s;
+                    }
+                    hud::Action::Follow(f) => {
+                        self.follow = f;
+                        self.glide = None;
+                    }
                     hud::Action::Speed(v) => {
                         self.world.speed = v;
                         self.world.paused = false;
@@ -907,6 +1413,13 @@ impl App {
                     hud::Action::PauseOnNextDecision(who) => self.world.toggle_watch(who),
                     hud::Action::Command(c) => self.world.sim.command(c),
                     hud::Action::SetAi(ai) => self.world.set_ai(ai),
+                    hud::Action::Look((x, z)) => {
+                        let n = self.world.sim.map.size as f32;
+                        self.camera.focus.x = x.clamp(0.0, n);
+                        self.camera.focus.z = z.clamp(0.0, n);
+                    }
+                    hud::Action::OpenMenu(m) => h.menu = Some(m),
+                    other => later.push(other),
                 }
             }
             if click && !over && !h.ui.over_ui() && h.trace.is_none() {
@@ -920,7 +1433,7 @@ impl App {
                 self.selected = self.hovered;
             }
         }
-        g.renderer.render(&view, win, &Frame {
+        let fr = Frame {
             camera: &self.camera,
             light: &light,
             time: elapsed as f32,
@@ -932,12 +1445,59 @@ impl App {
             beauty: Some(&self.world.sim.beauty),
             animals: &animals,
             marker: self.selected.and_then(|p| view::marker(&self.world.sim, &self.world.ground, p)),
-        });
-        g.window.pre_present_notify();
-        g.renderer.queue().present(frame);
+        };
+        let atlas_sent = fr.ui.as_ref().is_some_and(|u| u.atlas.is_some());
+        let mut drawn = frame.is_some();
+        // A screenshot the driver asked for: the same frame, drawn offscreen and written as a PNG
+        // (before the done file, so whoever asked never reads half an image).
+        if let Some(path) = self.shot_next.take() {
+            // At window-point size (what `click` takes), unless the path ends "@2x.png".
+            let img = gpu::render_to_image(&mut g.renderer, win, &fr);
+            drawn = true;
+            let k = if path.to_string_lossy().ends_with("@2x.png") { 1 } else { scale.round().max(1.0) as u32 };
+            let (small, size) = gpu::shrink(&img, win, k);
+            gpu::write_png(&path, size, &small);
+            if let Some(d) = self.drive.as_mut() {
+                d.report(format!("ok {}", path.display()));
+                d.frames = 1;
+            }
+        }
+        if let (Some(view), Some(frame)) = (view, frame) {
+            g.renderer.render(&view, win, &fr);
+            g.window.pre_present_notify();
+            g.renderer.queue().present(frame);
+        }
+        // Nothing was drawn (no image from the window): new glyphs didn't reach the GPU yet.
+        if atlas_sent
+            && !drawn
+            && let Some(h) = self.hud.as_mut()
+        {
+            h.ui.resend_atlas();
+        }
         if self.perf_secs.is_some() && elapsed > 2.0 {
             self.split_ms.push((acquire_ms, t_draw.elapsed().as_secs_f64() * 1000.0));
         }
+        for act in later {
+            match act {
+                hud::Action::CloseMenu => self.close_menu(),
+                hud::Action::NewWorld { seed, size, beauty, packs } => self.new_world(seed, size, beauty, packs),
+                hud::Action::Save(slot) => {
+                    self.save(slot, false);
+                    if let Some(h) = self.hud.as_mut() {
+                        h.menu = Some(h.menu_home.clone());
+                    }
+                }
+                hud::Action::Load(slot) => self.load(slot),
+                hud::Action::Settings(s) => {
+                    self.app = s;
+                    self.app.store();
+                    self.apply_settings();
+                }
+                hud::Action::Quit => self.quit = true,
+                _ => {}
+            }
+        }
+        self.tend_saves();
     }
 }
 
@@ -964,13 +1524,26 @@ impl ApplicationHandler for App {
             self.selected = st.selected;
             self.hud = Some(st.hud);
         }
+        // The main menu, over the world from --seed (playing on behind it).
+        let menu = !(self.args.has("no-menu") || self.perf_secs.is_some());
+        match self.hud.as_mut() {
+            Some(h) if menu => {
+                h.menu_home = hud::Menu::Main;
+                h.menu = Some(hud::Menu::Main);
+            }
+            _ => self.in_game = true,
+        }
+        self.apply_settings();
         self.last = Instant::now();
         self.started = Instant::now();
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::CloseRequested => {
+                self.quit = true;
+                self.about_to_wait(el);
+            }
             WindowEvent::Resized(size) => {
                 if let Some(g) = self.gfx.as_mut()
                     && size.width > 0
@@ -984,81 +1557,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
-                // Typing words to someone (M8): keys go to the text, not the game's shortcuts.
-                if let Some(h) = self.hud.as_mut()
-                    && let Some((who, words)) = h.speaking.as_mut()
-                {
-                    if event.state == ElementState::Pressed {
-                        match code {
-                            KeyCode::Enter | KeyCode::NumpadEnter => {
-                                let (who, said) = (*who, words.trim().to_string());
-                                h.speaking = None;
-                                if !said.is_empty() {
-                                    self.world.sim.command(sim::Command::Speak { person: who, words: said });
-                                }
-                            }
-                            KeyCode::Escape => h.speaking = None,
-                            KeyCode::Backspace => {
-                                words.pop();
-                            }
-                            _ => {
-                                if let Some(text) = event.text.as_ref() {
-                                    for ch in text.chars().filter(|c| !c.is_control()) {
-                                        if words.chars().count() < 120 {
-                                            words.push(ch);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    return;
-                }
-                if event.state == ElementState::Pressed {
-                    if !event.repeat {
-                        match code {
-                            KeyCode::Space => self.world.paused = !self.world.paused,
-                            KeyCode::Digit1 => self.world.speed = 1.0,
-                            KeyCode::Digit2 => self.world.speed = 3.0,
-                            KeyCode::Digit3 => self.world.speed = 10.0,
-                            KeyCode::KeyT => self.world.sim.run_ticks(60 / self.world.sim.content.calendar.minutes_per_tick as u64),
-                            KeyCode::KeyY => {
-                                let d = self.world.sim.content.calendar.ticks_per_day();
-                                self.world.sim.run_ticks(d);
-                            }
-                            KeyCode::F3 => self.show_ui = !self.show_ui,
-                            KeyCode::KeyL => {
-                                if let Some(h) = self.hud.as_mut() {
-                                    h.lens = match h.lens {
-                                        hud::Lens::Off => hud::Lens::Traffic,
-                                        hud::Lens::Traffic => hud::Lens::Mood,
-                                        hud::Lens::Mood => hud::Lens::Needs,
-                                        hud::Lens::Needs => hud::Lens::Soil,
-                                        hud::Lens::Soil => hud::Lens::Beauty,
-                                        hud::Lens::Beauty => hud::Lens::Off,
-                                    };
-                                }
-                            }
-                            KeyCode::Escape => {
-                                if let Some(h) = self.hud.as_mut().filter(|h| h.trace.is_some()) {
-                                    h.trace = None;
-                                } else {
-                                    self.selected = None;
-                                }
-                            }
-                            KeyCode::KeyF => {
-                                if let Some(g) = &self.gfx {
-                                    let full = g.window.fullscreen().is_some();
-                                    g.window.set_fullscreen(if full { None } else { Some(Fullscreen::Borderless(None)) });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    self.keys.insert(code);
-                } else {
-                    self.keys.remove(&code);
-                }
+                self.key(code, event.text.as_deref(), event.state == ElementState::Pressed, event.repeat);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let p = Vec2::new(position.x as f32, position.y as f32);
@@ -1097,7 +1596,31 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        if self.quit {
+            // Keep the world: the autosave first (a quick save, waited for).
+            if self.in_game && self.args.get("perf").is_none() {
+                self.save(saves::AUTOSAVE, true);
+            }
+            if let Some((job, _)) = self.save_job.take() {
+                let _ = job.wait();
+            }
+            if let Some(d) = self.drive.as_mut() {
+                d.report("quit (the autosave written first)");
+                d.flush();
+            }
+            el.exit();
+            return;
+        }
+        // Lower power: at most 60 frames a second.
+        if self.app.power == saves::Power::Lower {
+            let next = self.last + std::time::Duration::from_micros(16_667);
+            if Instant::now() < next {
+                el.set_control_flow(ControlFlow::WaitUntil(next));
+                return;
+            }
+        }
+        el.set_control_flow(ControlFlow::Poll);
         if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }

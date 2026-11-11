@@ -1,10 +1,10 @@
 //! Settling down (M6): building (start a home, a storehouse or a field; work on any site),
-//! sleeping at home, the field cycle (sow, tend, harvest), making spears and hunting. Options
+//! sleeping at home, and the field cycle (sow, tend, harvest). (Spears and hunting moved to the
+//! hunting pack in M10: packs/hunting.rs.) Options
 //! come from what a person believes and sees; anything that changes someone or something else is
 //! done here on the structure itself (structures are the sim's, not a person's) or as an `Effect`.
 
 use crate::actions::{Action, Anim, Ctx, Kind, Walk, choice, dist, walk};
-use crate::animals::AnimalId;
 use crate::brain::{Choice, Ending};
 use crate::buildings::{self, Crop, Structure, StructureId};
 use crate::content::Content;
@@ -12,7 +12,6 @@ use crate::events::Event;
 use crate::family::find;
 use crate::people::social::Stage;
 use crate::people::{Person, PersonId};
-use crate::social::Effect;
 
 /// The household's home (finished or not): one they started, or their partner did, or (for the
 /// young) their parents.
@@ -279,50 +278,9 @@ pub fn options(p: &Person, id: PersonId, ctx: &Ctx, state: &[(String, f32)], wal
                 _ => {}
             }
         }
-        // Spears (stonework), and hunting with one.
-        let (spear, wood, stone) = (c.item("spear"), c.item("wood"), c.item("stone"));
-        let sw = &c.actions.spear;
-        let spears = p.carry[spear] + b.items[spear];
-        if spears < 2 {
-            let stonework = c.skill("stonework");
-            let to_camp = dist(p.pos, ctx.camp.stores_pos());
-            if !p.knows(stonework, c) {
-                opts.push(Choice { label: "Make a spear".into(), kind: Kind::MakeSpear, features: Vec::new(), possible: false, why_not: Some("doesn't know stonework (to knap a point)".into()) });
-            } else if b.items[wood] >= sw.wood && b.items[stone] >= sw.stone {
-                opts.push(choice("Make a spear".into(), Kind::MakeSpear, c, vec![
-                    ("dist", to_camp),
-                    ("minutes", walk_minutes(to_camp) + sw.minutes as f32),
-                    ("spears", spears as f32),
-                    ("game_known", (!p.knowledge.animals.is_empty()) as u8 as f32),
-                ]));
-            }
-        }
-        if spears > 0 {
-            for (k, def) in c.animals.iter().enumerate() {
-                let near = p
-                    .knowledge
-                    .animals
-                    .iter()
-                    .filter(|(_, a)| a.kind == k as u16 && ctx.tick.saturating_sub(a.when) < 3 * 1440)
-                    .map(|(aid, a)| (*aid, a, dist(p.pos, (a.x, a.y))))
-                    .filter(|x| x.2 < 70.0)
-                    .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
-                if let Some((aid, a, d)) = near {
-                    let level = p.skill_level(c.skill("hunting"), c) as f32;
-                    // Herds keep to their range: a sighting from a day or two ago is still worth
-                    // following, though they may have moved on.
-                    let stale = ctx.tick.saturating_sub(a.when) as f32 / (3.0 * 1440.0);
-                    let chance = (def.hit * (0.7 + 0.06 * level)).min(0.95) * (1.0 - 0.5 * stale);
-                    let dir = crate::actions::direction(p.pos, (a.x, a.y));
-                    opts.push(choice(format!("Hunt {} {dir}", def.name.to_lowercase()), Kind::Hunt { animal: aid }, c, vec![
-                        ("dist", d),
-                        ("minutes", walk_minutes(d) * 1.3 + c.actions.hunt_minutes as f32 + walk_minutes(dist((a.x, a.y), ctx.camp.stores_pos()))),
-                        ("chance", chance),
-                        ("gain.meat", def.meat as f32 * chance),
-                        ("skill", level / 10.0),
-                    ]));
-                }
-            }
+        // What the packs on in this world add (pack.rs): spears and hunting, in the base.
+        for &k in ctx.packs {
+            crate::pack::get(k).options(p, id, ctx, walk_minutes, &mut opts);
         }
     }
     // Sleeping at home (anyone whose household has a finished home).
@@ -344,7 +302,7 @@ pub fn options(p: &Person, id: PersonId, ctx: &Ctx, state: &[(String, f32)], wal
     opts
 }
 
-fn practise(p: &mut Person, skill: &str, minutes: f32, ctx: &mut Ctx) {
+pub(crate) fn practise(p: &mut Person, skill: &str, minutes: f32, ctx: &mut Ctx) {
     let k = ctx.c.skill(skill);
     let before = p.skill_level(k, ctx.c);
     p.practice[k] += minutes;
@@ -354,19 +312,19 @@ fn practise(p: &mut Person, skill: &str, minutes: f32, ctx: &mut Ctx) {
     }
 }
 
-fn next_phase(a: &mut Action, ctx: &Ctx) {
+pub(crate) fn next_phase(a: &mut Action, ctx: &Ctx) {
     a.phase += 1;
     a.mark = ctx.tick;
     a.work_left = 0.0;
     a.path_ready = false;
 }
 
-fn minutes_in(a: &Action, ctx: &Ctx) -> f32 {
+pub(crate) fn minutes_in(a: &Action, ctx: &Ctx) -> f32 {
     (ctx.tick.saturating_sub(a.mark)) as f32 * ctx.c.calendar.minutes_per_tick as f32
 }
 
 /// Take up to `n` of an item from the stores into their hands (as much as they can carry).
-fn take(p: &mut Person, ctx: &mut Ctx, item: usize, n: u32) -> u32 {
+pub(crate) fn take(p: &mut Person, ctx: &mut Ctx, item: usize, n: u32) -> u32 {
     let room = ctx.c.people.carry.saturating_sub(p.carried());
     let got = n.min(room).min(ctx.camp.stores[item]);
     ctx.camp.stores[item] -= got;
@@ -374,7 +332,7 @@ fn take(p: &mut Person, ctx: &mut Ctx, item: usize, n: u32) -> u32 {
     got
 }
 
-fn face(p: &mut Person, at: (f32, f32)) {
+pub(crate) fn face(p: &mut Person, at: (f32, f32)) {
     let (dx, dy) = (at.0 - p.pos.0, at.1 - p.pos.1);
     if dx * dx + dy * dy > 1e-4 {
         p.facing = dx.atan2(dy);
@@ -574,149 +532,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                 }
             }
         }
-        Kind::MakeSpear => {
-            let sw = &c.actions.spear;
-            let (spear, wood, stone) = (c.item("spear"), c.item("wood"), c.item("stone"));
-            if a.phase == 0 {
-                match walk(p, a, ctx, ctx.camp.stores_at, true) {
-                    Walk::Arrived => {
-                        if ctx.camp.stores[wood] < sw.wood || ctx.camp.stores[stone] < sw.stone {
-                            return Some(Ending::Failed("the stores didn't have the wood and stone".into()));
-                        }
-                        ctx.camp.stores[wood] -= sw.wood;
-                        ctx.camp.stores[stone] -= sw.stone;
-                        next_phase(a, ctx);
-                    }
-                    Walk::NoPath => return no_path("the stores"),
-                    Walk::Moving => {}
-                }
-                return None;
-            }
-            a.anim = Anim::Build;
-            if a.work_left <= 0.0 {
-                a.work_left = sw.minutes as f32;
-            }
-            a.work_left -= tm;
-            practise(p, "stonework", tm, ctx);
-            if a.work_left <= 0.0 {
-                ctx.camp.stores[spear] += 1;
-                a.stored[spear] += 1;
-                ctx.events.push(Event::SpearMade { person: ctx.who, name: p.name.clone() });
-                return Some(Ending::Done);
-            }
-            None
-        }
-        Kind::Hunt { animal } => hunt(p, a, ctx, animal),
         _ => Some(Ending::Done),
     }
 }
 
-fn hunt(p: &mut Person, a: &mut Action, ctx: &mut Ctx, animal: AnimalId) -> Option<Ending> {
-    let c = ctx.c;
-    let tm = c.calendar.minutes_per_tick as f32;
-    let spear = c.item("spear");
-    let meat = c.item("meat");
-    // Bringing it home is the last phase; the quarry no longer matters then.
-    if a.phase >= 3 {
-        return match walk(p, a, ctx, ctx.camp.stores_at, true) {
-            Walk::Arrived | Walk::NoPath => {
-                for (i, n) in p.carry.iter_mut().enumerate() {
-                    ctx.camp.stores[i] += *n;
-                    a.stored[i] += *n;
-                    *n = 0;
-                }
-                Some(if a.stored[meat] > 0 { Ending::Done } else { Ending::Failed(a.label.split_once(": ").map_or(a.label.clone(), |(_, w)| w.to_string())) })
-            }
-            Walk::Moving => None,
-        };
-    }
-    let Some(prey) = ctx.animals.get(animal) else { return give_up(a, ctx, "it had gone") };
-    let def = &c.animals[prey.kind as usize];
-    let (kind, at) = (prey.kind, prey.pos);
-    let d = dist(p.pos, at);
-    match a.phase {
-        0 => {
-            if p.carry[spear] > 0 {
-                next_phase(a, ctx);
-                return None;
-            }
-            match walk(p, a, ctx, ctx.camp.stores_at, true) {
-                Walk::Arrived => {
-                    if take(p, ctx, spear, 1) == 0 {
-                        return Some(Ending::Failed("there was no spear in the stores".into()));
-                    }
-                    next_phase(a, ctx);
-                }
-                Walk::NoPath => return Some(Ending::Failed("couldn't reach the stores".into())),
-                Walk::Moving => {}
-            }
-            None
-        }
-        1 => {
-            // Close in (following it if it moves), quietly.
-            if d <= 9.0 {
-                next_phase(a, ctx);
-                return None;
-            }
-            if d > c.actions.lost_at * 3.0 || minutes_in(a, ctx) > 240.0 {
-                return give_up(a, ctx, &format!("couldn't get near the {}", def.name.to_lowercase()));
-            }
-            let t = (at.0 as u16, at.1 as u16);
-            if a.path_ready && a.path.last().is_none_or(|e| (e.0 as i32 - t.0 as i32).abs() + (e.1 as i32 - t.1 as i32).abs() > 3) {
-                a.path_ready = false;
-            }
-            if let Walk::NoPath = walk(p, a, ctx, t, true) {
-                return give_up(a, ctx, "couldn't reach it");
-            }
-            None
-        }
-        _ => {
-            // Stalk, then throw.
-            face(p, at);
-            a.anim = Anim::Idle;
-            if d > c.actions.lost_at {
-                ctx.effects.push(Effect::Scare { at, amount: 0.12 });
-                return give_up(a, ctx, &format!("the {} got away", def.name.to_lowercase()));
-            }
-            if minutes_in(a, ctx) < c.actions.hunt_minutes as f32 {
-                if d > 9.0 {
-                    // It drifted off: creep closer.
-                    let t = (at.0 as u16, at.1 as u16);
-                    a.path_ready = false;
-                    let _ = walk(p, a, ctx, t, true);
-                }
-                return None;
-            }
-            let level = p.skill_level(c.skill("hunting"), c) as f32;
-            practise(p, "hunting", c.actions.hunt_minutes as f32, ctx);
-            let close = (1.0 - (d - 4.0).max(0.0) / 12.0).clamp(0.3, 1.0);
-            let chance = (def.hit * (0.7 + 0.06 * level) * close).min(0.95);
-            let hit = ctx.rng.chance(chance);
-            if ctx.rng.chance(c.actions.spear.breaks) {
-                p.carry[spear] = p.carry[spear].saturating_sub(1);
-            }
-            if !hit {
-                ctx.effects.push(Effect::Scare { at, amount: 0.15 });
-                return give_up(a, ctx, &format!("missed the {}", def.name.to_lowercase()));
-            }
-            ctx.effects.push(Effect::Kill { animal, by: ctx.who });
-            ctx.effects.push(Effect::Scare { at, amount: 0.3 });
-            let room = c.people.carry.saturating_sub(p.carried());
-            p.carry[meat] += def.meat.min(room);
-            ctx.events.push(Event::Hunted { person: ctx.who, name: p.name.clone(), animal: def.name.to_lowercase(), kind });
-            a.phase = 3;
-            a.path_ready = false;
-            let _ = tm;
-            None
-        }
-    }
-}
-
-/// End a hunt that came to nothing: walk the spear home first.
-fn give_up(a: &mut Action, ctx: &Ctx, why: &str) -> Option<Ending> {
-    a.label = format!("Bring the spear home: {why}");
-    a.phase = 3;
-    a.path_ready = false;
-    a.mark = ctx.tick;
-    None
-}

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
 
 /// Bumped when the save layout changes.
-pub const FORMAT: u32 = 5;
+pub const FORMAT: u32 = 6;
 
 #[derive(Serialize)]
 struct SaveRef<'a> {

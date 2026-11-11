@@ -1,7 +1,8 @@
 // Speaking to someone (M8, god tool "speak"). On the Low AI setting your words are read by
 // keyword: each entry's words (any of them, as the start of a word you said) mean you're asking for
 // those actions (their names, as in decision traces). `read` is how it's shown back to you.
-// What they heard counts for `hours`, until they do one of the things asked.
+// What they heard counts for `hours`, until they do one of the things asked. A phrase (words with
+// spaces) is matched as a whole, and its words then don't count again on their own.
 (
     hours: 6.0,
     topics: [
@@ -14,7 +15,7 @@
         (words: ["fire", "warm", "cold"], acts: ["light_fire", "tend_fire"], read: "see to the fire"),
         (words: ["rest", "sit", "relax", "break"], acts: ["rest"], read: "rest"),
         (words: ["sleep", "bed", "nap"], acts: ["sleep", "sleep_home", "sleep_here"], read: "sleep"),
-        (words: ["build", "house", "home", "shelter", "storehouse"], acts: ["found_house", "found_shelter", "found_storehouse", "build"], read: "build"),
+        (words: ["build", "house", "home", "shelter", "storehouse", "nowhere to sleep", "nowhere to live", "somewhere to sleep", "a roof"], acts: ["found_house", "found_shelter", "found_storehouse", "build"], read: "build"),
         (words: ["farm", "field", "sow", "plant grain", "harvest", "weed", "crop"], acts: ["found_field", "sow", "tend", "harvest"], read: "work the fields"),
         (words: ["hunt", "deer", "rabbit", "meat", "spear"], acts: ["hunt", "make_spear"], read: "hunt"),
         (words: ["stone", "rock", "pebble"], acts: ["stone", "quarry"], read: "gather stone"),

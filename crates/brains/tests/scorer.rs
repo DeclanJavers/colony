@@ -49,3 +49,14 @@ fn it_decides_in_well_under_a_millisecond() {
         assert!(per < 1000.0, "{per:.0} µs per decision");
     }
 }
+
+#[test]
+fn older_weight_files_still_load() {
+    // Files written before the per-kind option weights (act_w) existed have no such field.
+    let old = r#"{"name":"old","trained_on":"x","held_out_agreement":0.7,"option_w":{"minutes":-0.1},"state_w":{"eat":{"need.hunger":1.0}}}"#;
+    let s: Scorer = serde_json::from_str(old).expect("loads");
+    assert!(s.act_w.is_empty());
+    let state = vec![("need.hunger".to_string(), 0.5)];
+    let opt = vec![("minutes".to_string(), 1.0)];
+    assert!((s.score("eat", &state, &opt) - 0.4).abs() < 1e-6);
+}

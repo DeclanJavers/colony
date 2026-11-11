@@ -3,9 +3,11 @@
 //! natively in well under a millisecond.
 //!
 //! **The model.** An option's score is a weight per feature of the option (distance, relief,
-//! gain), plus a weight per feature of the situation for that option's kind of action. The first
-//! part ranks options by what they offer; the second lets the situation pull towards some kinds of
-//! action and away from others. Trained by softmax cross-entropy over each decision's possible
+//! gain), plus, for that option's kind of action, a weight per feature of the situation and a
+//! weight per feature of the option, and a bias. The first part ranks options by what they offer;
+//! the situation part lets the time and the person's state pull towards some kinds of action and
+//! away from others; the per-kind option part lets a detail count for one kind and not another
+//! (a field's weeds matter to tending, not to sowing). Trained by softmax cross-entropy over each decision's possible
 //! options, with Adam and a little L2. Weights are a plain JSON file.
 
 use serde::{Deserialize, Serialize};
@@ -54,7 +56,13 @@ pub struct Scorer {
     pub option_w: BTreeMap<String, f32>,
     /// act -> situation feature -> weight.
     pub state_w: BTreeMap<String, BTreeMap<String, f32>>,
+    /// act -> option feature (or "bias") -> weight.
+    #[serde(default)]
+    pub act_w: BTreeMap<String, BTreeMap<String, f32>>,
 }
+
+/// The per-kind constant, as an option feature that is always 1.
+const BIAS: &str = "bias";
 
 /// Feature values are squashed so no one feature (minutes, distance) swamps the rest: small
 /// values pass through, big ones grow with their logarithm.
@@ -69,10 +77,36 @@ fn squash(v: f32) -> f32 {
     }
 }
 
+/// Amounts that the rules weigh with a knee (a worry that is full below some level and gone above
+/// another, like food_days / 3 clamped): these also get hinge versions, 1 - v/k clamped to 0..1.
+const AMOUNTS: [&str; 6] = ["food_days", "fire_hours", "fuel_hours", "stores_age_hours", "spoiling", "seed"];
+const KNEES: [f32; 3] = [1.5, 3.0, 6.0];
+
+fn hinges(k: &str, v: f32, out: &mut Vec<(String, f32)>) {
+    if AMOUNTS.contains(&k) {
+        for knee in KNEES {
+            out.push((format!("{k}<{knee}"), (1.0 - v / knee).clamp(0.0, 1.0)));
+        }
+    }
+}
+
+/// The situation's features plus hinge versions of its amounts. Worked out once per decision.
+pub fn expand_state(state: &[(String, f32)]) -> Vec<(String, f32)> {
+    let mut out = state.to_vec();
+    for (k, v) in state {
+        hinges(k, *v, &mut out);
+    }
+    out
+}
+
 /// Products of an option's features with the situation's that matter together: how much a need
-/// is relieved times how urgent it is, and how much of an item is gained times what it's worth.
+/// is relieved times how urgent it is, how much of an item is gained times what it's worth, and
+/// what the option offers times how bored and how sleepy the person is. Also time in plain
+/// minutes (squashing would bend it), and hinge versions of amounts.
 pub fn derived(state: &[(String, f32)], opt: &[(String, f32)]) -> Vec<(String, f32)> {
     let get = |k: &str| state.iter().find(|(n, _)| n == k).map(|(_, v)| *v);
+    let fun = get("need.fun").unwrap_or(0.0);
+    let sleepy = get("sleepy").unwrap_or(0.0);
     let mut out = Vec::new();
     for (k, v) in opt {
         if let Some(n) = k.strip_prefix("relief.")
@@ -84,16 +118,33 @@ pub fn derived(state: &[(String, f32)], opt: &[(String, f32)]) -> Vec<(String, f
         {
             out.push((format!("{k}*value"), v * value * 10.0));
         }
+        if k == "minutes" {
+            out.push(("minutes/100".into(), v / 100.0));
+        }
+        hinges(k, *v, &mut out);
+        if !k.starts_with("act.") && *v != 0.0 {
+            out.push((format!("{k}*fun"), squash(*v) * fun));
+            out.push((format!("{k}*sleepy"), squash(*v) * sleepy));
+        }
     }
     out
 }
 
 impl Scorer {
+    /// An option's score. `state` is the situation as `expand_state` gives it.
     pub fn score(&self, act: &str, state: &[(String, f32)], opt: &[(String, f32)]) -> f32 {
         let mut s = 0.0;
+        let per_act = self.act_w.get(act);
+        if let Some(b) = per_act.and_then(|ws| ws.get(BIAS)) {
+            s += b;
+        }
         for (k, v) in opt.iter().chain(derived(state, opt).iter()) {
+            let v = squash(*v);
             if let Some(w) = self.option_w.get(k) {
-                s += w * squash(*v);
+                s += w * v;
+            }
+            if let Some(w) = per_act.and_then(|ws| ws.get(k)) {
+                s += w * v;
             }
         }
         if let Some(ws) = self.state_w.get(act) {
@@ -137,7 +188,8 @@ impl Scorer {
     }
 
     fn pick(&self, e: &Example) -> usize {
-        let scores: Vec<f32> = e.options.iter().map(|(a, f)| self.score(a, &e.state, f)).collect();
+        let state = expand_state(&e.state);
+        let scores: Vec<f32> = e.options.iter().map(|(a, f)| self.score(a, &state, f)).collect();
         (0..scores.len()).max_by(|&a, &b| scores[a].total_cmp(&scores[b]).then(b.cmp(&a))).unwrap_or(0)
     }
 }
@@ -151,15 +203,20 @@ pub fn train(name: &str, data: &[Example], epochs: usize) -> Scorer {
         let n = index.len();
         *index.entry((a.to_string(), k.to_string())).or_insert(n)
     };
-    // Option features have act "" ; situation features are per act.
+    // Option features have act "" ; situation features are per act (prefix "s:"), and so are
+    // option features again (prefix "o:", plus the bias).
     // Each decision: its options' (parameter, value) lists, and the teacher's choice.
     type Row = (Vec<Vec<(usize, f32)>>, usize);
     let mut rows: Vec<Row> = Vec::new();
     for e in &train_set {
         let mut opts = Vec::new();
+        let state = expand_state(&e.state);
         for (act, f) in &e.options {
-            let mut x: Vec<(usize, f32)> = f.iter().chain(derived(&e.state, f).iter()).map(|(k, v)| (key("", k), squash(*v))).collect();
-            x.extend(e.state.iter().map(|(k, v)| (key(act, k), squash(*v))));
+            let all: Vec<(String, f32)> = f.iter().chain(derived(&state, f).iter()).cloned().collect();
+            let mut x: Vec<(usize, f32)> = all.iter().map(|(k, v)| (key("", k), squash(*v))).collect();
+            x.extend(all.iter().map(|(k, v)| (key(&format!("o:{act}"), k), squash(*v))));
+            x.push((key(&format!("o:{act}"), BIAS), 1.0));
+            x.extend(state.iter().map(|(k, v)| (key(&format!("s:{act}"), k), squash(*v))));
             opts.push(x);
         }
         rows.push((opts, e.choice));
@@ -199,10 +256,12 @@ pub fn train(name: &str, data: &[Example], epochs: usize) -> Scorer {
         if w[i].abs() < 1e-5 {
             continue;
         }
-        if act.is_empty() {
-            s.option_w.insert(k, w[i]);
+        if let Some(a) = act.strip_prefix("s:") {
+            s.state_w.entry(a.to_string()).or_default().insert(k, w[i]);
+        } else if let Some(a) = act.strip_prefix("o:") {
+            s.act_w.entry(a.to_string()).or_default().insert(k, w[i]);
         } else {
-            s.state_w.entry(act).or_default().insert(k, w[i]);
+            s.option_w.insert(k, w[i]);
         }
     }
     let teachers: std::collections::BTreeSet<&str> = data.iter().map(|e| e.teacher.as_str()).collect();
@@ -236,10 +295,11 @@ impl Brain for ScorerBrain {
 
     fn submit(&mut self, req: DecisionRequest) {
         let t0 = std::time::Instant::now();
+        let state = expand_state(&req.state);
         let scores: Vec<f32> = req
             .options
             .iter()
-            .map(|o| if o.possible { self.scorer.score(&o.kind.name(&self.content), &req.state, &o.features) } else { f32::NEG_INFINITY })
+            .map(|o| if o.possible { self.scorer.score(&o.kind.name(&self.content), &state, &o.features) } else { f32::NEG_INFINITY })
             .collect();
         let choice = (0..scores.len()).filter(|&i| req.options[i].possible).max_by(|&a, &b| scores[a].total_cmp(&scores[b]).then(b.cmp(&a))).unwrap_or(0);
         self.micros += t0.elapsed().as_micros();

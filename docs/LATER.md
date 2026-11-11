@@ -79,6 +79,9 @@ noted in brackets. Order isn't fixed: we pick the next one each time a stage is 
 - **Modding:** third-party packs through WASM, and a pack browser.
 - **Audio:** music that follows the mood of the settlement, and ambient sound by biome and
   season.
+  - **Basics first** (moved here from M10 of the base): gentle ambient sound made in code
+    (wind, birds by day, crickets at night, rain, the fire crackling near the camp) and soft UI
+    clicks, with a volume setting. They need listening to before they ship.
 - **Bigger worlds:** several regions and streaming chunks.
 
 ## Not doing

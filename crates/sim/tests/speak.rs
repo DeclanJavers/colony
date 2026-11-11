@@ -62,3 +62,33 @@ fn asking_someone_for_wood_changes_what_they_do() {
     assert!(asked_wood >= plain_wood + asked_n / 3, "asking made little difference: {asked_wood} vs {plain_wood}");
 }
 
+
+#[test]
+fn a_phrase_counts_as_a_whole() {
+    let sim = Sim::new(1, 64);
+    let c = &sim.content;
+    // "nowhere to sleep" asks for a home, not for them to go to bed.
+    let (acts, read) = sim::speak::read("Hugo and Knut have nowhere to sleep, please help them", c);
+    assert_eq!(read, vec!["build".to_string()], "{acts:?}");
+}
+
+#[test]
+fn they_answer_and_the_feed_says_when_they_do_it() {
+    let mut sim = Sim::new(2, 256);
+    let cal = &sim.content.calendar;
+    sim.run_ticks(cal.ticks_per_day() + 4 * 60 / cal.minutes_per_tick as u64);
+    let people: Vec<_> = sim.people.iter().filter(|(_, p)| p.alive && !p.asleep && p.grown(sim.tick, &sim.content)).map(|(id, _)| id).take(4).collect();
+    sim.take_events();
+    for id in &people {
+        sim.command(Command::Speak { person: *id, words: "fetch some wood".into() });
+    }
+    // Applied at once (as the app does while paused): each answers out loud.
+    sim.apply_commands();
+    for id in &people {
+        let said = sim.people.get(*id).unwrap().said.clone().map(|s| s.0).unwrap_or_default();
+        assert!(said.starts_with("All right") || said.starts_with("Later"), "{said}");
+    }
+    sim.run_ticks(4 * 60);
+    let did = sim.take_events().into_iter().filter(|e| matches!(e, Event::DidAsked { .. })).count();
+    assert!(did >= 2, "only {did} of {} did what they were asked", people.len());
+}

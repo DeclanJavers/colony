@@ -50,4 +50,12 @@ pub enum Event {
     SettingChanged { what: String },
     /// You spoke to someone (M8), and how your words were read.
     Spoken { person: PersonId, name: String, words: String, read_as: String },
+    /// Someone chose to do what you asked (`what`: the option they chose; `asked`: how your
+    /// words were read).
+    DidAsked { person: PersonId, name: String, what: String, asked: String },
+    /// A gift arrived (M10): what it was, in words ("30 berries", "a house"), and whether it went
+    /// into the stores.
+    Gifted { what: String, stores: bool },
+    /// A gift that couldn't be given, and why (no room for a building).
+    GiftRefused { what: String, why: String },
 }

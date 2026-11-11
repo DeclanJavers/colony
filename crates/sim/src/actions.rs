@@ -89,8 +89,8 @@ pub enum Kind {
     Sow { field: crate::buildings::StructureId },
     Tend { field: crate::buildings::StructureId },
     Harvest { field: crate::buildings::StructureId },
-    MakeSpear,
-    Hunt { animal: crate::animals::AnimalId },
+    /// An action a pack adds (pack.rs): which pack, which of its acts, at what.
+    Pack { pack: u8, act: u8, target: crate::pack::Target },
     // Free time (M7: leisure.rs)
     /// A free-time activity (data/base/leisure.ron order) at a spot.
     Leisure { act: u16, x: u16, y: u16 },
@@ -127,8 +127,7 @@ impl Kind {
             Kind::Sow { .. } => "sow".into(),
             Kind::Tend { .. } => "tend".into(),
             Kind::Harvest { .. } => "harvest".into(),
-            Kind::MakeSpear => "make_spear".into(),
-            Kind::Hunt { .. } => "hunt".into(),
+            Kind::Pack { pack, act, .. } => crate::pack::get(*pack).acts()[*act as usize].into(),
             Kind::Leisure { act, .. } => c.leisure.acts[*act as usize].id.clone(),
         }
     }
@@ -220,6 +219,8 @@ pub struct Ctx<'a> {
     pub beauty: &'a [f32],
     /// What people made in their free time.
     pub works: &'a mut Vec<crate::sim::Work>,
+    /// The packs on in this world (pack.rs), by index.
+    pub packs: &'a [u8],
 }
 
 /// Practise a skill; tell everyone when it reaches a new level. A taught skill only grows for
@@ -607,7 +608,8 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
         opts.retain(|o| match &o.kind {
             Kind::Gather { def, .. } => help && matches!(c.actions.gather[*def as usize].item.as_str(), "berries" | "sticks" | "grain"),
             Kind::FetchWater { .. } | Kind::LightFire | Kind::TendFire | Kind::Explore { .. } | Kind::CheckStores | Kind::SleepHere => false,
-            Kind::Found { .. } | Kind::Build { .. } | Kind::Sow { .. } | Kind::Tend { .. } | Kind::Harvest { .. } | Kind::MakeSpear | Kind::Hunt { .. } => false,
+            Kind::Found { .. } | Kind::Build { .. } | Kind::Sow { .. } | Kind::Tend { .. } | Kind::Harvest { .. } => false,
+            Kind::Pack { pack, act, .. } => crate::pack::get(*pack).for_children(*act),
             Kind::Ask { ask, .. } => *ask == Ask::Food,
             Kind::Answer { ask, .. } => matches!(ask, Ask::Teach { .. }),
             _ => true,
@@ -752,8 +754,7 @@ pub fn thought(req: &DecisionRequest, o: &Choice, c: &Content) -> String {
         Kind::Sow { .. } => "Time to get the seed in the ground.".into(),
         Kind::Tend { .. } => "The weeds are choking the grain.".into(),
         Kind::Harvest { .. } => "The grain is ripe. Let's bring it in.".into(),
-        Kind::MakeSpear => "A good spear and we could eat meat.".into(),
-        Kind::Hunt { .. } => if req.s("food_days") < 2.0 { "We need food. I'll see if I can bring down something.".into() } else { "I saw game nearby. Meat would make a change.".into() },
+        Kind::Pack { pack, act, .. } => crate::pack::get(*pack).thought(*act, req),
         Kind::Leisure { act, .. } => {
             let hobby = o.f("hobby") > 0.0;
             match c.leisure.acts[*act as usize].id.as_str() {
@@ -1254,9 +1255,10 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
         Kind::Talk { .. } | Kind::Court { .. } | Kind::Ask { .. } | Kind::Answer { .. } | Kind::Watch { .. } | Kind::Play | Kind::Feed { .. } | Kind::Bury { .. } => {
             return social::step(p, a, ctx);
         }
-        Kind::Found { .. } | Kind::Build { .. } | Kind::Sow { .. } | Kind::Tend { .. } | Kind::Harvest { .. } | Kind::MakeSpear | Kind::Hunt { .. } => {
+        Kind::Found { .. } | Kind::Build { .. } | Kind::Sow { .. } | Kind::Tend { .. } | Kind::Harvest { .. } => {
             return crate::settle::step(p, a, ctx);
         }
+        Kind::Pack { pack, act, target } => return crate::pack::get(pack).step(act, target, p, a, ctx),
         Kind::Leisure { .. } => return crate::leisure::step(p, a, ctx),
         Kind::Explore { x, y } => match walk(p, a, ctx, (x, y), false) {
             Walk::Arrived => {

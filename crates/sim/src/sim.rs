@@ -35,6 +35,21 @@ pub struct Stats {
     /// Empty shelters that fell down.
     #[serde(default)]
     pub fallen: u32,
+    /// The stores each morning (M10, for the Economy ledger).
+    #[serde(default)]
+    pub days: Vec<DayStock>,
+}
+
+/// The camp's stock one morning, after the night's spoiling.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DayStock {
+    /// Days since the start (0 = the first morning).
+    pub day: u32,
+    /// Count per item in the stores.
+    pub stores: Vec<u32>,
+    /// Count per item lost to spoiling overnight.
+    pub spoiled: Vec<u32>,
+    pub alive: u16,
 }
 
 impl Stats {
@@ -54,11 +69,14 @@ impl Stats {
 pub struct Settings {
     /// Whether beauty lifts mood and draws people (M7). Off, nothing reads the beauty field.
     pub beauty_matters: bool,
+    /// The packs on in this world (pack.rs), by id. Set when the world is made.
+    #[serde(default = "crate::pack::default_ids")]
+    pub packs: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { beauty_matters: true }
+        Settings { beauty_matters: true, packs: crate::pack::default_ids() }
     }
 }
 
@@ -249,13 +267,20 @@ impl Sim {
         self.pending.push(c);
     }
 
-    /// Advance one tick.
-    pub fn step(&mut self) {
-        let first_event = self.events.len();
+    /// Apply the commands waiting (each tick does this first). While the game is paused the app
+    /// calls it too, so a gift or your words land at once; they're logged at the same tick either
+    /// way, so a replay is the same.
+    pub fn apply_commands(&mut self) {
         for c in std::mem::take(&mut self.pending) {
             self.apply(&c);
             self.command_log.push((self.tick, c));
         }
+    }
+
+    /// Advance one tick.
+    pub fn step(&mut self) {
+        let first_event = self.events.len();
+        self.apply_commands();
         self.update_beauty();
         self.tick_people();
         self.poll_brains();
@@ -387,6 +412,7 @@ impl Sim {
             self.sites_version = self.map.version;
         }
         let mut walked = (0.0f32, 0.0f32, 0.0f32);
+        let packs = crate::pack::enabled(&self.settings.packs);
         let Sim { content: c, map, nodes, people, camp, streams, path, events, tick, brains, trace_sink, structures, animals, wildlife, sites, stats, settings, works, beauty, .. } = self;
         // Nothing reads beauty when it doesn't matter.
         let beauty: &[f32] = if settings.beauty_matters { beauty } else { &[] };
@@ -452,6 +478,7 @@ impl Sim {
                 walked: &mut walked,
                 beauty,
                 works,
+                packs: &packs,
             };
             if let Some(mut a) = p.action.take() {
                 let mut end = actions::step(p, &mut a, &mut ctx);
@@ -508,7 +535,7 @@ impl Sim {
     /// the decision's trace opens. (Lockstep runners call this while the sim waits for a slow
     /// brain, without moving time on.)
     pub fn poll_brains(&mut self) {
-        let Sim { content: c, people, brains, seed, mode, tick, .. } = self;
+        let Sim { content: c, people, brains, seed, mode, tick, events, .. } = self;
         let mut answers: Vec<(String, DecisionRequest, Answer)> = Vec::new();
         for (name, b) in brains.map.iter_mut() {
             for (req, ans) in b.poll() {
@@ -535,7 +562,9 @@ impl Sim {
             if chosen.f("asked") > 0.0
                 && let Some(h) = p.heard.take()
             {
-                p.thought = format!("The voice asked me to {}. I'll do it.", h.read_as.first().map_or("do this", |s| s.as_str()));
+                let what = h.read_as.first().cloned().unwrap_or_else(|| "do this".into());
+                p.thought = format!("The voice asked me to {what}. I'll do it.");
+                events.push(Event::DidAsked { person: req.person, name: p.name.clone(), what: chosen.label.clone(), asked: what });
             }
             p.action = Some(actions::start(p, &chosen, *tick));
             p.tally.decisions += 1;
@@ -566,7 +595,7 @@ impl Sim {
             .people
             .iter()
             .filter(|(_, p)| p.alive && !p.asleep && p.indoors.is_none())
-            .map(|(_, p)| (p.pos, matches!(p.action.as_ref(), Some(a) if matches!(a.kind, crate::actions::Kind::Hunt { .. }) && (1..3).contains(&a.phase))))
+            .map(|(_, p)| (p.pos, matches!(p.action.as_ref(), Some(a) if matches!(a.kind, crate::actions::Kind::Pack { pack, act, .. } if crate::pack::get(pack).scares_animals(act, a.phase)))))
             .collect();
         crate::animals::tick(&mut self.animals, &mut self.wildlife, &self.map, &self.content, &people, self.tick, &mut self.streams.animals);
         let c = &self.content;
@@ -635,9 +664,50 @@ impl Sim {
             self.stats.fallen += 1;
         }
         let frac = self.streams.weather.next_f32();
+        let before = self.camp.stores.clone();
         crate::buildings::spoil(&mut self.camp, &self.structures, c, frac);
+        let alive = self.people.iter().filter(|(_, p)| p.alive).count() as u16;
+        self.stats.days.push(DayStock {
+            day: c.calendar.day_index(self.tick) as u32,
+            stores: self.camp.stores.clone(),
+            spoiled: before.iter().zip(&self.camp.stores).map(|(b, a)| b - a).collect(),
+            alive,
+        });
         crate::animals::daily(&mut self.animals, &mut self.wildlife, &self.map, c, self.tick, season, first_of_season, &mut self.streams.animals);
         self.map.version += 1;
+    }
+
+    /// A gift arrives (M10, god tool).
+    fn give(&mut self, g: crate::commands::Gift) {
+        use crate::commands::Gift;
+        let c = &self.content;
+        match g {
+            Gift::Items { item, amount } => {
+                let Some(i) = c.items.iter().position(|d| d.id == item) else { return };
+                if amount == 0 {
+                    return;
+                }
+                self.camp.stores[i] = self.camp.stores[i].saturating_add(amount);
+                let name = c.items[i].name.to_lowercase();
+                self.events.push(Event::Gifted { what: format!("{amount} {name}"), stores: true });
+            }
+            Gift::Building { kind } => {
+                let Some(k) = c.buildings.iter().position(|d| d.id == kind) else { return };
+                let k = k as u16;
+                let name = c.buildings[k as usize].name.to_lowercase();
+                let Some(at) = crate::buildings::find_site(&self.map, &self.camp, c, k) else {
+                    self.events.push(Event::GiftRefused { what: format!("a {name}"), why: "there's no clear, flat ground near the camp".into() });
+                    return;
+                };
+                let id = crate::buildings::place(&mut self.structures, &mut self.map, &self.content, k, at, None, self.tick);
+                let d = &self.content.buildings[k as usize];
+                let s = self.structures.get_mut(id).expect("just placed");
+                s.progress = 1.0;
+                s.paid = d.cost.iter().map(|(_, n)| *n).collect();
+                s.finished = Some(self.tick);
+                self.events.push(Event::Gifted { what: format!("a {name}"), stores: false });
+            }
+        }
     }
 
     fn apply(&mut self, c: &Command) {
@@ -664,15 +734,26 @@ impl Sim {
                     let read_as = if heard.read_as.is_empty() { "nothing they understood".to_string() } else { heard.read_as.join(", ") };
                     self.events.push(Event::Spoken { person, name: p.name.clone(), words: heard.words.clone(), read_as });
                     let understood = !heard.acts.is_empty();
-                    p.heard = understood.then_some(heard);
                     // They stop and think about it, unless asleep or something urgent needs them.
-                    let urgent = c.needs.iter().enumerate().any(|(i, n)| n.kind == crate::content::NeedKind::Body && p.needs[i] >= 0.6);
-                    stop = understood && !p.asleep && !urgent && p.action.is_some();
+                    let urgent = c.needs.iter().enumerate().find(|(i, n)| n.kind == crate::content::NeedKind::Body && p.needs[*i] >= 0.6).map(|(_, n)| n.name.to_lowercase());
+                    // And they answer (out loud, in a bubble), so you know how it landed.
+                    let reply = match (&urgent, understood, p.asleep) {
+                        (_, _, true) => None,
+                        (_, false, _) => Some("Sorry? I don't follow.".to_string()),
+                        (Some(need), true, _) => Some(format!("Later. My {need} comes first.")),
+                        (None, true, _) => Some(format!("All right, I'll {}.", heard.read_as.first().map_or("see to it", |s| s.as_str()))),
+                    };
+                    if let Some(r) = reply {
+                        p.said = Some((r, self.tick));
+                    }
+                    p.heard = understood.then_some(heard);
+                    stop = understood && !p.asleep && urgent.is_none() && p.action.is_some();
                 }
                 if stop {
                     finish(&mut self.people, person, Ending::Interrupted("heard a voice from the sky".into()), self.tick, &self.content, &mut self.trace_sink);
                 }
             }
+            Command::Gift(g) => self.give(g),
             Command::SetBeautyMatters { on } => {
                 if self.settings.beauty_matters != on {
                     self.settings.beauty_matters = on;

@@ -505,9 +505,18 @@ the same format.
   - **Training:** tiny, so it trains on the Mac's CPU in seconds. (Changed at M9: it trains in
     Rust, `colony-run train`, instead of Python scripts in `brain/`. That needs no packages
     installed, and the same code that trains it runs it.)
-  - **The model:** a linear score per option over the option's own features, plus each
-    situation feature weighted per kind of action (so "thirsty" can pull towards drinking and
-    away from chopping). It's trained by softmax over each decision's options.
+  - **The model:** a linear score per option over the option's own features, plus, per kind
+    of action, a bias, each situation feature (so "thirsty" can pull towards drinking and away
+    from chopping) and each option feature again (a field's weeds matter to tending, not to
+    sowing). Derived features carry the shapes the rules use: relief × urgency, gain × value,
+    option features × boredom and × sleepiness, plain minutes, and hinge versions of amounts
+    (1 − food_days/k for k = 1.5, 3, 6). It's trained by softmax over each decision's options.
+  - **Distilling** (`colony-run distill`, changed at M9): learning only from the teacher's own
+    colonies fails in play, because the student's mistakes lead into situations the teacher
+    never met (v1: 72% agreement offline, 54% in play). So after round 0 the scorer runs the
+    colonies itself, the rules brain labels every decision it made with what rules would have
+    chosen, and it trains again on everything (DAgger). Each round's model is saved, and the
+    arena on unseen seeds picks the one to use.
   - **Export:** weights in a small JSON file (`brain/models/<name>.json`) that Rust runs
     natively, with no runtime dependency.
 - **Text model and Laya fine-tunes:** trained on Colab with the cheapest GPU (a T4), exported to
@@ -515,8 +524,9 @@ the same format.
 - **Evaluation,** two ways:
   - **agreement:** match with the teacher on held-out seeds;
   - **colony outcomes:** survival, births, buildings, hobbies and beauty made, from arena runs.
-- **The arena:** `colony-run arena --seeds 1..20 --brains rules,scorer@v1,subagent` runs the same
-  worlds with different brains and writes a comparison report. The in-game Arena ledger shows it.
+- **The arena:** `colony-run arena --seeds 43..72 --brains rules,scorer@rules-v3-r1` runs the same
+  worlds with different brains and writes a comparison report, with where each brain parts
+  from rules most. The in-game Arena ledger shows it. Arena seeds are never training seeds.
 - **Laya:** kept only as an adapter and comparison, retrained now and then.
   - **v1 measurements:** about 380 ms per decision on the CPU with 3 threads, 79% agreement for
     v5. Quantising it didn't work: int8 broke agreement and ran slower.
@@ -540,6 +550,25 @@ the base.
 **The rule:** a pack changes the world only through the base's quantities and hooks. If an
 expansion needs a hook that doesn't exist, the hook is added to the base on purpose and documented
 here.
+
+**Built at M10** (`crates/sim/src/pack.rs`):
+- **The `Pack` trait:** its id and name, the acts it adds, and hooks for the options a grown
+  person is offered (with their features), stepping its actions, the rules brain's weight for
+  them, the thought behind choosing one, whether children may, and whether doing it scares
+  animals.
+- **Compiled in:** `PACKS` lists them; the order is saved in worlds. A pack's action is
+  `Kind::Pack { pack, act, target }`, and its name is the act's id, so brains, traces and the
+  scorer see "hunt" as before.
+- **Per world:** `Settings::packs` (saved), chosen in the new-world menu. All of the base's packs
+  are on by default.
+- **Helpers:** packs build actions from `pack::api` (walking, taking from the stores,
+  practising skills, effects on others), the same helpers the base's own actions use.
+- **The first pack is hunting** (`packs/hunting.rs`): making spears and hunting with them. The
+  animals stay in the base: wildlife is a quantity of the world, and hunting is a way to change
+  it. Moving it changed nothing: a digest of every event and each morning's state is identical
+  before and after (`crates/sim/tests/packs.rs`), and so is the arena.
+- **Not hooks yet** (hunting uses the base's for now): a pack's own content files, event kinds,
+  per-person tables, UI pages and save sections.
 
 ## 11. Renderer
 
@@ -601,9 +630,47 @@ Art direction is in [STYLE.md](STYLE.md).
   - **Top bar:** settlement, era, date, speed and alerts.
   - **Story feed** on the left.
   - **Inspector** on the right, with tabs Mind, Life, Body, Skills, Log.
-  - **God toolbar** along the bottom.
+  - **God toolbar** along the bottom (M10): Speak (to whoever is selected) and Gift. A gift is
+    a command: food or materials straight into the stores, or a finished shelter, house or
+    storehouse on the next clear spot near the camp (a home goes to someone without one the
+    next morning).
   - **Lens buttons** over the world.
-  - **Ledgers:** full-screen pages for Society, Economy, Knowledge, History, Map and Arena.
+  - **Ledgers:** full-screen pages for Society, Economy, Knowledge, History, Map and Arena,
+    behind one Ledgers button with a tab for each (M10). Names on them are links to the person.
+    - **Society:** households and who lives where, generations (the dead marked), the closest
+      bonds and the tensions, and the camp's mood.
+    - **Economy (stock only):** each item now, its last 24 mornings as bars (`Stats::days`, kept
+      each morning after the night's spoiling), the change over six days and what spoiled; then
+      buildings and fields.
+    - **Knowledge:** each skill, how many know it, the best at it and everyone else who does;
+      taught skills with one knower left are marked at risk.
+    - **Map:** the whole region tile by tile, darker where nobody alive has been, with buildings,
+      fields, trails, people and the animals where last seen. A click moves the camera there.
+- **After the first blind playtest (M10):**
+  - **God tools work while paused:** waiting commands are applied at once (at the same tick
+    they'd have been applied at anyway, so replays don't change).
+  - **Speaking answers back:** the person replies in a bubble ("All right, I'll fetch wood.",
+    "Later. My thirst comes first.", "Sorry? I don't follow."), and the story feed says when
+    they do what you asked. Phrases are read whole ("nowhere to sleep" means build).
+  - **Finding people:** a name clicked anywhere glides the camera to them; Follow keeps them in
+    view (any pan, or Esc, stops it); the Mood and Needs lenses list who is low or in need.
+  - **The developer view is off by default** (the brain chips, the rules comparison in the Log,
+    the Arena button, the frame rate).
+  - **The bottom bar** (and the speak box and gift menu) sits in the space left of an open
+    inspector; a gift's details show in the menu itself, not a tooltip over the buttons.
+- **Menus (M10):** the main menu at launch, over the world from `--seed` going on behind it
+  (Continue, New world, Play this one, Load, Settings, Quit); the pause menu on Esc when nothing
+  else is open (Resume, Save, New world, Load, Settings, Quit).
+  - **New world:** a seed (typed, or rolled), a size (192, 256 or 320 m), whether beauty
+    matters, and the packs.
+  - **Saves:** five slots and an autosave (each morning, at most every three minutes, and on
+    quitting), plus "Your previous world": loading another world or starting a new one keeps
+    the one being played there first, so nothing is ever lost to a load. They live in the user's
+    Application Support folder (`COLONY_DATA` points elsewhere; tests
+    and tools never touch the player's saves). Each slot has a small description beside it.
+  - **Settings** (the app's, kept in `settings.json`): power (normal, or lower: no shadows, at
+    most 60 frames a second, the rules brain only), the size of text and panels, and full
+    screen.
 - **Levels of detail:** the world, hover, the inspector, ledgers.
   - **Hover:** every number explains itself.
   - **One meaning per colour,** everywhere.
@@ -669,7 +736,14 @@ Art direction is in [STYLE.md](STYLE.md).
 
 ## 13. Tools and tests
 
-- **`colony-run`:** `run`, `arena`, `map`, `traces`, `export`, `bridge` and `bench` (sim speed).
+- **`colony-run`:** `run`, `arena`, `map`, `traces`, `export`, `bridge`, `distill` and `bench`
+  (sim speed).
+- **`colony --drive DIR` (M10):** the real game, played from command files (click, move, key,
+  hold, type, scroll, drag, wait, shot, info, quit) through the same input paths as the mouse
+  and keyboard. It's how the menus and saves are tested in the window, and how an agent plays
+  the game blind. The protocol is in `crates/colony/src/drive.rs`. Its screenshots are at
+  window-point size (a pixel is a point you can click), and are taken even when the window is
+  covered and gives no image of its own. Playtest reports go in `docs/playtests/`.
 - **`tools/shot.sh`:** screenshots at a given zoom, time and season, in a small background window
   on screen 0. **`tools/perf.sh`:** fps percentiles and the slowest frames.
 - **Tests:**
@@ -690,8 +764,8 @@ Art direction is in [STYLE.md](STYLE.md).
 | Scorer decision | < 1 ms |
 | Save | background, no frame hitch |
 
-A lower-power preset (smaller window resolution, fewer shadows, Low AI) is added at the end of the
-base; a real low-end target comes later.
+The lower-power preset (M10, in Settings) drops shadows, caps frames at 60 a second and keeps the
+rules brain. A real low-end target comes later.
 
 ## 15. Repository layout
 

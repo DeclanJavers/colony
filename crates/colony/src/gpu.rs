@@ -94,7 +94,40 @@ pub fn render_to_image(r: &mut Renderer, size: (u32, u32), frame: &Frame) -> Vec
         let start = (y * padded) as usize;
         out.extend_from_slice(&data[start..start + row as usize]);
     }
+    // A window's surface is often BGRA: hand back RGBA either way.
+    if matches!(r.target_format(), wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
+        for px in out.as_chunks_mut::<4>().0 {
+            px.swap(0, 2);
+        }
+    }
     out
+}
+
+/// Shrink an RGBA image by a whole factor, averaging each k x k block.
+pub fn shrink(rgba: &[u8], size: (u32, u32), k: u32) -> (Vec<u8>, (u32, u32)) {
+    if k <= 1 {
+        return (rgba.to_vec(), size);
+    }
+    let (w, h) = (size.0 / k, size.1 / k);
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = [0u32; 4];
+            for dy in 0..k {
+                for dx in 0..k {
+                    let i = (((y * k + dy) * size.0 + x * k + dx) * 4) as usize;
+                    for c in 0..4 {
+                        acc[c] += rgba[i + c] as u32;
+                    }
+                }
+            }
+            let o = ((y * w + x) * 4) as usize;
+            for c in 0..4 {
+                out[o + c] = (acc[c] / (k * k)) as u8;
+            }
+        }
+    }
+    (out, (w, h))
 }
 
 pub fn write_png(path: &Path, size: (u32, u32), rgba: &[u8]) {
