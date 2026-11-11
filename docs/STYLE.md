@@ -21,9 +21,10 @@ We build in 3D (our Rust renderer, see ARCHITECTURE.md section 11) and make it r
    pixelated. Put detail where the game camera sees it: beams, shutters, tile rows, stones.
 2. **Flat colours from the palette below.** No photo textures, no gradients baked into models, at
    most a base and a darker accent per material. Light and shadow come from the renderer.
-3. **The pixel pass** (v1: `archive/godot-v1/scripts/view/pixel_pass.gd` + `.gdshader`) draws the world in big pixels
-   that belong to the world, like classic pixel art: 24 art pixels per tile, so they grow when you
-   zoom in and shrink when you zoom out (Settings → Pixels: fine 24 per tile, chunky 14, smooth off).
+3. **The pixel pass** (`crates/render`: the scene is drawn into a low-resolution target, then
+   `shaders/post.wgsl` scales it up) draws the world in big pixels
+   that belong to the world, like classic pixel art: about 24 art pixels per tile, so they grow when
+   you zoom in and shrink when you zoom out.
    An art pixel is always a whole number of rendered pixels, and the camera snaps to the art-pixel
    grid, so panning moves the picture a whole art pixel at a time (no crawling or shimmer). It puts dark outlines where
    a shape ends against something further away, adds a softer line where surfaces meet at an angle,
@@ -58,6 +59,8 @@ Warm and saturated, never neon. Shadows lean cool and blue rather than black. sR
 | Water | `#3C7FC0` | ripple `#7FB8E6`, shore sand `#CCB880` |
 | Fire, lamps, lit windows | `#FFB040` | flame core `#FFE08A` |
 | Berries | `#C8283C` | |
+| Wildflowers | `#F2C640` (yellow) | white `#F3EADB`, violet `#9A7FD1`, red `#C8283C`; leaves `#63AD45` |
+| Reeds | `#7FA347` | heads `#7A4F2C` |
 | Sacking (food sacks) | `#D2B48C` | water barrels `#557FAE` |
 | Villager skin | `#E8BC98` | |
 | Outline | `#2A1E1A` | never pure black |
@@ -117,14 +120,15 @@ A new colour goes into this table before it goes into a model.
 
 ## Making new assets
 
-- Models come from the Blender pipeline (v1: `archive/godot-v1/tools/blender/`; it moves to
-  `tools/blender/` at M2). Use its helpers (`box`, `beam`, `blob`, `tiled_roof`, `timber_face`,
+- Models come from the Blender pipeline in `tools/blender/make_models.py`. Use its helpers (`box`, `beam`, `blob`, `tiled_roof`, `timber_face`,
   `window`, `door`, `crate`, `barrel`...) and its palette `P`, which mirrors the table above.
   Build one model only: `Blender -b -P tools/blender/make_models.py -- assets/models house_2`
 - Name the parts the game changes: `window` (lit at night), `leaves1`/`leaves2` (seasonal colour),
   `flame`, `lamp`; roof parts keep their `roof_*` material names (winter snow). Everything else is
   merged per material to keep draw calls low.
 - Variants are `<name>_2.glb`, `<name>_3.glb`..., picked per object automatically.
-- Check every new asset in game with `tools/shot.sh` (it opens on screen 0, in the background) at
-  normal zoom (`--zoom 13`), close (`--zoom 9`), whole map (`--zoom 45`), at night (`--time 21`) and
-  in winter, before calling it done (the flags are set when shot.sh is rebuilt at M2).
+- Check every new asset in game with `tools/shot.sh` at
+  normal zoom (`--zoom 16`), close (`--zoom 7`), whole map (`--zoom 120`), at night (`--time 21`) and
+  in winter, before calling it done. `tools/shot.sh` renders with no window at all:
+  `tools/shot.sh runs/shots/x.png --zoom 9 --day 8 --time 21` (flags: `--seed --day --time --zoom --x --z`;
+  `colony-run find --seed N --kind <id>` finds a spot to look at).

@@ -1,0 +1,8 @@
+// Time. One tick is one game minute. A year is seasons x days_per_season days, kept short so a
+// whole life fits in a few hours of play.
+(
+    minutes_per_tick: 1,
+    days_per_season: 6,
+    seasons: ["spring", "summer", "autumn", "winter"],
+    start_hour: 6,
+)

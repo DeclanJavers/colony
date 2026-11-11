@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/sim", "crates/colony-run", "crates/render", "crates/colony"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# Pinned at M1 (ARCHITECTURE.md). Change on purpose, never by accident.
+[workspace.dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+postcard = { version = "=1.1.3", features = ["alloc"] }
+zstd = "=0.14.3"
+ron = "=0.12.3"
+png = "=0.18.1"
+wgpu = "=30.0.1"
+winit = "=0.30.13"
+glam = { version = "=0.34.3", features = ["bytemuck"] }
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+pollster = "=1.0.1"
+gltf = { version = "=1.4.1", default-features = false, features = ["import", "names", "utils"] }
+sim = { path = "crates/sim" }
+render = { path = "crates/render" }
+
+# Debug builds stay usable for headless runs: our code lightly optimised, libraries fully.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = 1

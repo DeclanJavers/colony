@@ -1,0 +1,38 @@
+// World generation settings. Lengths are in tiles (1 tile = 1 m), heights in metres above sea
+// level. Pairs are (min, max) ranges that each seed picks from.
+(
+    // Land and sea
+    sea_fraction: (0.14, 0.30),
+    inland_rise: 12.0,
+    coast_noise_scale: 90.0,
+    coast_roughness: 0.55,
+    hills_scale: 56.0,
+    hills_height: 6.0,
+    detail_scale: 18.0,
+    detail_height: 1.2,
+
+    // Mountains
+    mountain_chance: 0.75,
+    mountain_height: (16.0, 34.0),
+    mountain_scale: 46.0,
+    mountain_elevation: 20.0,
+    erosion_passes: 12,
+    talus: 1.1,
+
+    // Water. Rivers cover at most 1/river_share_max of the land; river_wander is how much
+    // (metres of noise) they meander. Only the max_lakes biggest deep hollows become lakes.
+    river_threshold: 0.006,
+    river_share_max: 70,
+    river_wander: 0.35,
+    lake_min_depth: 0.6,
+    lake_min_area: 30,
+    max_lakes: 4,
+
+    // Climate: mean yearly temperature in degrees C, cooling per metre of height, and rain (0..1)
+    base_temperature: (7.0, 13.0),
+    lapse_per_m: 0.2,
+    base_rain: (0.45, 0.75),
+
+    // Start site: keep this far from the map edge
+    start_margin: 24,
+)

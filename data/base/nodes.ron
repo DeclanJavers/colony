@@ -1,0 +1,25 @@
+// Resource nodes scattered by world generation: one per tile at most.
+//   densities:  chance per tile in each biome
+//   near_water: extra chance on tiles within 2 of a river or lake
+//   clump:      how patchy (0 = even, 1 = strong groves and gaps)
+//   blocks:     whether it blocks walking and building
+//   amount:     how much it yields before it's used up
+//   variants:   how many models it has (assets/models/<id>.glb, <id>_2.glb...)
+[
+    (id: "tree", name: "Broadleaf tree", amount: 40.0, variants: 2, blocks: true, clump: 0.9, near_water: 0.0, colour: "#2E6B2A",
+     densities: [("forest", 0.16), ("meadow", 0.008), ("marsh", 0.02), ("hills", 0.02)]),
+    (id: "pine", name: "Pine", amount: 40.0, variants: 2, blocks: true, clump: 0.8, near_water: 0.0, colour: "#1F4F2C",
+     densities: [("pine_forest", 0.15), ("hills", 0.03), ("mountain", 0.02), ("forest", 0.015)]),
+    (id: "berry_bush", name: "Berry bush", amount: 12.0, variants: 1, blocks: true, clump: 0.7, near_water: 0.0, colour: "#C8283C",
+     densities: [("forest", 0.012), ("meadow", 0.006), ("marsh", 0.008), ("hills", 0.004)]),
+    (id: "rock", name: "Rock", amount: 30.0, variants: 3, blocks: true, clump: 0.6, near_water: 0.0, colour: "#6E6A68",
+     densities: [("mountain", 0.08), ("hills", 0.03), ("pine_forest", 0.006), ("meadow", 0.003), ("forest", 0.003), ("beach", 0.004)]),
+    (id: "sticks", name: "Fallen sticks", amount: 6.0, variants: 1, blocks: false, clump: 0.5, near_water: 0.0, colour: "#7A4F2C",
+     densities: [("forest", 0.012), ("pine_forest", 0.01), ("meadow", 0.003)]),
+    (id: "pebbles", name: "Pebbles", amount: 6.0, variants: 1, blocks: false, clump: 0.5, near_water: 0.01, colour: "#B8B3AA",
+     densities: [("beach", 0.02), ("mountain", 0.02), ("hills", 0.01), ("meadow", 0.002)]),
+    (id: "wildflowers", name: "Wildflowers", amount: 3.0, variants: 3, blocks: false, clump: 0.9, near_water: 0.0, colour: "#F2C640",
+     densities: [("meadow", 0.012), ("hills", 0.004), ("forest", 0.002)]),
+    (id: "reeds", name: "Reeds", amount: 8.0, variants: 2, blocks: false, clump: 0.6, near_water: 0.025, colour: "#7FA347",
+     densities: [("marsh", 0.12)]),
+]

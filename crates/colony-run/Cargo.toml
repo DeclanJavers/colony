@@ -1,0 +1,9 @@
+[package]
+name = "colony-run"
+description = "Headless command-line runner: maps, runs, benchmarks."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sim.workspace = true
+png.workspace = true

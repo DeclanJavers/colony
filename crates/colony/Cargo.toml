@@ -1,0 +1,14 @@
+[package]
+name = "colony"
+description = "The game: window, input, camera, and the renderer drawing the sim."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sim.workspace = true
+render.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+glam.workspace = true
+pollster.workspace = true
+png.workspace = true

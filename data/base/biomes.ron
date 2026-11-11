@@ -1,0 +1,16 @@
+// Biomes. World generation decides which biome each tile is (crates/sim/src/world/stages.rs);
+// this file gives each one its map colour and base soil fertility (0..1). Colours follow
+// docs/STYLE.md.
+[
+    (id: "sea",         name: "Sea",         colour: "#3C7FC0", fertility: 0.0),
+    (id: "lake",        name: "Lake",        colour: "#4A8ACB", fertility: 0.0),
+    (id: "river",       name: "River",       colour: "#5B9AD6", fertility: 0.0),
+    (id: "beach",       name: "Beach",       colour: "#CCB880", fertility: 0.15),
+    (id: "marsh",       name: "Marsh",       colour: "#6E8F4E", fertility: 0.5),
+    (id: "meadow",      name: "Meadow",      colour: "#6CA443", fertility: 0.6),
+    (id: "forest",      name: "Forest",      colour: "#4E8233", fertility: 0.65),
+    (id: "pine_forest", name: "Pine forest", colour: "#3D7340", fertility: 0.35),
+    (id: "hills",       name: "Hills",       colour: "#86913D", fertility: 0.4),
+    (id: "mountain",    name: "Mountain",    colour: "#9A9590", fertility: 0.08),
+    (id: "snow",        name: "Snowcap",     colour: "#D6E0ED", fertility: 0.0),
+]

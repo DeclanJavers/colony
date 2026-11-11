@@ -55,7 +55,9 @@ Everything is Rust, in one Cargo workspace. Python is used only for training mod
     so a whole life fits in a few hours of play.
   - **Game speeds:** 1×, 3×, 10× and max.
 - **Determinism.** The same seed, data, brains and command log always give the same world.
-  - **Random numbers:** each system has its own seeded random stream (ChaCha).
+  - **Random numbers:** each system has its own seeded random stream. We use our own small
+    generator (xoshiro256**, seeded through SplitMix64), so a library update can never change a
+    world.
   - **Iteration order:** never depends on hash-map order. Use `Vec`, `BTreeMap` or IndexMap.
   - **Parallel work:** computed in parallel (rayon), applied in a fixed order.
   - **Checking it:** a hash of world state is checked by tests.
@@ -328,16 +330,22 @@ here.
   - **Batching:** one instanced draw per mesh part per variant (v1: hundreds of trees became a
     dozen draws), with per-instance colour for seasonal leaves.
   - **Animation:** skinned, with clip blending for walk, run, work and idle.
-- **Terrain:** a mesh per chunk, rebuilt only when the chunk changes. Ground colour comes from the
-  tile fields (grass, soil, worn trail, snow) in the shader. Chunks are culled.
-- **Water:** a flat animated surface with shore colour.
+- **Terrain:** a mesh per chunk, rebuilt only when the chunk changes, with smooth normals. Ground
+  colour comes from the tile fields (biome, footfall, moisture) in a tile texture.
+  - **Biome edges:** colours blend across tile edges, dithered so they stay pixel art.
+  - **Seasons:** they recolour grass and leaves, and snow settles in winter.
+  - **Culling:** chunks and model groups are culled against the view and the sun.
+- **Water:** a surface whose corners average the water around them, so rivers slope instead of
+  stepping. It runs one tile in under the banks, so the waterline follows the ground rather than
+  tile edges. Deeper water is darker, with ripples.
 - **Lighting:** one sun with a shadow map, warm point lights (fires, windows) and a night grade.
 - **Pixel pass** (v1's look, kept):
   - **Pixel size:** 24 art pixels per tile, belonging to the world. An art pixel is always a
     whole number of screen pixels.
   - **Camera snap:** the camera snaps to the art-pixel grid so panning doesn't crawl.
   - **Lines:** outlines where depth jumps, softer lines at creases.
-  - **Resolution:** 3D renders at a whole fraction of the window size in big windows.
+  - **Resolution:** the scene is always drawn at art-pixel resolution, so a full-screen frame costs
+    about the same as a small one. Measured on the M3 Pro: 2 to 5 ms GPU at 3024×1964.
 - **The sharp overlay** is drawn after the pixel pass: text, icons, bubbles, selection rings and
   lens colours.
 - **Targets:** 120+ fps full screen with 50 people on the M3 Pro, and no frame over 16 ms from
@@ -365,8 +373,21 @@ Art direction is in [STYLE.md](STYLE.md).
   - **Words before numbers.**
   - **One panel per side;** pin to keep a card.
   - **Detail setting:** minimal, normal or analyst.
-- **Mockup first.** A clickable HTML mockup with fake data is signed off before the UI kit is
-  built (M0).
+- **Mockup first.** A clickable mockup with fake data was signed off at M0:
+  [Colony UI mockup](https://claude.ai/artifact/6L5ZsA58ze41y5N6oMhmzK). It settled these:
+  - **Floating panels:** dark, translucent panels float over the world instead of taking
+    columns. The camera glides so the selected person sits in the clear middle.
+  - **Two fonts:** a pixel font (Pixelify Sans) for titles and numbers, and a plain sans (Inter)
+    for dense text.
+  - **Event colours:** one colour per event kind, used in the feed, history and filters.
+    - social: blue `#7FB8E6`
+    - conflict: coral `#F0997B`
+    - knowledge: purple `#C3A6F0`
+    - world: green `#8CC56A`
+    - life: gold `#E8C468`
+    - your acts: pink `#F2A7C9`
+  - **Need colours:** body needs are teal `#6CC4A1`, mind needs purple `#B49CF0`.
+  - **Score bars:** in traces, the brain's scores are gold and the rules' second opinion is blue.
 
 ## 13. Tools and tests
 

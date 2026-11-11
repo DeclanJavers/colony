@@ -11,7 +11,9 @@ You sign off on a milestone before the next one starts. Milestones can be split 
 
 ---
 
-## M0: Plan and mockup
+## M0: Plan and mockup (done, signed off 2026-11-10)
+
+Mockup: [Colony UI mockup](https://claude.ai/artifact/6L5ZsA58ze41y5N6oMhmzK) (private canvas).
 
 - **Plan docs:** VISION, ARCHITECTURE, ROADMAP, LATER, STYLE.
 - **Clickable HTML mockup with fake data:**
@@ -25,7 +27,9 @@ You sign off on a milestone before the next one starts. Milestones can be split 
 - **played:** you've clicked through the mockup and the layout feels right;
 - **played:** the docs match what you want.
 
-## M1: The world from a seed (headless)
+## M1: The world from a seed (headless) (done, signed off 2026-11-10)
+
+Generation takes about 30 ms per 256×256 region. Look at seeds with `colony-run maps --seeds 1..10`.
 
 - **Workspace:** the Cargo workspace and crates, with pinned library versions.
 - **Sim core:** tick, time and seasons, seeded random streams, tables and typed ids, events,
@@ -41,7 +45,10 @@ You sign off on a milestone before the next one starts. Milestones can be split 
 - **measured:** generating a 256×256 region takes under 2 s;
 - **played:** across ~10 seeds, the maps look like real geography to you.
 
-## M2: Seeing it
+## M2: Seeing it (done, signed off 2026-11-10)
+
+Full screen runs at 245 to 517 fps with no window at 3024×1964. Windowed, it holds the display's
+144 Hz. Measure with `tools/perf.sh`.
 
 - **App window:** winit + wgpu, with the camera (drag pan, trackpad pan and pinch, wheel zoom,
   keys).

@@ -1,0 +1,11 @@
+[package]
+name = "sim"
+description = "Colony's simulation: pure data, deterministic, no graphics."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+postcard.workspace = true
+zstd.workspace = true
+ron.workspace = true
