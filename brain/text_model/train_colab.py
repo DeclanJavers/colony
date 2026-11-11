@@ -16,7 +16,7 @@ Run it from the notebook (text_model.ipynb), or in a cell:
 
 (Colab already has torch and transformers.)
 
-Reads  DATA (default: the dataset pushed to the repo, brain/data/haiku-v2/text.jsonl.gz)
+Reads  DATA (default: the dataset pushed to the repo, brain/data/haiku-v3/text.jsonl.gz)
 Writes OUT/ (default /content/text_model_v1):
        encoder.onnx (+ encoder.int8.onnx), head.onnx, tokenizer.json, report.json
 Env overrides: DATA, OUT, BASE, EPOCHS, MAX_LEN, LR.
@@ -37,7 +37,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
-DATA = os.environ.get("DATA", "https://raw.githubusercontent.com/DeclanJavers/colony/main/brain/data/haiku-v2/text.jsonl.gz")
+DATA = os.environ.get("DATA", "https://raw.githubusercontent.com/DeclanJavers/colony/main/brain/data/haiku-v3/text.jsonl.gz")
 OUT = os.environ.get("OUT", "/content/text_model_v1")
 BASE = os.environ.get("BASE", "BAAI/bge-small-en-v1.5")
 EPOCHS = int(os.environ.get("EPOCHS", "4"))
