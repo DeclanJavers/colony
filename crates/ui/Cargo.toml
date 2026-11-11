@@ -1,0 +1,9 @@
+[package]
+name = "ui"
+description = "Colony's UI kit: text, panels, bars, buttons, tooltips, laid out each frame into triangles for the renderer."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fontdue.workspace = true
+bytemuck.workspace = true

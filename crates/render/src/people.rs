@@ -296,6 +296,8 @@ pub struct PersonDraw {
     /// Model to show in the right hand (a node or prop model name), if carrying.
     pub carry: Option<&'static str>,
     pub selected: bool,
+    /// A coloured ring under them (mood and needs lenses).
+    pub ring: Option<[f32; 3]>,
 }
 
 /// Per-person animation state kept by the renderer (for smooth clip changes).

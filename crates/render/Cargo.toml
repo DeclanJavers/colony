@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ui.workspace = true
 sim.workspace = true
 wgpu.workspace = true
 glam.workspace = true

@@ -195,7 +195,7 @@ fn cmd_run(a: &Args) {
             sim.step();
         }
         for e in sim.take_events() {
-            if let sim::Event::PersonDied { name, cause } = e {
+            if let sim::Event::PersonDied { name, cause, .. } = e {
                 deaths.push(format!("day {}: {name} died of {cause}", d + 1));
             }
         }

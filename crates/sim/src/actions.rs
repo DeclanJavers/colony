@@ -136,6 +136,18 @@ pub struct Ctx<'a> {
     pub alive: usize,
     /// This person's slot among the living (for their place by the fire).
     pub slot: usize,
+    /// Who is acting (for events).
+    pub who: PersonId,
+}
+
+/// Practise a skill; tell everyone when it reaches a new level.
+fn practise(p: &mut Person, skill: usize, minutes: f32, ctx: &mut Ctx) {
+    let before = p.skill_level(skill, ctx.c);
+    p.practice[skill] += minutes;
+    let after = p.skill_level(skill, ctx.c);
+    if after > before {
+        ctx.events.push(Event::SkillUp { person: ctx.who, name: p.name.clone(), skill: ctx.c.skills.skills[skill].name.to_lowercase(), level: after });
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -717,7 +729,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                         _ => Anim::Gather,
                     };
                     if work(a, g.minutes as f32 / p.work_speed(skill, c), anim, tm) {
-                        p.practice[skill] += g.minutes as f32;
+                        practise(p, skill, g.minutes as f32, ctx);
                         let room = c.people.carry.saturating_sub(p.carried());
                         let n = ctx.nodes.get_mut(node).unwrap();
                         let k = (g.yield_per.min(room) as f32).min(n.amount.floor()) as u32;
@@ -765,6 +777,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                     let minutes = if fetching { c.actions.fetch_water.minutes } else { c.actions.drink_minutes };
                     if work(a, minutes as f32, if fetching { Anim::DrawWater } else { Anim::Drink }, tm) {
                         let t = c.need("thirst");
+                        p.last.drank = ctx.tick;
                         if fetching {
                             p.needs[t] = (p.needs[t] - 0.5).max(0.0);
                             let room = c.people.carry.saturating_sub(p.carried());
@@ -821,6 +834,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                 if ate == 0 {
                     return Some(Ending::Failed("there was nothing left".into()));
                 }
+                p.last.ate = ctx.tick;
                 return Some(Ending::Done);
             }
         }
@@ -872,6 +886,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                         if ate == 0 {
                             return Some(Ending::Failed("there was nothing to eat".into()));
                         }
+                        p.last.ate = ctx.tick;
                     }
                     Kind::DrinkStored => {
                         let t = c.need("thirst");
@@ -885,6 +900,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                         if drank == 0 {
                             return Some(Ending::Failed("the water had run out".into()));
                         }
+                        p.last.drank = ctx.tick;
                     }
                     _ => {}
                 }
@@ -923,6 +939,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                 let late = hour >= c.people.wake_hour + 1.5 && hour < 14.0;
                 if (morning && rest < 0.35) || (late && rest < 0.7) || (s < 0.05 && rest < 0.03) {
                     p.asleep = false;
+                    p.last.woke = ctx.tick;
                     return Some(Ending::Done);
                 }
                 return None;
@@ -932,6 +949,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
             p.needs[f] = (p.needs[f] - r.fun_per_hour / 60.0 * tm).max(0.0);
             p.needs[rs] = (p.needs[rs] - r.rest_per_hour / 60.0 * tm).max(0.0);
             if work(a, r.minutes as f32, Anim::Sit, tm) {
+                p.last.rested = ctx.tick;
                 return Some(Ending::Done);
             }
         }
@@ -963,7 +981,8 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                         return Some(Ending::Failed("there wasn't enough kindling".into()));
                     }
                     let skill = c.skill("firemaking");
-                    p.practice[skill] += lf.minutes as f32;
+                    practise(p, skill, lf.minutes as f32, ctx);
+                    let camp = &mut *ctx.camp;
                     let chance = (lf.chance + lf.chance_per_level * p.skill_level(skill, c) as f32) * if shaved { 0.6 } else { 1.0 };
                     if !ctx.rng.chance(chance) {
                         if shaved {
@@ -982,7 +1001,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                     camp.stores[wood] -= logs;
                     camp.fire_lit = true;
                     camp.fire_hours = lf.sticks as f32 * c.items[sticks].fuel + logs as f32 * c.items[wood].fuel;
-                    ctx.events.push(Event::FireLit);
+                    ctx.events.push(Event::FireLit { person: ctx.who, name: p.name.clone() });
                 } else {
                     if !camp.fire_lit {
                         return Some(Ending::Failed("the fire had gone out".into()));
@@ -1007,7 +1026,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
         }
         Kind::Explore { x, y } => match walk(p, a, ctx, (x, y), false) {
             Walk::Arrived => {
-                p.practice[c.skill("exploring")] += (ctx.tick - a.started) as f32 * tm;
+                practise(p, c.skill("exploring"), (ctx.tick - a.started) as f32 * tm, ctx);
                 return Some(Ending::Done);
             }
             Walk::NoPath => {

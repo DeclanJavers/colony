@@ -3,7 +3,6 @@
 //! world (about 24 per tile), then scaled up by the pixel pass with outlines and the night grade.
 //! The camera snaps to the art-pixel grid so panning never crawls. The renderer only reads the sim.
 
-pub mod font;
 pub mod models;
 pub mod people;
 pub mod terrain;
@@ -128,24 +127,16 @@ pub struct CampDraw {
     pub lit: bool,
 }
 
-/// A panel of text in window pixels (top-left corner).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Panel {
-    pub x: f32,
-    pub y: f32,
-    pub lines: Vec<String>,
-}
-
 /// What to draw this frame.
 pub struct Frame<'a> {
     pub camera: &'a Camera,
     pub light: &'a Lighting,
     /// Seconds, for animation (water ripples, walking).
     pub time: f32,
-    /// Text panels (readout, hover card, inspector).
-    pub panels: &'a [Panel],
-    /// Window pixels per font pixel.
-    pub ui_scale: u32,
+    /// The UI, laid out by the ui crate (None draws no UI).
+    pub ui: Option<ui::Output<'a>>,
+    /// The traffic lens: footsteps shown as heat on the ground.
+    pub traffic: bool,
     pub people: &'a [PersonDraw],
     pub camp: Option<CampDraw>,
 }
@@ -267,6 +258,8 @@ struct Globals {
     biome: [[f32; 4]; 16],
     pal: [[f32; 4]; 8],
     fire: [f32; 4],
+    /// x: 1 when the traffic lens is on
+    lens: [f32; 4],
 }
 
 #[repr(C)]
@@ -318,15 +311,6 @@ struct LowRes {
     post_bg: wgpu::BindGroup,
 }
 
-struct Overlay {
-    tex: wgpu::Texture,
-    bg: wgpu::BindGroup,
-    buf: wgpu::Buffer,
-    size: (u32, u32),
-    text: Vec<String>,
-    scale: u32,
-}
-
 struct PeopleGpu {
     rig: Rig,
     vb: wgpu::Buffer,
@@ -358,15 +342,13 @@ pub struct Renderer {
     post_pipe: wgpu::RenderPipeline,
     post_bgl: wgpu::BindGroupLayout,
     post_buf: wgpu::Buffer,
-    overlay_pipe: wgpu::RenderPipeline,
-    overlay_bgl: wgpu::BindGroupLayout,
+    ui: UiGpu,
     chunks: Vec<Mesh>,
     water: Option<Mesh>,
     models: Vec<Model>,
     placed: Vec<Placed>,
     tint_season: Option<usize>,
     low: Option<LowRes>,
-    overlays: Vec<Overlay>,
     map_size: u32,
     pub last_view: Option<View>,
     tile_tex: wgpu::Texture,
@@ -405,9 +387,9 @@ impl Renderer {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
         });
-        let overlay_shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("overlay"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/overlay.wgsl").into()),
+        let ui_shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ui"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ui.wgsl").into()),
         });
 
         let uniform_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
@@ -450,11 +432,6 @@ impl Renderer {
             label: Some("post"),
             entries: &[uniform_entry(0), tex_entry(1, nofilter), tex_entry(2, wgpu::TextureSampleType::Depth)],
         });
-        let overlay_bgl = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("overlay"),
-            entries: &[uniform_entry(0), tex_entry(1, nofilter)],
-        });
-
         let globals = Globals::new(content);
         let globals_buf = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("globals"),
@@ -645,33 +622,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let overlay_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("overlay"),
-            bind_group_layouts: &[Some(&overlay_bgl)],
-            immediate_size: 0,
-        });
-        let overlay_pipe = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("overlay"),
-            layout: Some(&overlay_layout),
-            vertex: wgpu::VertexState { module: &overlay_shader, entry_point: Some("vs_rect"), compilation_options: Default::default(), buffers: &[] },
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &overlay_shader,
-                entry_point: Some("fs_rect"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-
+        let ui = UiGpu::new(d, &queue, &ui_shader, target_format);
         let dynamic = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dynamic instances"),
             size: (MAX_DYNAMIC * std::mem::size_of::<Instance>()) as u64,
@@ -695,15 +646,13 @@ impl Renderer {
             post_pipe,
             post_bgl,
             post_buf,
-            overlay_pipe,
-            overlay_bgl,
+            ui,
             chunks: Vec::new(),
             water: None,
             models: Vec::new(),
             placed: Vec::new(),
             tint_season: None,
             low: None,
-            overlays: Vec::new(),
             map_size: n,
             last_view: None,
             tile_tex,
@@ -1000,10 +949,13 @@ impl Renderer {
                     eyes: v4(p.eyes, 1.0),
                     extra: [(p.parts | 1) as f32, base as f32, p.selected as u8 as f32, 0.0],
                 });
-                if p.selected
-                    && let Some(&m) = self.names.get("ring")
-                {
-                    dyn_list.push((m, Instance::new(Mat4::from_translation(p.pos), None)));
+                if let Some(&m) = self.names.get("ring") {
+                    // Gold for the selected person; a lens colour (mood, needs) for everyone else.
+                    if p.selected {
+                        dyn_list.push((m, Instance::new(Mat4::from_translation(p.pos), None)));
+                    } else if let Some(c) = p.ring {
+                        dyn_list.push((m, Instance::new(Mat4::from_translation(p.pos) * Mat4::from_scale(Vec3::new(0.8, 1.0, 0.8)), Some(c))));
+                    }
                 }
                 if let Some(item) = p.carry
                     && let Some(&m) = self.names.get(item)
@@ -1170,63 +1122,6 @@ impl Renderer {
         self.low = Some(LowRes { size, colour, depth, post_bg });
     }
 
-    fn update_overlays(&mut self, panels: &[Panel], win: (u32, u32), scale: u32) {
-        self.overlays.truncate(panels.len());
-        for (k, panel) in panels.iter().enumerate() {
-            let fresh = self.overlays.get(k).is_none_or(|o| o.text != panel.lines || o.scale != scale);
-            if fresh {
-                let img = font::render(&panel.lines, scale);
-                let reuse = self.overlays.get(k).is_some_and(|o| o.size == (img.w, img.h));
-                if !reuse {
-                    let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("panel"),
-                        size: wgpu::Extent3d { width: img.w, height: img.h, depth_or_array_layers: 1 },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    });
-                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("panel"),
-                        size: std::mem::size_of::<RectUniform>() as u64,
-                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("panel"),
-                        layout: &self.overlay_bgl,
-                        entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&tex.create_view(&Default::default())) },
-                        ],
-                    });
-                    let o = Overlay { tex, bg, buf, size: (img.w, img.h), text: Vec::new(), scale };
-                    if k < self.overlays.len() {
-                        self.overlays[k] = o;
-                    } else {
-                        self.overlays.push(o);
-                    }
-                }
-                let o = &mut self.overlays[k];
-                self.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo { texture: &o.tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                    &img.px,
-                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.w * 4), rows_per_image: Some(img.h) },
-                    wgpu::Extent3d { width: img.w, height: img.h, depth_or_array_layers: 1 },
-                );
-                o.text = panel.lines.clone();
-                o.scale = scale;
-            }
-            let o = &self.overlays[k];
-            let x = panel.x.min(win.0 as f32 - o.size.0 as f32 - 4.0).max(0.0);
-            let y = panel.y.min(win.1 as f32 - o.size.1 as f32 - 4.0).max(0.0);
-            let r = RectUniform { r: [x, y, o.size.0 as f32, o.size.1 as f32], win: [win.0 as f32, win.1 as f32, 0.0, 0.0] };
-            self.queue.write_buffer(&o.buf, 0, bytemuck::bytes_of(&r));
-        }
-    }
-
     /// Where a world point lands in the window last frame (for picking people).
     pub fn to_screen(&self, p: Vec3, win: (u32, u32)) -> Option<Vec2> {
         let v = self.last_view?;
@@ -1267,6 +1162,7 @@ impl Renderer {
         g.ambient = [light.ambient.x, light.ambient.y, light.ambient.z, 1.0];
         g.cam_fwd = [view.forward.x, view.forward.y, view.forward.z, self.map_size as f32];
         g.season = [light.season as f32, light.snow, frame.time, 0.00025];
+        g.lens = [frame.traffic as u8 as f32, 0.0, 0.0, 0.0];
         g.fire = match frame.camp {
             Some(c) if c.lit => {
                 let flicker = 0.92 + 0.08 * (frame.time * 7.3).sin() * (frame.time * 3.1).cos();
@@ -1282,7 +1178,9 @@ impl Renderer {
             night_tint: [0.50, 0.60, 1.05, 1.0],
         };
         self.queue.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&post));
-        self.update_overlays(frame.panels, size, frame.ui_scale.max(1));
+        if let Some(out) = &frame.ui {
+            self.ui.upload(&self.device, &self.queue, out, size);
+        }
 
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         // 1. Shadows
@@ -1358,7 +1256,7 @@ impl Renderer {
             self.draw_dynamic(&mut pass);
             self.draw_people(&mut pass, false);
         }
-        // 3. Pixel pass into the target, then the overlay
+        // 3. Pixel pass into the target, then the UI on top
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("post"),
@@ -1376,10 +1274,8 @@ impl Renderer {
             pass.set_pipeline(&self.post_pipe);
             pass.set_bind_group(0, &low.post_bg, &[]);
             pass.draw(0..3, 0..1);
-            pass.set_pipeline(&self.overlay_pipe);
-            for o in &self.overlays {
-                pass.set_bind_group(0, &o.bg, &[]);
-                pass.draw(0..4, 0..1);
+            if frame.ui.is_some() {
+                self.ui.draw(&mut pass);
             }
         }
         self.queue.submit([enc.finish()]);
@@ -1426,6 +1322,153 @@ impl Globals {
             biome,
             pal,
             fire: [0.0, -100.0, 0.0, 0.0],
+            lens: [0.0; 4],
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The UI layer
+
+struct UiGpu {
+    pipe: wgpu::RenderPipeline,
+    bg: wgpu::BindGroup,
+    win: wgpu::Buffer,
+    atlas: wgpu::Texture,
+    vb: wgpu::Buffer,
+    ib: wgpu::Buffer,
+    vcap: usize,
+    icap: usize,
+    count: u32,
+}
+
+impl UiGpu {
+    fn new(d: &wgpu::Device, _q: &wgpu::Queue, shader: &wgpu::ShaderModule, format: wgpu::TextureFormat) -> UiGpu {
+        let atlas = d.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ui atlas"),
+            size: wgpu::Extent3d { width: 1024, height: 1024, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let win = d.create_buffer(&wgpu::BufferDescriptor { label: Some("ui window"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let smp = d.create_sampler(&wgpu::SamplerDescriptor { label: Some("ui atlas"), ..Default::default() });
+        let bgl = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            ],
+        });
+        let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: win.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&smp) },
+            ],
+        });
+        let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ui"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+        let pipe = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ui"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_ui"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ui::Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x2, 4 => Float32x4],
+                })],
+            },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_ui"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let mk = |label: &str, size: usize, usage: wgpu::BufferUsages| {
+            d.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: size as u64, usage: usage | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false })
+        };
+        let (vcap, icap) = (16_384, 24_576);
+        UiGpu {
+            pipe,
+            bg,
+            win,
+            atlas,
+            vb: mk("ui vertices", vcap * std::mem::size_of::<ui::Vertex>(), wgpu::BufferUsages::VERTEX),
+            ib: mk("ui indices", icap * 4, wgpu::BufferUsages::INDEX),
+            vcap,
+            icap,
+            count: 0,
+        }
+    }
+
+    fn upload(&mut self, d: &wgpu::Device, q: &wgpu::Queue, out: &ui::Output, win: (u32, u32)) {
+        q.write_buffer(&self.win, 0, bytemuck::cast_slice(&[win.0 as f32, win.1 as f32, 0.0, 0.0]));
+        if let Some(atlas) = out.atlas {
+            q.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.atlas, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                atlas,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(out.atlas_size), rows_per_image: Some(out.atlas_size) },
+                wgpu::Extent3d { width: out.atlas_size, height: out.atlas_size, depth_or_array_layers: 1 },
+            );
+        }
+        if out.vertices.len() > self.vcap {
+            self.vcap = out.vertices.len().next_power_of_two();
+            self.vb = d.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ui vertices"),
+                size: (self.vcap * std::mem::size_of::<ui::Vertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if out.indices.len() > self.icap {
+            self.icap = out.indices.len().next_power_of_two();
+            self.ib = d.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ui indices"),
+                size: (self.icap * 4) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if !out.vertices.is_empty() {
+            q.write_buffer(&self.vb, 0, bytemuck::cast_slice(out.vertices));
+            q.write_buffer(&self.ib, 0, bytemuck::cast_slice(out.indices));
+        }
+        self.count = out.indices.len() as u32;
+    }
+
+    fn draw(&self, pass: &mut wgpu::RenderPass) {
+        if self.count == 0 {
+            return;
+        }
+        pass.set_pipeline(&self.pipe);
+        pass.set_bind_group(0, &self.bg, &[]);
+        pass.set_vertex_buffer(0, self.vb.slice(..));
+        pass.set_index_buffer(self.ib.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..self.count, 0, 0..1);
     }
 }

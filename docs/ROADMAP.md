@@ -94,7 +94,7 @@ Full screen runs at 245 to 517 fps with no window at 3024×1964. Windowed, it ho
 - **measured:** no one sleeps through the day (body clock check);
 - **played:** watching them for 10 minutes, what they do looks sensible and alive.
 
-## M4: Understanding everything
+## M4: Understanding everything (done, signed off 2026-11-10)
 
 - **The UI kit** in the pixel style, scaling with the window.
 - **Main layout:** top bar, story feed (sentences, colour by kind, click to jump, grouping), god
@@ -115,6 +115,10 @@ Full screen runs at 245 to 517 fps with no window at 3024×1964. Windowed, it ho
 - **played:** you can click anyone and say what they're doing and why within a few seconds;
 - **played:** the trace view shows exactly what the brain saw and picked for any decision;
 - **measured:** still 120+ fps with the inspector and a lens open.
+
+**Measured (2026-11-10, M3 Pro, 3024x1964 headless, inspector and a lens open):** zoom 16:
+386 fps, zoom 40: 259 fps, zoom 120: 153 fps (the UI costs 0.3 to 0.7 ms). Windowed with the
+inspector and traffic lens: 261 fps average.
 
 ## M5: Families and society
 

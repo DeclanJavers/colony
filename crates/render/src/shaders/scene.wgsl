@@ -18,6 +18,8 @@ struct Globals {
     pal: array<vec4<f32>, 8>,
     // xyz: the camp fire; w: its light (0 when out)
     fire: vec4<f32>,
+    // x: 1 when the traffic lens is on
+    lens: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -206,7 +208,27 @@ fn fs_terrain(i: TerrainOut) -> @location(0) vec4<f32> {
     } else {
         c = ground_colour(i.world, n);
     }
-    return shade(c, n, i.world);
+    let lit = shade(c, n, i.world);
+    if (g.lens.x > 0.5 && i.side < 0.5) {
+        // Traffic lens: the world greyed and dimmed, footsteps glowing from brown to amber.
+        let worn = worn_at(i.world.xz);
+        let grey = vec3<f32>(dot(lit.rgb, vec3<f32>(0.3, 0.55, 0.15))) * 0.55;
+        let heat = mix(vec3<f32>(0.107, 0.042, 0.016), vec3<f32>(1.0, 0.434, 0.051), smoothstep(0.05, 0.7, worn));
+        return vec4<f32>(mix(grey, heat, smoothstep(0.0, 0.12, worn) * 0.9), lit.a);
+    }
+    return lit;
+}
+
+/// Footsteps worn into the ground here, as a share of a full trail (blended across tiles).
+fn worn_at(p: vec2<f32>) -> f32 {
+    let q = p - vec2<f32>(0.5);
+    let b = vec2<i32>(floor(q));
+    let f = fract(q);
+    let a = tile_data(b).g;
+    let bb = tile_data(b + vec2<i32>(1, 0)).g;
+    let c = tile_data(b + vec2<i32>(0, 1)).g;
+    let d = tile_data(b + vec2<i32>(1, 1)).g;
+    return mix(mix(a, bb, f.x), mix(c, d, f.x), f.y);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -362,8 +384,9 @@ fn vs_model(v: ModelIn) -> ModelOut {
     o.world = w.xyz;
     o.normal = normalize((m * vec4<f32>(v.normal, 0.0)).xyz);
     var c = v.colour;
-    if (v.flag > 0.5 && v.flag < 2.5 && v.tint.a > 0.5 && v.tint.a < 1.5) {
-        c = v.tint.rgb * select(1.0, 1.22, v.flag > 1.5);
+    if (v.flag > 0.5 && v.tint.a > 0.5 && v.tint.a < 1.5) {
+        // Leaves take the season's tint; glowing things (lens rings) take the instance colour.
+        c = v.tint.rgb * select(1.0, 1.22, v.flag > 1.5 && v.flag < 2.5);
     }
     o.colour = c;
     o.flag = v.flag;

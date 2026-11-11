@@ -369,7 +369,10 @@ Art direction is in [STYLE.md](STYLE.md).
 
 - **Our own UI kit** (crate `ui`), immediate-mode, drawn by our renderer in the pixel style.
   - **Scaling:** it scales with the window in logical units.
-  - **Text:** glyphon / cosmic-text.
+  - **Text:** fontdue rasterises glyphs into one R8 atlas; shapes are rounded rects from a
+    signed distance (`render/src/shaders/ui.wgsl`). Drawn last, at full resolution.
+  - **Input:** clicks and scrolling go to the UI first; the world only gets them when the
+    cursor isn't over a panel (`Ui::over_ui`, from the frame before).
   - **Pieces:** panels, tabs, rows, bars, hover cards, links, sparklines, small charts, a simple
     graph view and a tree view (family trees).
 - **Layout:**
@@ -389,8 +392,9 @@ Art direction is in [STYLE.md](STYLE.md).
   [Colony UI mockup](https://claude.ai/artifact/6L5ZsA58ze41y5N6oMhmzK). It settled these:
   - **Floating panels:** dark, translucent panels float over the world instead of taking
     columns. The camera glides so the selected person sits in the clear middle.
-  - **Two fonts:** a pixel font (Pixelify Sans) for titles and numbers, and a plain sans (Inter)
-    for dense text.
+  - **Two fonts:** a pixel font (Pixelify Sans) for titles, and a plain sans (Inter) for dense
+    text and all numbers. (M4 changed numbers to Inter: Pixelify's digits misread, "15" looks
+    like "18".) Pixelify is drawn at multiples of 8 window pixels so its pixels stay square.
   - **Event colours:** one colour per event kind, used in the feed, history and filters.
     - social: blue `#7FB8E6`
     - conflict: coral `#F0997B`
@@ -400,6 +404,14 @@ Art direction is in [STYLE.md](STYLE.md).
     - your acts: pink `#F2A7C9`
   - **Need colours:** body needs are teal `#6CC4A1`, mind needs purple `#B49CF0`.
   - **Score bars:** in traces, the brain's scores are gold and the rules' second opinion is blue.
+- **Lenses (M4):** traffic greys the world and shows footfall as heat in the ground shader;
+  mood and needs put a coloured ring under each person (the selection ring, tinted).
+- **Story feed (M4):** built from sim events, stamped with the tick they happened on
+  (`Sim::take_timed_events`). The same thing happening to several people within three hours
+  groups into one line ("3 people are very thirsty").
+- **Headless UI shots:** `colony --shot out.png --inspect K --tab log --trace N --lens traffic
+  --detail analyst --cursor X,Y` renders any view without a window; `--bench` takes the same
+  options to time frames with the UI open.
 
 ## 13. Tools and tests
 

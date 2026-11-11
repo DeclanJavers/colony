@@ -6,14 +6,20 @@
 //!   colony --bench 3024x1964 [--frames 300] ...           time frames with no window (GPU cost)
 //!   colony --perf 10 ...                                  run windowed for N seconds, print fps
 //!
+//! UI options for shots and benches: --inspect K (select the K-th person), --tab mind|life|body|
+//! skills|log, --trace N (open their N-th newest decision trace), --lens traffic|mood|needs,
+//! --detail minimal|normal|analyst, --cursor X,Y (hover there), --no-ui.
+//!
 //! Controls: drag or two-finger scroll to pan, pinch or wheel to zoom, WASD/arrows, Z/X zoom,
-//! Space pause, 1/2/3 speed, T +1 hour, Y +1 day, F full screen, F3 hide the readout.
+//! Space pause, 1/2/3 speed, T +1 hour, Y +1 day, F full screen, F3 hide the UI, L next lens,
+//! Esc close.
 
 mod gpu;
+mod hud;
 mod view;
 
 use glam::{Vec2, Vec3};
-use render::{Camera, Frame, Lighting, Panel, Renderer};
+use render::{Camera, Frame, Lighting, Renderer};
 use sim::Sim;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -75,6 +81,10 @@ pub struct World {
     prev: view::Poses,
     /// The smooth ground surface (what people and things stand on).
     pub ground: render::terrain::Ground,
+    /// Pause as soon as this person makes their next decision (decisions they'd made when asked).
+    pub pause_on: Option<(sim::PersonId, u64)>,
+    /// Set when a watched decision paused the game: open that trace.
+    pub caught: Option<sim::PersonId>,
 }
 
 /// Game minutes per real second at 1x.
@@ -92,7 +102,7 @@ impl World {
         }
         let prev = view::poses(&sim);
         let ground = render::terrain::Ground::new(&sim.map);
-        World { sim, paused: false, speed: 1.0, carry: 0.0, prev, ground }
+        World { sim, paused: false, speed: 1.0, carry: 0.0, prev, ground, pause_on: None, caught: None }
     }
 
     fn advance(&mut self, dt: f32) {
@@ -103,9 +113,36 @@ impl World {
         let n = self.carry.floor();
         self.carry -= n;
         if n > 0.0 {
+            if let Some((who, made)) = self.pause_on {
+                // Step one tick at a time so the game stops right on the decision.
+                for _ in 0..n as u64 {
+                    self.prev = view::poses(&self.sim);
+                    self.sim.step();
+                    let now = self.sim.people.get(who).map_or(made, |p| p.tally.decisions);
+                    if now != made {
+                        self.paused = true;
+                        self.carry = 0.0;
+                        self.pause_on = None;
+                        self.caught = Some(who);
+                        break;
+                    }
+                }
+                return;
+            }
             self.sim.run_ticks(n as u64 - 1);
             self.prev = view::poses(&self.sim);
             self.sim.step();
+        }
+    }
+
+    /// Watch someone: pause on their next decision (or stop watching).
+    fn toggle_watch(&mut self, who: sim::PersonId) {
+        self.pause_on = match self.pause_on {
+            Some((w, _)) if w == who => None,
+            _ => self.sim.people.get(who).map(|p| (who, p.tally.decisions)),
+        };
+        if self.pause_on.is_some() {
+            self.paused = false;
         }
     }
 
@@ -135,10 +172,14 @@ impl World {
     }
 
     /// Everything the renderer needs from the sim this frame.
-    fn scene(&self, selected: Option<sim::PersonId>, walk_ref: f32) -> (Vec<render::people::PersonDraw>, render::CampDraw) {
+    fn scene(&self, selected: Option<sim::PersonId>, walk_ref: f32, lens: hud::Lens) -> (Vec<render::people::PersonDraw>, render::CampDraw) {
         let alpha = if self.paused { 1.0 } else { self.carry.clamp(0.0, 1.0) };
         let tps = if self.paused { 0.0 } else { MINUTES_PER_SECOND * self.speed / self.sim.content.calendar.minutes_per_tick as f32 };
-        (view::people(&self.sim, &self.ground, &self.prev, alpha, selected, tps, walk_ref), view::camp(&self.sim, &self.ground))
+        (view::people(&self.sim, &self.ground, &self.prev, alpha, selected, tps, walk_ref, lens), view::camp(&self.sim, &self.ground))
+    }
+
+    fn status(&self, fps: f32, frame_ms: f32, selected: Option<sim::PersonId>, hovered: Option<sim::PersonId>) -> hud::Status {
+        hud::Status { paused: self.paused, speed: self.speed, fps, frame_ms, selected, hovered, pause_on: self.pause_on.map(|w| w.0) }
     }
 
     fn nodes(&self) -> Vec<sim::Node> {
@@ -185,33 +226,93 @@ fn headless_renderer(world: &World) -> Renderer {
         .unwrap_or_else(|e| panic!("renderer: {e}"))
 }
 
+/// The HUD for a headless shot or bench, set up from the UI options (see the top of this file).
+struct Staged {
+    hud: hud::Hud,
+    selected: Option<sim::PersonId>,
+    hovered: Option<sim::PersonId>,
+    cursor: (f32, f32),
+}
+
+fn stage_ui(a: &Args, world: &mut World, size: (u32, u32)) -> Option<Staged> {
+    if a.has("no-ui") {
+        return None;
+    }
+    let mut hud = hud::Hud::new(&assets_dir()).unwrap_or_else(|e| panic!("fonts: {e}"));
+    hud.take_events(&mut world.sim);
+    let living: Vec<sim::PersonId> = world.sim.people.iter().filter(|(_, p)| p.alive).map(|(id, _)| id).collect();
+    let selected = a.get("inspect").and_then(|k| k.parse::<usize>().ok()).and_then(|k| living.get(k).copied());
+    hud.tab = match a.get("tab").unwrap_or("mind") {
+        "life" => hud::Tab::Life,
+        "body" => hud::Tab::Body,
+        "skills" => hud::Tab::Skills,
+        "log" => hud::Tab::Log,
+        _ => hud::Tab::Mind,
+    };
+    hud.lens = match a.get("lens").unwrap_or("off") {
+        "traffic" => hud::Lens::Traffic,
+        "mood" => hud::Lens::Mood,
+        "needs" => hud::Lens::Needs,
+        _ => hud::Lens::Off,
+    };
+    hud.detail = match a.get("detail").unwrap_or("normal") {
+        "minimal" => hud::Detail::Minimal,
+        "analyst" => hud::Detail::Analyst,
+        _ => hud::Detail::Normal,
+    };
+    if let (Some(s), Some(k)) = (selected, a.get("trace").and_then(|k| k.parse::<usize>().ok())) {
+        hud.trace = Some((s, k));
+    }
+    let cursor = a
+        .get("cursor")
+        .and_then(|c| c.split_once(','))
+        .and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?)))
+        .unwrap_or((-1.0, -1.0));
+    // Hover whoever is nearest the middle of the screen, apart from the selected person.
+    let hovered = if a.has("cursor") || a.has("no-hover") { None } else { living.iter().find(|h| Some(**h) != selected).copied() };
+    let _ = size;
+    Some(Staged { hud, selected, hovered, cursor })
+}
+
+/// Scale for the UI: 2 window pixels per logical pixel on a retina-sized image, 1 on a small one.
+fn headless_scale(size: (u32, u32)) -> f32 {
+    if size.1 >= 1400 { 2.0 } else { 1.0 }
+}
+
 fn shot(a: &Args, path: PathBuf) {
-    let world = World::new(a);
+    let mut world = World::new(a);
     let size = a.size("shot-size", (1600, 1000));
     let mut r = headless_renderer(&world);
     let cam = start_camera(&world.sim, a);
     let light = world.lighting();
-    let mut panels: Vec<Panel> = if a.has("readout") { vec![Panel { x: 12.0, y: 12.0, lines: vec![world.describe()] }] } else { Vec::new() };
-    // --inspect K: select the K-th person and show the inspector (and the next one's hover card).
-    let living: Vec<sim::PersonId> = world.sim.people.iter().filter(|(_, p)| p.alive).map(|(id, _)| id).collect();
-    let selected = a.get("inspect").and_then(|k| k.parse::<usize>().ok()).and_then(|k| living.get(k).copied());
-    if let Some(s) = selected {
-        let lines = view::inspector(&world.sim, s);
-        let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * 8.0;
-        panels.push(Panel { x: size.0 as f32 - width - 24.0, y: 12.0, lines });
-        if let Some(h) = living.iter().find(|h| **h != s) {
-            panels.push(Panel { x: 40.0, y: size.1 as f32 - 140.0, lines: view::hover(&world.sim, *h) });
+    let mut staged = stage_ui(a, &mut world, size);
+    let lens = staged.as_ref().map_or(hud::Lens::Off, |s| s.hud.lens);
+    let selected = staged.as_ref().and_then(|s| s.selected);
+    let (people, camp) = world.scene(selected, r.walk_speed(), lens);
+    // Put the hover cursor on the hovered person, as if the mouse were there.
+    if let Some(st) = staged.as_mut()
+        && let Some(h) = st.hovered
+        && let Some(d) = people.iter().find(|d| d.key == view::key(h))
+    {
+        r.render(&gpu::offscreen_target(r.device(), size, r.target_format()).create_view(&Default::default()), size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, traffic: false, people: &people, camp: Some(camp) });
+        if let Some(p) = r.to_screen(d.pos + Vec3::new(0.0, 0.55, 0.0), size) {
+            st.cursor = (p.x, p.y);
         }
     }
-    let (people, camp) = world.scene(selected, r.walk_speed());
-    let frame = Frame { camera: &cam, light: &light, time: 0.0, panels: &panels, ui_scale: 2, people: &people, camp: Some(camp) };
+    let ui = staged.as_mut().map(|st| {
+        let status = world.status(60.0, 16.7, st.selected, st.hovered);
+        st.hud.ui.begin((size.0 as f32, size.1 as f32), headless_scale(size), ui::Input { cursor: st.cursor, clicked: false, scroll: 0.0 });
+        st.hud.frame(&world.sim, &status);
+        st.hud.ui.finish()
+    });
+    let frame = Frame { camera: &cam, light: &light, time: 0.0, ui, traffic: lens == hud::Lens::Traffic, people: &people, camp: Some(camp) };
     let img = gpu::render_to_image(&mut r, size, &frame);
     gpu::write_png(&path, size, &img);
-    println!("wrote {} ({}x{}, {}); walk cycle no-slide speed {:.2} m/s, people walk {:.2} m/s at 1x", path.display(), size.0, size.1, world.describe(), r.walk_speed(), world.sim.content.people.walk_speed * MINUTES_PER_SECOND);
+    println!("wrote {} ({}x{}, {})", path.display(), size.0, size.1, world.describe());
 }
 
 fn bench(a: &Args) {
-    let world = World::new(a);
+    let mut world = World::new(a);
     let size = a.size("bench", (3024, 1964));
     let frames = a.num("frames", 300u32);
     let mut r = headless_renderer(&world);
@@ -219,13 +320,22 @@ fn bench(a: &Args) {
     let light = world.lighting();
     let target = gpu::offscreen_target(r.device(), size, r.target_format());
     let view = target.create_view(&Default::default());
+    let mut staged = stage_ui(a, &mut world, size);
+    let lens = staged.as_ref().map_or(hud::Lens::Off, |s| s.hud.lens);
+    let selected = staged.as_ref().and_then(|s| s.selected);
     let mut times = Vec::new();
     for f in 0..frames + 20 {
         // Pan slowly so culling and snapping do real work.
         cam.focus.x += 0.05;
         let t = Instant::now();
-        let (people, camp) = world.scene(None, r.walk_speed());
-        r.render(&view, size, &Frame { camera: &cam, light: &light, time: f as f32 / 60.0, panels: &[], ui_scale: 2, people: &people, camp: Some(camp) });
+        let (people, camp) = world.scene(selected, r.walk_speed(), lens);
+        let ui = staged.as_mut().map(|st| {
+            let status = world.status(60.0, 16.7, st.selected, st.hovered);
+            st.hud.ui.begin((size.0 as f32, size.1 as f32), 2.0, ui::Input { cursor: (size.0 as f32 * 0.5, size.1 as f32 * 0.5), clicked: false, scroll: 0.0 });
+            st.hud.frame(&world.sim, &status);
+            st.hud.ui.finish()
+        });
+        r.render(&view, size, &Frame { camera: &cam, light: &light, time: f as f32 / 60.0, ui, traffic: lens == hud::Lens::Traffic, people: &people, camp: Some(camp) });
         r.device().poll(wgpu::PollType::wait_indefinitely()).expect("gpu finished");
         if f >= 20 {
             times.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -256,6 +366,7 @@ fn qa_sheet(a: &Args, out: PathBuf) {
         px.copy_from_slice(&[30, 26, 31, 255]);
     }
     let mut cache: Option<(u64, World, Renderer)> = None;
+    let mut labeller: Option<hud::Hud> = None;
     for (k, &(seed, x, z)) in spots.iter().enumerate() {
         if cache.as_ref().is_none_or(|c| c.0 != seed) {
             let mut args = Args { opts: a.opts.clone() };
@@ -268,9 +379,15 @@ fn qa_sheet(a: &Args, out: PathBuf) {
         let mut cam = Camera::new(Vec3::new(x + 0.5, world.ground.height(x + 0.5, z + 0.5), z + 0.5));
         cam.size = a.num("zoom", 12.0);
         let light = world.lighting();
-        let (people, camp) = world.scene(None, r.walk_speed());
-        let panels = vec![Panel { x: 6.0, y: 6.0, lines: vec![format!("{} seed {seed} {x},{z}", k + 1)] }];
-        let img = gpu::render_to_image(r, tile, &Frame { camera: &cam, light: &light, time: 3.0, panels: &panels, ui_scale: 2, people: &people, camp: Some(camp) });
+        let (people, camp) = world.scene(None, r.walk_speed(), hud::Lens::Off);
+        let label = labeller.get_or_insert_with(|| hud::Hud::new(&assets_dir()).unwrap_or_else(|e| panic!("fonts: {e}")));
+        label.ui.begin((tile.0 as f32, tile.1 as f32), 1.0, ui::Input::default());
+        let tt = ui::Text { font: ui::Font::Sans, size: 13.0, colour: ui::style::TEXT };
+        let s = format!("{} seed {seed} {x},{z}", k + 1);
+        let lw = label.ui.measure(&s, tt);
+        label.ui.rect(ui::Rect::new(4.0, 4.0, lw + 12.0, 22.0), ui::style::PANEL, 4.0);
+        label.ui.text(10.0, 6.0, &s, tt);
+        let img = gpu::render_to_image(r, tile, &Frame { camera: &cam, light: &light, time: 3.0, ui: Some(label.ui.finish()), traffic: false, people: &people, camp: Some(camp) });
         let (ox, oy) = (6 + (k as u32 % cols) * (tile.0 + 6), 6 + (k as u32 / cols) * (tile.1 + 6));
         for y in 0..tile.1 {
             let src = (y * tile.0 * 4) as usize;
@@ -296,8 +413,8 @@ fn pan_test(a: &Args) {
     let mut prev: Option<Vec<u8>> = None;
     let mut changed = Vec::new();
     for _ in 0..9 {
-        let (people, camp) = world.scene(None, r.walk_speed());
-        let img = gpu::render_to_image(&mut r, size, &Frame { camera: &cam, light: &light, time: 0.0, panels: &[], ui_scale: 2, people: &people, camp: Some(camp) });
+        let (people, camp) = world.scene(None, r.walk_speed(), hud::Lens::Off);
+        let img = gpu::render_to_image(&mut r, size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, traffic: false, people: &people, camp: Some(camp) });
         if let Some(p) = &prev {
             let n = img.chunks(4).zip(p.chunks(4)).filter(|(x, y)| x != y).count();
             changed.push(n);
@@ -358,9 +475,14 @@ struct App {
     frame_ms: Vec<f64>,
     /// (waiting for the window's next image, building and submitting the frame), ms
     split_ms: Vec<(f64, f64)>,
-    readout: Vec<String>,
-    show_readout: bool,
+    /// (fps, ms per frame) over the last half second.
+    fps: (f32, f32),
+    show_ui: bool,
     fps_window: (Instant, u32, f64),
+    hud: Option<hud::Hud>,
+    /// A click (press and release without dragging) waiting for the next frame.
+    click: bool,
+    scroll: f32,
     perf_secs: Option<f64>,
     hovered: Option<sim::PersonId>,
     selected: Option<sim::PersonId>,
@@ -383,8 +505,11 @@ impl App {
             started: Instant::now(),
             frame_ms: Vec::new(),
             split_ms: Vec::new(),
-            readout: vec!["-- fps".into()],
-            show_readout: true,
+            fps: (0.0, 0.0),
+            show_ui: true,
+            hud: None,
+            click: false,
+            scroll: 0.0,
             fps_window: (Instant::now(), 0, 0.0),
             perf_secs,
             hovered: None,
@@ -508,15 +633,12 @@ impl App {
         let dt = (now - self.last).as_secs_f64();
         self.last = now;
         self.update(dt as f32);
-        // Readout: fps over the last half second.
+        // fps over the last half second.
         let w = &mut self.fps_window;
         w.1 += 1;
         w.2 += dt * 1000.0;
         if w.0.elapsed().as_secs_f64() >= 0.5 {
-            let fps = w.1 as f64 / w.0.elapsed().as_secs_f64();
-            let ms = w.2 / w.1 as f64;
-            let speed = if self.world.paused { "paused".to_string() } else { format!("{}x", self.world.speed) };
-            self.readout = vec![format!("{fps:.0} fps  {ms:.1} ms"), self.world.describe(), format!("{} people  {speed}", self.world.sim.alive())];
+            self.fps = ((w.1 as f64 / w.0.elapsed().as_secs_f64()) as f32, (w.2 / w.1 as f64) as f32);
             *w = (Instant::now(), 0, 0.0);
         }
         let elapsed = self.started.elapsed().as_secs_f64();
@@ -555,27 +677,57 @@ impl App {
         }
         let win = (g.config.width, g.config.height);
         let scale = g.window.scale_factor() as f32;
-        let ui = (2.0 * scale).round().max(1.0) as u32;
-        let (people, camp) = self.world.scene(self.selected, g.renderer.walk_speed());
-        self.hovered = if self.drag.as_ref().is_some_and(|d| d.moving) { None } else { view::pick(&g.renderer, &self.world.sim, &people, self.cursor, win, scale) };
-        let mut panels = Vec::new();
-        if self.show_readout {
-            panels.push(Panel { x: 12.0 * scale, y: 12.0 * scale, lines: self.readout.clone() });
+        let lens = self.hud.as_ref().map_or(hud::Lens::Off, |h| h.lens);
+        let (people, camp) = self.world.scene(self.selected, g.renderer.walk_speed(), lens);
+        let dragging = self.drag.as_ref().is_some_and(|d| d.moving);
+        let picked = if dragging { None } else { view::pick(&g.renderer, &self.world.sim, &people, self.cursor, win, scale) };
+        let click = std::mem::take(&mut self.click);
+        let scroll = std::mem::take(&mut self.scroll);
+        // A watched decision paused the game: show its trace.
+        if let Some(who) = self.world.caught.take()
+            && let Some(h) = self.hud.as_mut()
+        {
+            h.trace = Some((who, 0));
+            self.selected = Some(who);
         }
-        if let Some(h) = self.hovered.filter(|h| Some(*h) != self.selected) {
-            panels.push(Panel { x: self.cursor.x + 18.0 * scale, y: self.cursor.y + 18.0 * scale, lines: view::hover(&self.world.sim, h) });
-        }
-        if let Some(s) = self.selected {
-            let lines = view::inspector(&self.world.sim, s);
-            let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * 4.0 * ui as f32;
-            panels.push(Panel { x: win.0 as f32 - width - 24.0 * scale, y: 12.0 * scale, lines });
+        let mut ui_out = None;
+        if self.show_ui
+            && let Some(h) = self.hud.as_mut()
+        {
+            h.take_events(&mut self.world.sim);
+            // The UI drawn last frame decides whether the cursor is over it.
+            let over = h.ui.over_ui();
+            self.hovered = if over { None } else { picked };
+            let status = self.world.status(self.fps.0, self.fps.1, self.selected, self.hovered);
+            h.ui.begin((win.0 as f32, win.1 as f32), scale, ui::Input { cursor: (self.cursor.x, self.cursor.y), clicked: click && !dragging, scroll });
+            for act in h.frame(&self.world.sim, &status) {
+                match act {
+                    hud::Action::Select(s) => self.selected = s,
+                    hud::Action::Speed(v) => {
+                        self.world.speed = v;
+                        self.world.paused = false;
+                    }
+                    hud::Action::TogglePause => self.world.paused = !self.world.paused,
+                    hud::Action::PauseOnNextDecision(who) => self.world.toggle_watch(who),
+                }
+            }
+            if click && !over && !h.ui.over_ui() && h.trace.is_none() {
+                // A click on the world: select whoever is under the cursor, or nobody.
+                self.selected = self.hovered;
+            }
+            ui_out = Some(h.ui.finish());
+        } else {
+            self.hovered = picked;
+            if click {
+                self.selected = self.hovered;
+            }
         }
         g.renderer.render(&view, win, &Frame {
             camera: &self.camera,
             light: &light,
             time: elapsed as f32,
-            panels: &panels,
-            ui_scale: ui,
+            ui: ui_out,
+            traffic: lens == hud::Lens::Traffic,
             people: &people,
             camp: Some(camp),
         });
@@ -604,6 +756,12 @@ impl ApplicationHandler for App {
         let renderer = Renderer::new(device, queue, config.format, &self.world.sim.map, &nodes, &self.world.sim.content, &assets_dir())
             .unwrap_or_else(|e| panic!("renderer: {e}"));
         self.gfx = Some(Gfx { window, surface, config, renderer });
+        // Start with the UI options too (--inspect, --tab, --lens, --detail), for perf runs.
+        let size = (self.gfx.as_ref().map_or(1, |g| g.config.width), self.gfx.as_ref().map_or(1, |g| g.config.height));
+        if let Some(st) = stage_ui(&self.args, &mut self.world, size) {
+            self.selected = st.selected;
+            self.hud = Some(st.hud);
+        }
         self.last = Instant::now();
         self.started = Instant::now();
     }
@@ -636,8 +794,24 @@ impl ApplicationHandler for App {
                                 let d = self.world.sim.content.calendar.ticks_per_day();
                                 self.world.sim.run_ticks(d);
                             }
-                            KeyCode::F3 => self.show_readout = !self.show_readout,
-                            KeyCode::Escape => self.selected = None,
+                            KeyCode::F3 => self.show_ui = !self.show_ui,
+                            KeyCode::KeyL => {
+                                if let Some(h) = self.hud.as_mut() {
+                                    h.lens = match h.lens {
+                                        hud::Lens::Off => hud::Lens::Traffic,
+                                        hud::Lens::Traffic => hud::Lens::Mood,
+                                        hud::Lens::Mood => hud::Lens::Needs,
+                                        hud::Lens::Needs => hud::Lens::Off,
+                                    };
+                                }
+                            }
+                            KeyCode::Escape => {
+                                if let Some(h) = self.hud.as_mut().filter(|h| h.trace.is_some()) {
+                                    h.trace = None;
+                                } else {
+                                    self.selected = None;
+                                }
+                            }
                             KeyCode::KeyF => {
                                 if let Some(g) = &self.gfx {
                                     let full = g.window.fullscreen().is_some();
@@ -669,15 +843,21 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 if state == ElementState::Released && self.drag.as_ref().is_some_and(|d| !d.moving) {
-                    // A click (not a drag): select whoever is under the cursor, or nobody.
-                    self.selected = self.hovered;
+                    // A click (not a drag): the UI or the world takes it next frame.
+                    self.click = true;
                 }
                 self.drag = (state == ElementState::Pressed).then_some(Drag { start: self.cursor, last: self.cursor, moving: false });
             }
-            WindowEvent::MouseWheel { delta, .. } => match delta {
-                MouseScrollDelta::LineDelta(_, y) => self.zoom_by(0.88f32.powf(y)),
-                MouseScrollDelta::PixelDelta(p) => self.pan_pixels(Vec2::new(p.x as f32, p.y as f32)),
-            },
+            WindowEvent::MouseWheel { delta, .. } => {
+                // Over the UI, scrolling scrolls lists; over the world it pans or zooms.
+                let over = self.hud.as_ref().is_some_and(|h| h.ui.over_ui());
+                match delta {
+                    MouseScrollDelta::LineDelta(_, y) if over => self.scroll += y,
+                    MouseScrollDelta::PixelDelta(p) if over => self.scroll += p.y as f32 / 40.0,
+                    MouseScrollDelta::LineDelta(_, y) => self.zoom_by(0.88f32.powf(y)),
+                    MouseScrollDelta::PixelDelta(p) => self.pan_pixels(Vec2::new(p.x as f32, p.y as f32)),
+                }
+            }
             WindowEvent::PinchGesture { delta, .. } => self.zoom_by(1.0 / (1.0 + delta as f32).max(0.2)),
             _ => {}
         }

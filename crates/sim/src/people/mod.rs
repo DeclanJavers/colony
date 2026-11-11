@@ -26,6 +26,15 @@ pub const TRAITS: [&str; 5] = ["curiosity", "diligence", "sociability", "warmth"
 /// Decision traces kept in memory per person.
 pub const TRACE_KEEP: usize = 200;
 
+/// When things last happened to someone (ticks), for explaining their needs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Moments {
+    pub ate: u64,
+    pub drank: u64,
+    pub woke: u64,
+    pub rested: u64,
+}
+
 /// Counters for checks and the inspector.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Tally {
@@ -74,6 +83,8 @@ pub struct Person {
     /// The latest thought, in words.
     pub thought: String,
     pub tally: Tally,
+    #[serde(default)]
+    pub last: Moments,
 }
 
 impl Person {
@@ -105,12 +116,59 @@ impl Person {
             .map(|(i, v)| (i, *v))
     }
 
+    /// How they feel overall, and why: (score, reasons). Each reason is (points, words).
+    pub fn mood(&self, c: &Content, company: bool, by_fire: bool) -> (i32, Vec<(i32, String)>) {
+        let mut why: Vec<(i32, String)> = Vec::new();
+        for (i, n) in c.needs.iter().enumerate() {
+            let v = self.needs[i];
+            if v >= 0.5 {
+                let weight = if n.kind == crate::content::NeedKind::Body { 8.0 } else { 5.0 };
+                why.push((-((v - 0.4) * weight).round() as i32, capitalise(n.word(v))));
+            }
+        }
+        let n = |id: &str| self.needs[c.need(id)];
+        if n("hunger") < 0.25 && n("thirst") < 0.25 {
+            why.push((2, "Fed and watered".into()));
+        }
+        if n("rest") < 0.25 {
+            why.push((1, "Well rested".into()));
+        }
+        if company && n("social") < 0.4 {
+            why.push((2, "Good company".into()));
+        }
+        if by_fire {
+            why.push((1, "By the fire".into()));
+        }
+        if self.health < 0.7 {
+            why.push((-((1.0 - self.health) * 8.0).round() as i32, "Weak and unwell".into()));
+        }
+        why.retain(|(v, _)| *v != 0);
+        why.sort_by(|a, b| a.0.abs().cmp(&b.0.abs()).reverse());
+        (why.iter().map(|(v, _)| v).sum(), why)
+    }
+
+    pub fn mood_word(score: i32) -> &'static str {
+        match score {
+            s if s >= 5 => "Happy",
+            s if s >= 2 => "Content",
+            s if s >= -1 => "Okay",
+            s if s >= -4 => "Uneasy",
+            s if s >= -8 => "Unhappy",
+            _ => "Miserable",
+        }
+    }
+
     pub fn push_trace(&mut self, t: Trace) {
         if self.traces.len() >= TRACE_KEEP {
             self.traces.pop_front();
         }
         self.traces.push_back(t);
     }
+}
+
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
 /// The founding group: adults of mixed ages and sexes, random DNA from the population.
@@ -159,6 +217,7 @@ pub fn founders(c: &Content, n: u32, start: (u32, u32), map_size: u32, start_tic
             brain: "rules".into(),
             thought: "We made it. This looks like a good place to stay.".into(),
             tally: Tally::default(),
+            last: Moments { ate: start_tick, drank: start_tick, woke: start_tick, rested: start_tick },
         });
     }
     out

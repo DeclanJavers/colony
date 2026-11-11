@@ -36,6 +36,8 @@ pub struct Sim {
     pub command_log: Vec<(u64, Command)>,
     pending: Vec<Command>,
     events: Vec<Event>,
+    /// The tick each event happened on (parallel to `events`).
+    event_ticks: Vec<u64>,
     /// How the world was generated (not saved).
     pub gen_report: Option<GenReport>,
     pub brains: Brains,
@@ -68,6 +70,7 @@ impl Sim {
             command_log: Vec::new(),
             pending: Vec::new(),
             events: Vec::new(),
+            event_ticks: Vec::new(),
             gen_report: Some(out.report),
             brains: Brains::base(seed),
             mode: "live".into(),
@@ -123,6 +126,7 @@ impl Sim {
             command_log,
             pending: Vec::new(),
             events: Vec::new(),
+            event_ticks: Vec::new(),
             gen_report: None,
             brains: Brains::base(seed),
             mode: "live".into(),
@@ -153,6 +157,8 @@ impl Sim {
             }
             self.new_day();
         }
+        let at = self.tick - 1;
+        self.event_ticks.resize(self.events.len(), at);
     }
 
     pub fn run_ticks(&mut self, n: u64) {
@@ -163,7 +169,15 @@ impl Sim {
 
     /// Events since the last call.
     pub fn take_events(&mut self) -> Vec<Event> {
+        self.event_ticks.clear();
         std::mem::take(&mut self.events)
+    }
+
+    /// Events since the last call, with the tick each happened on.
+    pub fn take_timed_events(&mut self) -> Vec<(u64, Event)> {
+        self.event_ticks.resize(self.events.len(), self.tick);
+        let ticks = std::mem::take(&mut self.event_ticks);
+        ticks.into_iter().zip(std::mem::take(&mut self.events)).collect()
     }
 
     pub fn describe_time(&self) -> String {
@@ -192,7 +206,14 @@ impl Sim {
             let p = people.get_mut(id).unwrap();
             let reach = c.people.company_reach;
             let company = awake.iter().filter(|q| ((q.0 - p.pos.0).powi(2) + (q.1 - p.pos.1).powi(2)).sqrt() <= reach).count() > 1;
-            if let Some(cause) = life::body(p, c, map, camp, *tick, company) {
+            let before = p.needs.clone();
+            let died = life::body(p, c, map, camp, *tick, company);
+            for (i, n) in c.needs.iter().enumerate() {
+                if n.kind == crate::content::NeedKind::Body && before[i] < 0.85 && p.needs[i] >= 0.85 {
+                    events.push(Event::NeedCritical { person: id, name: p.name.clone(), need: n.id.clone(), word: n.word(p.needs[i]).to_string() });
+                }
+            }
+            if let Some(cause) = died {
                 p.alive = false;
                 p.asleep = false;
                 p.waiting = false;
@@ -200,7 +221,7 @@ impl Sim {
                 if p.action.is_some() {
                     finished.push((id, Ending::Interrupted(format!("{} died", p.name))));
                 }
-                events.push(Event::PersonDied { name: p.name.clone(), cause });
+                events.push(Event::PersonDied { person: id, name: p.name.clone(), cause });
                 continue;
             }
             if (*tick + slot as u64).is_multiple_of(15) {
@@ -212,7 +233,7 @@ impl Sim {
             if !p.asleep {
                 p.tally.awake_minutes += tm;
             }
-            let mut ctx = Ctx { c, map, nodes, camp, path, rng: &mut streams.life, tick: *tick, events, alive, slot };
+            let mut ctx = Ctx { c, map, nodes, camp, path, rng: &mut streams.life, tick: *tick, events, alive, slot, who: id };
             if let Some(mut a) = p.action.take() {
                 let mut end = actions::step(p, &mut a, &mut ctx);
                 if end.is_none() && (*tick + slot as u64).is_multiple_of(20) {
