@@ -29,6 +29,11 @@ impl Instance {
         let t = tint.map_or([0.0; 4], |c| [c[0], c[1], c[2], 1.0]);
         Instance { model: m.to_cols_array_2d(), tint: t }
     }
+
+    /// With any flames hidden (a fire that's out).
+    pub fn unlit(m: Mat4) -> Self {
+        Instance { model: m.to_cols_array_2d(), tint: [0.0, 0.0, 0.0, 2.0] }
+    }
 }
 
 pub struct ModelMesh {
@@ -62,7 +67,9 @@ fn walk(node: &gltf::Node, parent: Mat4, buffers: &[gltf::buffer::Data], out: &m
     let world = parent * local;
     if let Some(mesh) = node.mesh() {
         let name = node.name().or(mesh.name()).unwrap_or("");
-        let flag = if name.starts_with("leaves2") {
+        let flag = if name.starts_with("flame") {
+            3.0
+        } else if name.starts_with("leaves2") {
             2.0
         } else if name.starts_with("leaves1") {
             1.0

@@ -110,8 +110,10 @@ Everything is Rust, in one Cargo workspace. Python is used only for training mod
 
   Each stage is a function; packs can insert stages. `colony-run map --seed N` writes PNGs of
   each layer so a seed can be judged without starting the game.
-- **Lookups:** pathfinding is A* on the tile grid with costs: trails are cheaper, water is
-  blocked until crossings exist (expansion). There's a cache for repeated routes, and spot
+- **Lookups:** pathfinding is A* on the tile grid with costs.
+  - **Trails:** cheaper, and they pull traffic onto them early, so paths form.
+  - **Rivers:** can be waded slowly; fords and bridges (an expansion) make crossing fast.
+  - **Lakes and the sea:** block. There's a cache for repeated routes, and spot
   searches use summed-area tables (v1 lesson: building placement went from 105 ms to 4 ms).
 
 ## 4. People
@@ -189,6 +191,16 @@ trait Brain {
 
 **Assignment:** any brain can be assigned per person, per family or per group, and changed at any
 time. The person page shows which brain is deciding.
+
+**As built (M3):**
+- **The rules brain** lives in the sim crate, because the sim always needs it as the fallback
+  and the second opinion. Other brains live in their own crate.
+- **No brain state:** the rules' small random noise comes from the seed, the person and the
+  tick. So brains hold no state that saves would need: the same request always gets the same
+  scores, and continuing after a load matches continuing without.
+- **Options come only from what a person believes.** They see 12 tiles around them, and what
+  they saw can be out of date. Old sightings count for less, because others may have picked
+  that bush since.
 
 **Modes:**
 - **Live (normal play).**

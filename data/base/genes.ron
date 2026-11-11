@@ -1,0 +1,44 @@
+// DNA. Each locus has two alleles (one from each parent). `freq` is how common the "1" allele is
+// among founders. A trait sums its loci:
+//   Additive: each "1" allele adds `effect` (height, build, skin, personality leanings)
+//   Recessive: the trait shows only with two "1" alleles (red hair, blue eyes)
+// Expression and the ranges below are in crates/sim/src/people/genes.rs.
+(
+    loci: [
+        (id: "height_a", trait_id: "height", kind: Additive, effect: 0.025, freq: 0.5),
+        (id: "height_b", trait_id: "height", kind: Additive, effect: 0.025, freq: 0.5),
+        (id: "height_c", trait_id: "height", kind: Additive, effect: 0.025, freq: 0.5),
+        (id: "height_d", trait_id: "height", kind: Additive, effect: 0.025, freq: 0.5),
+        (id: "build_a", trait_id: "build", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "build_b", trait_id: "build", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "skin_a", trait_id: "skin", kind: Additive, effect: 0.125, freq: 0.45),
+        (id: "skin_b", trait_id: "skin", kind: Additive, effect: 0.125, freq: 0.45),
+        (id: "skin_c", trait_id: "skin", kind: Additive, effect: 0.125, freq: 0.45),
+        (id: "skin_d", trait_id: "skin", kind: Additive, effect: 0.125, freq: 0.45),
+        (id: "hair_dark_a", trait_id: "hair_dark", kind: Additive, effect: 0.25, freq: 0.55),
+        (id: "hair_dark_b", trait_id: "hair_dark", kind: Additive, effect: 0.25, freq: 0.55),
+        (id: "red_hair", trait_id: "red_hair", kind: Recessive, effect: 1.0, freq: 0.3),
+        (id: "eye_brown", trait_id: "eye_brown", kind: Additive, effect: 0.5, freq: 0.45),
+        (id: "eye_green", trait_id: "eye_green", kind: Additive, effect: 0.5, freq: 0.3),
+        (id: "curious_a", trait_id: "curiosity", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "curious_b", trait_id: "curiosity", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "diligent_a", trait_id: "diligence", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "diligent_b", trait_id: "diligence", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "social_a", trait_id: "sociability", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "social_b", trait_id: "sociability", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "warm_a", trait_id: "warmth", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "warm_b", trait_id: "warmth", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "calm_a", trait_id: "calm", kind: Additive, effect: 0.25, freq: 0.5),
+        (id: "calm_b", trait_id: "calm", kind: Additive, effect: 0.25, freq: 0.5),
+    ],
+    // How much of each personality trait is inherited; the rest is life and chance.
+    personality_heritability: 0.5,
+    // Height before genes, by sex (metres), and the spread added by upbringing and chance.
+    base_height: (1.50, 1.62),
+    height_noise: 0.03,
+    // Colour ramps (sRGB), from lightest to darkest.
+    skin: ["#F2D3B8", "#E8BC98", "#C99A78", "#9E6E4E", "#6B4632"],
+    hair: ["#E3C885", "#A9773E", "#6B4328", "#3A2416", "#1F1611"],
+    hair_red: "#A8452F",
+    eyes: (blue: "#4B6A9A", green: "#4E7A4E", hazel: "#7A6232", brown: "#4A2E1E"),
+)

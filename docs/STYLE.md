@@ -98,6 +98,23 @@ A new colour goes into this table before it goes into a model.
 - The map is a **diorama block**: the sides show a ragged turf lip over layered brown soil with a
   few stones; rivers that reach the edge show as water there. It floats on the dark background.
 
+## Water
+
+- **Waterline:** wherever the smooth ground meets the water, never along tile edges.
+  - **Shallows:** fade from sand to blue over the last 20 cm.
+  - **Depth:** deeper water darkens.
+  - **Foam:** a thin line sits right at the edge.
+- **Current:** the water is one continuous ripple pattern carried along the flow (a flow map).
+  - **Rivers:** run downhill, faster where narrow, steep or full, slower at the banks.
+  - **At a mouth:** the current carries on as a fading plume into the sea or lake.
+  - **Calm water:** drifts slowly with a breeze, with soft crests and the odd glint.
+  - **Fast water:** brighter crests and white flecks.
+- **Pixel art:** all of it uses stepped shades, so it stays crisp under the pixel pass.
+- **Checking water work:**
+  - `colony-run water --seed N` lists river mouths, lake inlets and confluences;
+  - `colony --qa-sheet out.png --spots "N:x,z ..."` renders them all on one sheet;
+  - `colony-run tiles --seed N --x X --y Y` prints the tile data when something looks wrong.
+
 ## Seasons, weather and night
 
 - Seasons recolour the grass and leaves (spring fresh, summer deep, autumn ochre ground with orange,

@@ -219,6 +219,10 @@ pub fn coast(ctx: &mut GenCtx) {
     for i in 0..n * n {
         map.water[i] = if sea[i] { Water::Sea } else { Water::None };
         map.water_level[i] = 0.0;
+        // The sea floor drops away at the coast: no near-dry flats that wall off river mouths.
+        if sea[i] {
+            map.elevation[i] = map.elevation[i].min(-0.35);
+        }
     }
 }
 

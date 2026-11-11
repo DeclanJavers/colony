@@ -5,10 +5,13 @@
 
 pub mod font;
 pub mod models;
+pub mod people;
 pub mod terrain;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use models::{Instance, ModelMesh, ModelVertex};
+use people::{AnimState, MAX_PEOPLE, PersonDraw, PersonInstance, PersonVertex, Rig};
+use std::collections::BTreeMap;
 use sim::content::{Content, hex_colour};
 use sim::world::{Map, Node};
 use std::path::Path;
@@ -95,20 +98,19 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 }
 
 impl Lighting {
-    /// Light for an hour of the day (0..24) in a season. The sun comes from the back left of the
-    /// view (docs/STYLE.md), swinging a little from morning to evening.
+    /// Light for an hour of the day (0..24) in a season. The light always comes from the same
+    /// direction (the back left of the view, docs/STYLE.md), so shadows never crawl; the day shows
+    /// in brightness and colour: warm low light at the ends of the day, cool moonlight at night.
     pub fn at(hour: f32, season: usize, snow: f32) -> Self {
+        let sun = Vec3::new(-0.92, 1.25, -0.38).normalize();
         let day = ((hour - 6.0) / 14.0).clamp(0.0, 1.0);
-        let az = -0.7 + day * 1.4;
-        let el = (day * std::f32::consts::PI).sin() * 1.1 + 0.2;
-        let sun = Vec3::new(-az.cos(), el, -az.sin()).normalize();
+        let height = (day * std::f32::consts::PI).sin();
         let night = ((1.0 - smoothstep(5.0, 7.0, hour)) + smoothstep(19.0, 21.0, hour)).min(1.0) * 0.85;
-        let low = 1.0 - smoothstep(0.15, 0.5, sun.y);
+        let low = 1.0 - smoothstep(0.15, 0.55, height);
         let warm = Vec3::new(1.0, 0.93, 0.82).lerp(Vec3::new(1.0, 0.72, 0.48), low);
-        let moon = Vec3::new(-0.5, 0.8, 0.3).normalize();
         Lighting {
-            sun_dir: sun.lerp(moon, night).normalize(),
-            sun_strength: 0.82 * (1.0 - night) + 0.35 * night,
+            sun_dir: sun,
+            sun_strength: (0.62 + 0.2 * height) * (1.0 - night) + 0.35 * night,
             sun_col: warm.lerp(Vec3::new(0.55, 0.62, 0.9), night),
             ambient: Vec3::new(0.30, 0.32, 0.38).lerp(Vec3::new(0.30, 0.33, 0.45), night),
             night,
@@ -118,14 +120,34 @@ impl Lighting {
     }
 }
 
+/// The camp's things to draw: the stores pile and the fire pit.
+#[derive(Clone, Copy, Debug)]
+pub struct CampDraw {
+    pub stores: Vec3,
+    pub fire: Vec3,
+    pub lit: bool,
+}
+
+/// A panel of text in window pixels (top-left corner).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Panel {
+    pub x: f32,
+    pub y: f32,
+    pub lines: Vec<String>,
+}
+
 /// What to draw this frame.
 pub struct Frame<'a> {
     pub camera: &'a Camera,
     pub light: &'a Lighting,
-    /// Seconds, for animation (water ripples).
+    /// Seconds, for animation (water ripples, walking).
     pub time: f32,
-    /// Lines for the debug readout (FPS...). None hides it.
-    pub overlay: Option<&'a [String]>,
+    /// Text panels (readout, hover card, inspector).
+    pub panels: &'a [Panel],
+    /// Window pixels per font pixel.
+    pub ui_scale: u32,
+    pub people: &'a [PersonDraw],
+    pub camp: Option<CampDraw>,
 }
 
 /// How the camera maps the world onto the window this frame.
@@ -145,9 +167,17 @@ pub struct View {
 
 impl View {
     pub fn new(cam: &Camera, w: u32, h: u32) -> View {
-        let ppm = h.max(1) as f32 / cam.size.max(0.5);
-        let px = ((ppm / PER_TILE).round() as u32).max(1);
-        let t = px as f32 / ppm;
+        // Zoom snaps to fixed levels so pixels never twitch: close up, an art pixel is exactly
+        // 1/24 m and a whole number of screen pixels; far out, a screen pixel shows a whole number
+        // of art pixels. Between levels nothing changes.
+        let wanted = cam.size.max(0.5) / h.max(1) as f32; // metres per screen pixel
+        let art = 1.0 / PER_TILE;
+        let (px, t) = if wanted <= art {
+            (((art / wanted).round() as u32).max(1), art)
+        } else {
+            (1, art * (wanted / art).round().max(1.0))
+        };
+        let ppm = px as f32 / t;
         let low = (w.max(1).div_ceil(px), h.max(1).div_ceil(px));
         let fwd = cam.forward();
         let right = fwd.cross(Vec3::Y).normalize();
@@ -190,6 +220,17 @@ fn ortho_rh(l: f32, r: f32, b: f32, t: f32, near: f32, far: f32) -> Mat4 {
     )
 }
 
+/// Per-tile data for the ground shader: biome, wear (footsteps as a share of a full trail), moisture.
+fn tile_data(map: &Map) -> Vec<u8> {
+    let n = (map.size * map.size) as usize;
+    let mut tiles = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        let wear = (map.footfall[i] / sim::path::TRAIL_STEPS * 255.0).clamp(0.0, 255.0) as u8;
+        tiles.extend_from_slice(&[map.biome[i], wear, (map.moisture[i] * 255.0) as u8, 0]);
+    }
+    tiles
+}
+
 fn visible(m: &Mat4, min: [f32; 3], max: [f32; 3]) -> bool {
     let mut out = [true; 6];
     for k in 0..8 {
@@ -225,6 +266,7 @@ struct Globals {
     season: [f32; 4],
     biome: [[f32; 4]; 16],
     pal: [[f32; 4]; 8],
+    fire: [f32; 4],
 }
 
 #[repr(C)]
@@ -279,8 +321,24 @@ struct LowRes {
 struct Overlay {
     tex: wgpu::Texture,
     bg: wgpu::BindGroup,
+    buf: wgpu::Buffer,
     size: (u32, u32),
     text: Vec<String>,
+    scale: u32,
+}
+
+struct PeopleGpu {
+    rig: Rig,
+    vb: wgpu::Buffer,
+    ib: wgpu::Buffer,
+    count: u32,
+    instances: wgpu::Buffer,
+    joints: wgpu::Buffer,
+    bg: wgpu::BindGroup,
+    pipe: wgpu::RenderPipeline,
+    shadow_pipe: wgpu::RenderPipeline,
+    anim: BTreeMap<u64, AnimState>,
+    drawn: u32,
 }
 
 pub struct Renderer {
@@ -302,17 +360,30 @@ pub struct Renderer {
     post_buf: wgpu::Buffer,
     overlay_pipe: wgpu::RenderPipeline,
     overlay_bgl: wgpu::BindGroupLayout,
-    overlay_buf: wgpu::Buffer,
     chunks: Vec<Mesh>,
     water: Option<Mesh>,
     models: Vec<Model>,
     placed: Vec<Placed>,
     tint_season: Option<usize>,
     low: Option<LowRes>,
-    overlay: Option<Overlay>,
+    overlays: Vec<Overlay>,
     map_size: u32,
     pub last_view: Option<View>,
+    tile_tex: wgpu::Texture,
+    /// Model index by file name (for the camp's things and what people carry).
+    names: BTreeMap<String, usize>,
+    /// Node kind -> model indices (variants).
+    kind_models: Vec<Vec<usize>>,
+    /// Instances drawn fresh each frame (camp objects, carried things): (model, first, count).
+    dynamic: wgpu::Buffer,
+    dynamic_groups: Vec<(usize, u32, u32)>,
+    people: Option<PeopleGpu>,
+    /// The map version the nodes and tiles were last built from.
+    pub world_version: u64,
+    ground: terrain::Ground,
 }
+
+const MAX_DYNAMIC: usize = 512;
 
 impl Renderer {
     /// `target_format` is what `render` draws into (the window's surface, or an image).
@@ -365,6 +436,14 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                tex_entry(3, wgpu::TextureSampleType::Float { filterable: true }),
+                tex_entry(5, nofilter),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let post_bgl = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -390,10 +469,7 @@ impl Renderer {
 
         // Tile data: biome, footfall, moisture.
         let n = map.size;
-        let mut tiles = Vec::with_capacity((n * n * 4) as usize);
-        for i in 0..(n * n) as usize {
-            tiles.extend_from_slice(&[map.biome[i], (map.footfall[i] * 255.0).clamp(0.0, 255.0) as u8, (map.moisture[i] * 255.0) as u8, 0]);
-        }
+        let tiles = tile_data(map);
         let tile_tex = d.create_texture_with_data(
             &queue,
             &wgpu::TextureDescriptor {
@@ -425,6 +501,45 @@ impl Renderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
+        // How the water moves (terrain::flow_field), sampled smoothly so it blends across tiles.
+        let flow_tex = d.create_texture_with_data(
+            &queue,
+            &wgpu::TextureDescriptor {
+                label: Some("water flow"),
+                size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &terrain::flow_field(map),
+        );
+        let flow_sampler = d.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("water flow"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        // Ground height at every tile corner, so the water shader knows the depth at each pixel.
+        let corners = terrain::corner_heights(map);
+        let height_tex = d.create_texture_with_data(
+            &queue,
+            &wgpu::TextureDescriptor {
+                label: Some("ground height"),
+                size: wgpu::Extent3d { width: n + 1, height: n + 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            bytemuck::cast_slice(&corners),
+        );
         let scene_bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene"),
             layout: &scene_bgl,
@@ -432,6 +547,9 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&tile_tex.create_view(&Default::default())) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&shadow_view) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&shadow_sampler) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&flow_tex.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&flow_sampler) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&height_tex.create_view(&Default::default())) },
             ],
         });
 
@@ -493,7 +611,7 @@ impl Renderer {
             })
         };
         let no_bias = wgpu::DepthBiasState::default();
-        let shadow_bias = wgpu::DepthBiasState { constant: 2, slope_scale: 2.5, clamp: 0.0 };
+        let shadow_bias = wgpu::DepthBiasState { constant: 1, slope_scale: 1.2, clamp: 0.0 };
         let terrain_pipe = pipe("terrain", &colour_layout, "vs_terrain", Some("fs_terrain"), &[Some(terrain_vb.clone())], no_bias);
         let water_pipe = pipe("water", &colour_layout, "vs_water", Some("fs_water"), &[Some(water_vb)], no_bias);
         let model_pipe = pipe("models", &colour_layout, "vs_model", Some("fs_model"), &[Some(model_vb.clone()), Some(instance_vb.clone())], no_bias);
@@ -552,13 +670,14 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let overlay_buf = d.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("overlay"),
-            size: std::mem::size_of::<RectUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+
+
+        let dynamic = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dynamic instances"),
+            size: (MAX_DYNAMIC * std::mem::size_of::<Instance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
         let mut r = Renderer {
             device,
             queue,
@@ -578,19 +697,28 @@ impl Renderer {
             post_buf,
             overlay_pipe,
             overlay_bgl,
-            overlay_buf,
             chunks: Vec::new(),
             water: None,
             models: Vec::new(),
             placed: Vec::new(),
             tint_season: None,
             low: None,
-            overlay: None,
+            overlays: Vec::new(),
             map_size: n,
             last_view: None,
+            tile_tex,
+            names: BTreeMap::new(),
+            kind_models: Vec::new(),
+            dynamic,
+            dynamic_groups: Vec::new(),
+            people: None,
+            world_version: map.version,
+            ground: terrain::Ground::new(map),
         };
         r.build_terrain(map);
-        r.build_models(map, nodes, content, assets)?;
+        r.load_models(content, assets)?;
+        r.place_nodes(map, nodes, content);
+        r.people = Some(r.build_people(&shader, &globals_bgl, &scene_bgl, &assets.join("models/villager.glb"))?);
         Ok(r)
     }
 
@@ -600,6 +728,11 @@ impl Renderer {
 
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// Ground speed (m/s, full-size person) at which the walk cycle's feet don't slide.
+    pub fn walk_speed(&self) -> f32 {
+        self.people.as_ref().map_or(1.0, |p| p.rig.natural_speed("walk"))
     }
 
     pub fn target_format(&self) -> wgpu::TextureFormat {
@@ -629,7 +762,7 @@ impl Renderer {
         self.chunks.clear();
         for cz in 0..chunks {
             for cx in 0..chunks {
-                let m = terrain::chunk_mesh(map, &corners, cx, cz);
+                let m = terrain::chunk_mesh(map, &self.ground, cx, cz);
                 if let Some(mesh) = self.mesh("terrain chunk", &m) {
                     self.chunks.push(mesh);
                 }
@@ -638,9 +771,8 @@ impl Renderer {
         self.water = self.mesh("water", &terrain::water_mesh(map, &corners));
     }
 
-    fn build_models(&mut self, map: &Map, nodes: &[Node], content: &Content, assets: &Path) -> Result<(), String> {
+    fn load_models(&mut self, content: &Content, assets: &Path) -> Result<(), String> {
         // Each node kind's models: <id>.glb, <id>_2.glb, ...
-        let mut files: Vec<Vec<usize>> = Vec::new();
         for def in &content.nodes {
             let mut list = Vec::new();
             for v in 1..=9 {
@@ -652,24 +784,60 @@ impl Renderer {
                     }
                     break;
                 }
-                let mesh: ModelMesh = models::load(&path)?;
                 list.push(self.models.len());
-                self.upload_model(&mesh);
+                self.upload_model(&models::load(&path)?);
             }
-            files.push(list);
+            self.kind_models.push(list);
         }
+        for name in ["campfire", "stockpile", "prop_barrel"] {
+            let path = assets.join("models").join(format!("{name}.glb"));
+            if path.exists() {
+                self.names.insert(name.into(), self.models.len());
+                self.upload_model(&models::load(&path)?);
+            }
+        }
+        // The selection ring: a flat gold ring that glows (drawn like a flame).
+        let gold = linear("#E8C468");
+        let mut ring = ModelMesh { name: "ring".into(), vertices: Vec::new(), indices: Vec::new(), height: 0.1 };
+        let seg = 28;
+        for k in 0..=seg {
+            let a = k as f32 / seg as f32 * std::f32::consts::TAU;
+            for r in [0.34f32, 0.44] {
+                ring.vertices.push(ModelVertex { pos: [a.cos() * r, 0.04, a.sin() * r], normal: [0.0, 1.0, 0.0], colour: gold, flag: 3.0 });
+            }
+            if k < seg {
+                let b = (k * 2) as u32;
+                ring.indices.extend_from_slice(&[b, b + 1, b + 2, b + 1, b + 3, b + 2]);
+            }
+        }
+        self.names.insert("ring".into(), self.models.len());
+        self.upload_model(&ring);
+        for (i, def) in content.nodes.iter().enumerate() {
+            if let Some(&m) = self.kind_models[i].first() {
+                self.names.entry(def.id.clone()).or_insert(m);
+            }
+        }
+        Ok(())
+    }
+
+    /// Where every resource node sits (rebuilt when nodes come and go).
+    fn place_nodes(&mut self, map: &Map, nodes: &[Node], content: &Content) {
         let chunks_x = map.size.div_ceil(CHUNK);
+        self.placed.clear();
         for nd in nodes {
-            let list = &files[nd.kind as usize];
+            let list = &self.kind_models[nd.kind as usize];
             if list.is_empty() {
                 continue;
             }
             let model = list[nd.variant as usize % list.len()];
-            let i = map.idx(nd.x as u32, nd.y as u32);
             let h = sim::hash::hash2(0xC01, nd.x as i32, nd.y as i32);
             let jitter = ((h & 0xFF) as f32 / 255.0 - 0.5) * 0.8;
-            let scale = 0.88 + ((h >> 8) & 0xFF) as f32 / 255.0 * 0.26;
-            let pos = Vec3::new(nd.x as f32 + 0.5, map.elevation[i], nd.y as f32 + 0.5);
+            let def = &content.nodes[nd.kind as usize];
+            // Things that get used up shrink a little as they do (berries, sticks...).
+            let left = if def.amount > 0.0 { (nd.amount / def.amount).clamp(0.0, 1.0) } else { 1.0 };
+            let shrink = if def.blocks && def.id != "berry_bush" { 1.0 } else { 0.55 + 0.45 * left };
+            let scale = (0.88 + ((h >> 8) & 0xFF) as f32 / 255.0 * 0.26) * shrink;
+            let pos = Vec3::new(nd.x as f32 + 0.5, self.ground.height(nd.x as f32 + 0.5, nd.y as f32 + 0.5), nd.y as f32 + 0.5);
             let transform = Mat4::from_translation(pos)
                 * Mat4::from_rotation_y(nd.turn as f32 * std::f32::consts::FRAC_PI_2 + jitter)
                 * Mat4::from_scale(Vec3::splat(scale));
@@ -677,12 +845,222 @@ impl Renderer {
                 model,
                 chunk: (nd.y as u32 / CHUNK) * chunks_x + nd.x as u32 / CHUNK,
                 transform,
-                seasonal: SEASONAL.contains(&content.nodes[nd.kind as usize].id.as_str()),
+                seasonal: SEASONAL.contains(&def.id.as_str()),
                 hash: (h >> 16) as u32,
             });
         }
         self.placed.sort_by_key(|p| (p.model, p.chunk));
-        Ok(())
+        self.tint_season = None;
+    }
+
+    /// The world changed (nodes used up or regrown, paths worn in): redo nodes and ground data.
+    pub fn update_world(&mut self, map: &Map, nodes: &[Node], content: &Content) {
+        self.world_version = map.version;
+        self.place_nodes(map, nodes, content);
+        for m in &mut self.models {
+            m.instances = None;
+        }
+        let n = map.size;
+        let tiles = tile_data(map);
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &self.tile_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &tiles,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) },
+            wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+        );
+    }
+
+    fn build_people(&self, shader: &wgpu::ShaderModule, globals_bgl: &wgpu::BindGroupLayout, scene_bgl: &wgpu::BindGroupLayout, path: &Path) -> Result<PeopleGpu, String> {
+        let d = &self.device;
+        let rig = Rig::load(path)?;
+        let vb = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("villager"), contents: bytemuck::cast_slice(&rig.vertices), usage: wgpu::BufferUsages::VERTEX });
+        let ib = d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("villager"), contents: bytemuck::cast_slice(&rig.indices), usage: wgpu::BufferUsages::INDEX });
+        let instances = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("people"),
+            size: (MAX_PEOPLE * std::mem::size_of::<PersonInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let joints = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("joints"),
+            size: (MAX_PEOPLE * rig.joint_count() * 64) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bgl = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("joints"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            }],
+        });
+        let bg = d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("joints"), layout: &bgl, entries: &[wgpu::BindGroupEntry { binding: 0, resource: joints.as_entire_binding() }] });
+        let vbl = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<PersonVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32, 4 => Float32, 5 => Uint32],
+        };
+        let ibl = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<PersonInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &wgpu::vertex_attr_array![6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Float32x4, 14 => Float32x4],
+        };
+        let colour_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("people"),
+            bind_group_layouts: &[Some(globals_bgl), Some(scene_bgl), Some(&bgl)],
+            immediate_size: 0,
+        });
+        let shadow_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("people shadow"),
+            bind_group_layouts: &[Some(globals_bgl), None, Some(&bgl)],
+            immediate_size: 0,
+        });
+        let depth = |bias| wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias,
+        };
+        let targets = [Some(wgpu::ColorTargetState { format: SCENE_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })];
+        let pipe = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("people"),
+            layout: Some(&colour_layout),
+            vertex: wgpu::VertexState { module: shader, entry_point: Some("vs_person"), compilation_options: Default::default(), buffers: &[Some(vbl.clone()), Some(ibl.clone())] },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: shader, entry_point: Some("fs_model"), compilation_options: Default::default(), targets: &targets }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let shadow_pipe = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("people shadow"),
+            layout: Some(&shadow_layout),
+            vertex: wgpu::VertexState { module: shader, entry_point: Some("vs_shadow_person"), compilation_options: Default::default(), buffers: &[Some(vbl), Some(ibl)] },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(depth(wgpu::DepthBiasState { constant: 1, slope_scale: 1.2, clamp: 0.0 })),
+            multisample: Default::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
+        });
+        let count = rig.indices.len() as u32;
+        Ok(PeopleGpu { rig, vb, ib, count, instances, joints, bg, pipe, shadow_pipe, anim: BTreeMap::new(), drawn: 0 })
+    }
+
+    /// Pose everyone, and gather this frame's dynamic models (camp things, carried things).
+    fn prepare_dynamic(&mut self, frame: &Frame) {
+        let mut dyn_list: Vec<(usize, Instance)> = Vec::new();
+        if let Some(camp) = frame.camp {
+            if let Some(&m) = self.names.get("stockpile") {
+                dyn_list.push((m, Instance::new(Mat4::from_translation(camp.stores), None)));
+            }
+            if let Some(&m) = self.names.get("campfire") {
+                let t = Mat4::from_translation(camp.fire);
+                dyn_list.push((m, if camp.lit { Instance::new(t, None) } else { Instance::unlit(t) }));
+            }
+        }
+        if let Some(pg) = self.people.as_mut() {
+            let jn = pg.rig.joint_count();
+            let mut joints: Vec<Mat4> = Vec::with_capacity(frame.people.len() * jn);
+            let mut inst: Vec<PersonInstance> = Vec::with_capacity(frame.people.len());
+            for p in frame.people.iter().take(MAX_PEOPLE) {
+                let st = pg.anim.entry(p.key).or_insert(AnimState { clip: p.clip, since: frame.time, prev: p.clip, phase: 0.0, prev_phase: 0.0, last: frame.time });
+                if st.clip != p.clip {
+                    st.prev = st.clip;
+                    st.prev_phase = st.phase;
+                    st.clip = p.clip;
+                    st.since = frame.time;
+                    st.phase = 0.0;
+                }
+                // Clip time advances at the person's own rate (walking: their real ground speed).
+                st.phase += (frame.time - st.last).clamp(0.0, 0.25) * p.rate;
+                st.last = frame.time;
+                let offset = (p.key % 97) as f32 * 0.137;
+                let local = |clip: &str, phase: f32| {
+                    if Rig::holds(clip) { phase.min(pg.rig.clips.get(clip).map_or(0.0, |c| c.duration - 0.01)) } else { phase + offset }
+                };
+                let blend = ((frame.time - st.since) / 0.25).clamp(0.0, 1.0);
+                let base = joints.len();
+                let hand = if blend < 1.0 {
+                    pg.rig.pose((st.prev, local(st.prev, st.prev_phase)), Some((st.clip, local(st.clip, st.phase), blend)), &mut joints)
+                } else {
+                    pg.rig.pose((st.clip, local(st.clip, st.phase)), None, &mut joints)
+                };
+                let scale = Vec3::new(0.9 + 0.2 * p.build, p.height, 0.9 + 0.2 * p.build);
+                let model = Mat4::from_translation(p.pos) * Mat4::from_rotation_y(p.facing) * Mat4::from_scale(scale);
+                inst.push(PersonInstance {
+                    model: model.to_cols_array_2d(),
+                    skin: v4(p.skin, 1.0),
+                    hair: v4(p.hair, 1.0),
+                    clothes: v4(p.clothes, 1.0),
+                    eyes: v4(p.eyes, 1.0),
+                    extra: [(p.parts | 1) as f32, base as f32, p.selected as u8 as f32, 0.0],
+                });
+                if p.selected
+                    && let Some(&m) = self.names.get("ring")
+                {
+                    dyn_list.push((m, Instance::new(Mat4::from_translation(p.pos), None)));
+                }
+                if let Some(item) = p.carry
+                    && let Some(&m) = self.names.get(item)
+                {
+                    let held = model * hand * Mat4::from_translation(Vec3::new(0.0, 0.06, 0.04)) * Mat4::from_scale(Vec3::splat(0.45));
+                    dyn_list.push((m, Instance::new(held, None)));
+                }
+            }
+            if !inst.is_empty() {
+                self.queue.write_buffer(&pg.instances, 0, bytemuck::cast_slice(&inst));
+                let flat: Vec<[[f32; 4]; 4]> = joints.iter().map(|m| m.to_cols_array_2d()).collect();
+                self.queue.write_buffer(&pg.joints, 0, bytemuck::cast_slice(&flat));
+            }
+            pg.drawn = inst.len() as u32;
+            let keep: std::collections::BTreeSet<u64> = frame.people.iter().map(|p| p.key).collect();
+            pg.anim.retain(|k, _| keep.contains(k));
+        }
+        dyn_list.sort_by_key(|(m, _)| *m);
+        dyn_list.truncate(MAX_DYNAMIC);
+        self.dynamic_groups.clear();
+        let mut start = 0;
+        while start < dyn_list.len() {
+            let m = dyn_list[start].0;
+            let mut end = start;
+            while end < dyn_list.len() && dyn_list[end].0 == m {
+                end += 1;
+            }
+            self.dynamic_groups.push((m, start as u32, (end - start) as u32));
+            start = end;
+        }
+        let data: Vec<Instance> = dyn_list.into_iter().map(|(_, i)| i).collect();
+        if !data.is_empty() {
+            self.queue.write_buffer(&self.dynamic, 0, bytemuck::cast_slice(&data));
+        }
+    }
+
+    fn draw_dynamic(&self, pass: &mut wgpu::RenderPass) {
+        for &(m, first, count) in &self.dynamic_groups {
+            let model = &self.models[m];
+            pass.set_vertex_buffer(0, model.vb.slice(..));
+            pass.set_vertex_buffer(1, self.dynamic.slice(..));
+            pass.set_index_buffer(model.ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..model.count, 0, first..first + count);
+        }
+    }
+
+    fn draw_people(&self, pass: &mut wgpu::RenderPass, shadow: bool) {
+        let Some(pg) = &self.people else { return };
+        if pg.drawn == 0 {
+            return;
+        }
+        pass.set_pipeline(if shadow { &pg.shadow_pipe } else { &pg.pipe });
+        pass.set_bind_group(2, &pg.bg, &[]);
+        pass.set_vertex_buffer(0, pg.vb.slice(..));
+        pass.set_vertex_buffer(1, pg.instances.slice(..));
+        pass.set_index_buffer(pg.ib.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..pg.count, 0, 0..pg.drawn);
     }
 
     fn upload_model(&mut self, m: &ModelMesh) {
@@ -792,41 +1170,71 @@ impl Renderer {
         self.low = Some(LowRes { size, colour, depth, post_bg });
     }
 
-    fn update_overlay(&mut self, lines: &[String]) {
-        if self.overlay.as_ref().is_some_and(|o| o.text == lines) {
-            return;
+    fn update_overlays(&mut self, panels: &[Panel], win: (u32, u32), scale: u32) {
+        self.overlays.truncate(panels.len());
+        for (k, panel) in panels.iter().enumerate() {
+            let fresh = self.overlays.get(k).is_none_or(|o| o.text != panel.lines || o.scale != scale);
+            if fresh {
+                let img = font::render(&panel.lines, scale);
+                let reuse = self.overlays.get(k).is_some_and(|o| o.size == (img.w, img.h));
+                if !reuse {
+                    let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("panel"),
+                        size: wgpu::Extent3d { width: img.w, height: img.h, depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("panel"),
+                        size: std::mem::size_of::<RectUniform>() as u64,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("panel"),
+                        layout: &self.overlay_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&tex.create_view(&Default::default())) },
+                        ],
+                    });
+                    let o = Overlay { tex, bg, buf, size: (img.w, img.h), text: Vec::new(), scale };
+                    if k < self.overlays.len() {
+                        self.overlays[k] = o;
+                    } else {
+                        self.overlays.push(o);
+                    }
+                }
+                let o = &mut self.overlays[k];
+                self.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { texture: &o.tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                    &img.px,
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.w * 4), rows_per_image: Some(img.h) },
+                    wgpu::Extent3d { width: img.w, height: img.h, depth_or_array_layers: 1 },
+                );
+                o.text = panel.lines.clone();
+                o.scale = scale;
+            }
+            let o = &self.overlays[k];
+            let x = panel.x.min(win.0 as f32 - o.size.0 as f32 - 4.0).max(0.0);
+            let y = panel.y.min(win.1 as f32 - o.size.1 as f32 - 4.0).max(0.0);
+            let r = RectUniform { r: [x, y, o.size.0 as f32, o.size.1 as f32], win: [win.0 as f32, win.1 as f32, 0.0, 0.0] };
+            self.queue.write_buffer(&o.buf, 0, bytemuck::bytes_of(&r));
         }
-        let img = font::render(lines, 2);
-        let reuse = self.overlay.as_ref().is_some_and(|o| o.size == (img.w, img.h));
-        if !reuse {
-            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("overlay"),
-                size: wgpu::Extent3d { width: img.w, height: img.h, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("overlay"),
-                layout: &self.overlay_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.overlay_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&tex.create_view(&Default::default())) },
-                ],
-            });
-            self.overlay = Some(Overlay { tex, bg, size: (img.w, img.h), text: Vec::new() });
+    }
+
+    /// Where a world point lands in the window last frame (for picking people).
+    pub fn to_screen(&self, p: Vec3, win: (u32, u32)) -> Option<Vec2> {
+        let v = self.last_view?;
+        let c = v.view_proj * p.extend(1.0);
+        if c.w <= 0.0 {
+            return None;
         }
-        let o = self.overlay.as_mut().unwrap();
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &o.tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            &img.px,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.w * 4), rows_per_image: Some(img.h) },
-            wgpu::Extent3d { width: img.w, height: img.h, depth_or_array_layers: 1 },
-        );
-        o.text = lines.to_vec();
+        Some(Vec2::new((c.x / c.w * 0.5 + 0.5) * win.0 as f32, (0.5 - c.y / c.w * 0.5) * win.1 as f32))
     }
 
     /// Draw a frame into `target` (`size` pixels, in the renderer's target format).
@@ -835,6 +1243,7 @@ impl Renderer {
         self.last_view = Some(view);
         self.ensure_low(view.low);
         self.update_instances(frame.light.season);
+        self.prepare_dynamic(frame);
         let light = frame.light;
 
         // Sun matrix: a box around the view, snapped to shadow texels so shadows hold still.
@@ -857,7 +1266,14 @@ impl Renderer {
         g.sun_col = [light.sun_col.x, light.sun_col.y, light.sun_col.z, 1.0];
         g.ambient = [light.ambient.x, light.ambient.y, light.ambient.z, 1.0];
         g.cam_fwd = [view.forward.x, view.forward.y, view.forward.z, self.map_size as f32];
-        g.season = [light.season as f32, light.snow, frame.time, 0.0006];
+        g.season = [light.season as f32, light.snow, frame.time, 0.00025];
+        g.fire = match frame.camp {
+            Some(c) if c.lit => {
+                let flicker = 0.92 + 0.08 * (frame.time * 7.3).sin() * (frame.time * 3.1).cos();
+                [c.fire.x, c.fire.y, c.fire.z, (0.35 + 0.65 * light.night / 0.85) * flicker]
+            }
+            _ => [0.0, -100.0, 0.0, 0.0],
+        };
         self.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&self.globals));
         let edge_m = (view.t * 4.0).max(0.3);
         let post = PostUniform {
@@ -866,13 +1282,7 @@ impl Renderer {
             night_tint: [0.50, 0.60, 1.05, 1.0],
         };
         self.queue.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&post));
-        if let Some(lines) = frame.overlay {
-            self.update_overlay(lines);
-            if let Some(o) = &self.overlay {
-                let r = RectUniform { r: [12.0, 12.0, o.size.0 as f32, o.size.1 as f32], win: [size.0 as f32, size.1 as f32, 0.0, 0.0] };
-                self.queue.write_buffer(&self.overlay_buf, 0, bytemuck::bytes_of(&r));
-            }
-        }
+        self.update_overlays(frame.panels, size, frame.ui_scale.max(1));
 
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         // 1. Shadows
@@ -900,6 +1310,8 @@ impl Renderer {
             }
             pass.set_pipeline(&self.shadow_model_pipe);
             Self::draw_models(&mut pass, &self.models, &sun_vp);
+            self.draw_dynamic(&mut pass);
+            self.draw_people(&mut pass, true);
         }
         // 2. The scene, at low resolution
         let low = self.low.as_ref().unwrap();
@@ -943,6 +1355,8 @@ impl Renderer {
             }
             pass.set_pipeline(&self.model_pipe);
             Self::draw_models(&mut pass, &self.models, &view.view_proj);
+            self.draw_dynamic(&mut pass);
+            self.draw_people(&mut pass, false);
         }
         // 3. Pixel pass into the target, then the overlay
         {
@@ -962,10 +1376,8 @@ impl Renderer {
             pass.set_pipeline(&self.post_pipe);
             pass.set_bind_group(0, &low.post_bg, &[]);
             pass.draw(0..3, 0..1);
-            if frame.overlay.is_some()
-                && let Some(o) = &self.overlay
-            {
-                pass.set_pipeline(&self.overlay_pipe);
+            pass.set_pipeline(&self.overlay_pipe);
+            for o in &self.overlays {
                 pass.set_bind_group(0, &o.bg, &[]);
                 pass.draw(0..4, 0..1);
             }
@@ -1013,6 +1425,7 @@ impl Globals {
             season: [0.0; 4],
             biome,
             pal,
+            fire: [0.0, -100.0, 0.0, 0.0],
         }
     }
 }

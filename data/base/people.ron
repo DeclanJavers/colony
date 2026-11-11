@@ -1,0 +1,35 @@
+// People: the starting group and how bodies work.
+(
+    start_group: 10,
+    start_age: (18, 42),
+    // Walking speed in tiles per game minute (game time runs fast: see calendar.ron).
+    walk_speed: 0.5,
+    // How many items fit in the hands and a bundle.
+    carry: 10,
+    // Tiles a person can see around them.
+    sight: 12,
+    // Health: 1 = well, 0 = dead. Recovery per hour while body needs are below 0.5.
+    heal_per_hour: 0.01,
+    // Air temperature (C) below which people start to feel the cold, and how fast warmth
+    // rises per hour for each degree below it.
+    comfort_temp: 10.0,
+    // Sleeping close to others (within company_reach) halves the chill.
+    huddle: 0.5,
+    cold_per_hour: 0.012,
+    // A lit fire warms people within this many tiles, lowering warmth per hour.
+    fire_reach: 4.0,
+    fire_warmth_per_hour: 0.35,
+    // Being near others (within this many tiles, awake) lowers the social need per hour.
+    company_reach: 5.0,
+    company_per_hour: 0.06,
+    // Body clock: the hour people get sleepy, and the hour they wake. Each person's chronotype
+    // shifts these by up to +-chronotype_spread hours.
+    sleep_hour: 21.5,
+    wake_hour: 6.0,
+    chronotype_spread: 1.0,
+    // Season offsets to the map's mean temperature, and the day/night swing (C).
+    season_temp: [0.0, 7.0, -1.0, -10.0],
+    day_night_swing: 4.0,
+    // Clothes: one hue per person, same saturation band (docs/STYLE.md).
+    clothes: ["#C0504D", "#4F81BD", "#9BBB59", "#8064A2", "#4BACC6", "#F79646", "#B65E9A", "#5E9A8A", "#C9A227", "#7A6BB5", "#A35D3D", "#3F8F6A"],
+)

@@ -9,4 +9,7 @@ pub enum Event {
     SeasonStarted { season: String, year: u64 },
     NodePlaced { kind: u16, x: u32, y: u32 },
     NodeRemoved { kind: u16, x: u32, y: u32 },
+    PersonDied { name: String, cause: String },
+    FireLit,
+    FireOut,
 }

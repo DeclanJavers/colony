@@ -1,0 +1,18 @@
+// Needs. 0 = fully satisfied, 1 = desperate. Each rises per game hour (awake or asleep) and is
+// lowered by actions. At 1, body needs hurt health (damage_per_hour). `words` describe the level
+// (for people's thoughts, the inspector and text brains), split at `at`.
+[
+    (id: "hunger", name: "Hunger", kind: Body, awake_per_hour: 0.045, asleep_per_hour: 0.025, damage_per_hour: 0.02,
+     at: [0.25, 0.5, 0.75, 0.9], words: ["full", "peckish", "hungry", "very hungry", "starving"]),
+    (id: "thirst", name: "Thirst", kind: Body, awake_per_hour: 0.08, asleep_per_hour: 0.04, damage_per_hour: 0.06,
+     at: [0.25, 0.5, 0.75, 0.9], words: ["not thirsty", "a little thirsty", "thirsty", "very thirsty", "parched"]),
+    (id: "rest", name: "Rest", kind: Body, awake_per_hour: 0.06, asleep_per_hour: -0.14, damage_per_hour: 0.0,
+     at: [0.25, 0.5, 0.75, 0.9], words: ["rested", "a bit tired", "tired", "very tired", "exhausted"]),
+    // Warmth rises with cold (see people.ron: cold_per_hour), not with time.
+    (id: "warmth", name: "Warmth", kind: Body, awake_per_hour: 0.0, asleep_per_hour: 0.0, damage_per_hour: 0.04,
+     at: [0.25, 0.5, 0.75, 0.9], words: ["warm", "a bit cold", "cold", "very cold", "freezing"]),
+    (id: "social", name: "Social", kind: Mind, awake_per_hour: 0.035, asleep_per_hour: 0.0, damage_per_hour: 0.0,
+     at: [0.25, 0.5, 0.75, 0.9], words: ["content with company", "could use a chat", "lonely", "very lonely", "desperately lonely"]),
+    (id: "fun", name: "Fun", kind: Mind, awake_per_hour: 0.03, asleep_per_hour: 0.0, damage_per_hour: 0.0,
+     at: [0.25, 0.5, 0.75, 0.9], words: ["happy", "a little bored", "restless", "very restless", "miserable"]),
+]

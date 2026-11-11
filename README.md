@@ -33,6 +33,13 @@ cargo run --release -p colony-run -- maps --seeds 1..10
 cargo run --release -p colony-run -- map --seed 2
 ```
 
+Live a colony for a year headless and see how it went (add `--traces t.jsonl.zst` to keep every
+decision):
+
+```bash
+cargo run --release -p colony-run -- run --seed 2 --days 24
+```
+
 `maps` writes a contact sheet of ten seeds to `runs/maps/`. `map` writes every layer of one seed:
 - overview;
 - elevation;
@@ -57,6 +64,7 @@ cargo run --release -p colony
 | Space, 1 / 2 / 3 | Pause, speed |
 | T / Y | Jump an hour / a day |
 | F | Full screen |
+| Click a person | Inspect them (needs, DNA, skills, last decision); Esc to close |
 | F3 | Hide the FPS readout |
 
 **Starting options:** `--seed N --day D --time H --zoom Z`. For example, `--day 14` starts in

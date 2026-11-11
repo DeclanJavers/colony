@@ -645,12 +645,13 @@ def _clumps(seed, n, centre_z, spread, r0, height):
 
 
 def tree():
-    cyl("trunk", 0.1, 0.8, (0, 0, 0.4), M("plank_dark"), verts=6, r2=0.07)
+    # The trunk runs up into the canopy so they read as one tree through the outlines.
+    cyl("trunk", 0.11, 1.05, (0, 0, 0.525), M("plank_dark"), verts=6, r2=0.07)
     _clumps(11, 6, 1.12, 0.36, 0.27, 1.0)
 
 
 def tree_2():
-    cyl("trunk", 0.09, 1.0, (0, 0, 0.5), M("plank_dark"), verts=6, r2=0.06)
+    cyl("trunk", 0.1, 1.25, (0, 0, 0.625), M("plank_dark"), verts=6, r2=0.06)
     _clumps(23, 5, 1.32, 0.28, 0.24, 1.2)
 
 

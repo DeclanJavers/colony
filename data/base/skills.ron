@@ -1,0 +1,12 @@
+// Skills grow with practice: level = floor(sqrt(minutes practised / minutes_per_level_sq)), up to 10.
+// Work goes faster with skill: speed = 0.6 + 0.06 * level.
+(
+    minutes_per_level_sq: 40.0,
+    skills: [
+        (id: "foraging", name: "Foraging"),
+        (id: "woodcutting", name: "Woodcutting"),
+        (id: "stonework", name: "Stonework"),
+        (id: "firemaking", name: "Firemaking"),
+        (id: "exploring", name: "Exploring"),
+    ],
+)

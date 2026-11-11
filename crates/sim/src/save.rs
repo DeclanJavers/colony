@@ -4,7 +4,9 @@
 
 use crate::commands::Command;
 use crate::ids::Table;
-use crate::sim::Sim;
+use crate::camp::Camp;
+use crate::people::Person;
+use crate::sim::{Sim, Streams};
 use crate::world::{Map, Node};
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
 
 /// Bumped when the save layout changes.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 #[derive(Serialize)]
 struct SaveRef<'a> {
@@ -22,6 +24,9 @@ struct SaveRef<'a> {
     tick: u64,
     map: &'a Map,
     nodes: &'a Table<Node>,
+    people: &'a Table<Person>,
+    camp: &'a Camp,
+    streams: &'a Streams,
     command_log: &'a [(u64, Command)],
 }
 
@@ -33,6 +38,9 @@ struct SaveOwned {
     tick: u64,
     map: Map,
     nodes: Table<Node>,
+    people: Table<Person>,
+    camp: Camp,
+    streams: Streams,
     command_log: Vec<(u64, Command)>,
 }
 
@@ -44,6 +52,9 @@ fn snapshot(sim: &Sim) -> SaveRef<'_> {
         tick: sim.tick,
         map: &sim.map,
         nodes: &sim.nodes,
+        people: &sim.people,
+        camp: &sim.camp,
+        streams: &sim.streams,
         command_log: &sim.command_log,
     }
 }
@@ -88,7 +99,7 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Sim, LoadError> {
     if s.format != FORMAT {
         return Err(LoadError::WrongFormat(s.format));
     }
-    let sim = Sim::from_parts(s.seed, s.tick, s.map, s.nodes, s.command_log);
+    let sim = Sim::from_parts(s.seed, s.tick, s.map, s.nodes, s.people, s.camp, s.streams, s.command_log);
     if sim.content.hash != s.content_hash {
         return Err(LoadError::ContentChanged);
     }

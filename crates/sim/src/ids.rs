@@ -20,6 +20,13 @@ impl<T> Id<T> {
     }
 }
 
+/// An id that points at nothing (for options that aren't possible).
+impl<T> Default for Id<T> {
+    fn default() -> Self {
+        Id::new(u32::MAX, 0)
+    }
+}
+
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
         *self

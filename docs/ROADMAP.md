@@ -63,7 +63,17 @@ Full screen runs at 245 to 517 fps with no window at 3024×1964. Windowed, it ho
 - **measured:** pan and zoom show no shimmer or crawl (pixel-change test as in v1);
 - **played:** flying over a generated region looks like the style guide.
 
-## M3: People who live
+## M3: People who live (done, signed off 2026-11-10)
+
+- **Survival:** a rules colony survives a year on 30 seeds.
+- **Speed:** about 1 s per game year headless.
+- **Body clock:** daytime sleep is under 1%.
+- **Traces:** every decision leaves a full trace.
+- **Fixes after your play test:**
+  - shadows hold still, the camera no longer jitters, and zoom steps between fixed pixel levels;
+  - the terrain mesh is smoother;
+  - water has flow, plumes and foam, and river mouths open onto the sea;
+  - walking matches speed, wading works, and sleep spots are on dry land.
 
 - **People:** DNA and expression (height, build, skin, hair and eye colour, personality leanings),
   body, needs, mood with reasons, skills.

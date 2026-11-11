@@ -69,6 +69,9 @@ fn main() {
         "bench" => cmd_bench(&a),
         "hash" => cmd_hash(&a),
         "find" => cmd_find(&a),
+        "run" => cmd_run(&a),
+        "water" => cmd_water(&a),
+        "tiles" => cmd_tiles(&a),
         _ => {
             println!("{}", HELP);
         }
@@ -79,7 +82,9 @@ const HELP: &str = "colony-run map   --seed N [--size 256] [--out runs/maps]
 colony-run maps  --seeds 1..10 [--size 256] [--out runs/maps]
 colony-run bench [--size 256] [--seeds 1..5]
 colony-run hash  --seed N [--days 2] [--size 256]
-colony-run find  --seed N --kind wildflowers           nearest nodes of a kind to the start";
+colony-run find  --seed N --kind wildflowers           nearest nodes of a kind to the start
+colony-run water --seed N                              river mouths, lake inlets, confluences (for QA shots)
+colony-run run   --seed N [--days 24] [--traces out.jsonl.zst] [--quiet]   live a colony headless";
 
 fn cmd_map(a: &Args) {
     let seed = a.num("seed", 1u64);
@@ -137,6 +142,186 @@ fn cmd_hash(a: &Args) {
     let t = Instant::now();
     sim.run_ticks(days * sim.content.calendar.ticks_per_day());
     println!("{:016x}  ({} after {days} days, {:.0} ms)", sim.state_hash(), sim.describe_time(), t.elapsed().as_secs_f64() * 1000.0);
+}
+
+#[derive(Default)]
+struct RunStats {
+    actions: BTreeMap<String, (u32, u32)>,
+    why: BTreeMap<String, u32>,
+    out: Option<zstd::stream::write::Encoder<'static, std::fs::File>>,
+    written: u64,
+}
+
+fn cmd_run(a: &Args) {
+    use std::sync::{Arc, Mutex};
+    let seed = a.num("seed", 1u64);
+    let days = a.num("days", 24u64);
+    let quiet = a.opts.contains_key("quiet");
+    let mut sim = Sim::new(seed, a.num("size", 256u32));
+    sim.mode = "lockstep".into();
+    let stats = Arc::new(Mutex::new(RunStats::default()));
+    if let Some(path) = a.opts.get("traces") {
+        let f = std::fs::File::create(path).unwrap_or_else(|e| die(&format!("can't write {path}: {e}")));
+        stats.lock().unwrap().out = Some(zstd::stream::write::Encoder::new(f, 3).expect("zstd"));
+    }
+    let content = sim.content.clone();
+    let st = stats.clone();
+    sim.trace_sink = Some(Box::new(move |t: &sim::brain::Trace| {
+        let mut s = st.lock().unwrap();
+        let name = t.request.options[t.choice].kind.name(&content);
+        let e = s.actions.entry(name.clone()).or_default();
+        e.0 += 1;
+        match t.outcome.as_ref().map(|o| &o.result) {
+            Some(sim::brain::Ending::Done) | None => {}
+            Some(sim::brain::Ending::Failed(w)) | Some(sim::brain::Ending::Interrupted(w)) => {
+                e.1 += 1;
+                let w = w.split_once(" was ").map(|(_, r)| format!("was {r}")).unwrap_or(w.clone());
+                *s.why.entry(format!("{name}: {w}")).or_default() += 1;
+            }
+        }
+        if let Some(out) = s.out.as_mut() {
+            use std::io::Write;
+            serde_json::to_writer(&mut *out, t).expect("trace json");
+            out.write_all(b"\n").expect("trace write");
+        }
+        s.written += 1;
+    }));
+    let per_day = sim.content.calendar.ticks_per_day();
+    let t0 = Instant::now();
+    let mut deaths = Vec::new();
+    for d in 0..days {
+        sim.run_ticks(per_day);
+        while sim.waiting() > 0 {
+            sim.step();
+        }
+        for e in sim.take_events() {
+            if let sim::Event::PersonDied { name, cause } = e {
+                deaths.push(format!("day {}: {name} died of {cause}", d + 1));
+            }
+        }
+        if !quiet {
+            let c = &sim.content;
+            let st = |id: &str| sim.camp.stores[c.item(id)];
+            let alive: Vec<&sim::Person> = sim.people.iter().map(|(_, p)| p).filter(|p| p.alive).collect();
+            let avg = |n: &str| alive.iter().map(|p| p.needs[c.need(n)]).sum::<f32>() / alive.len().max(1) as f32;
+            println!(
+                "{:<34} alive {:>2}  berries {:>4} water {:>3} wood {:>3} sticks {:>3} stone {:>3}  fire {:<9} hunger {:.2} thirst {:.2} cold {:.2} tired {:.2}",
+                sim.describe_time(),
+                alive.len(),
+                st("berries"),
+                st("water"),
+                st("wood"),
+                st("sticks"),
+                st("stone"),
+                if sim.camp.fire_lit { format!("lit {:.0}h", sim.camp.fire_hours) } else { "out".into() },
+                avg("hunger"),
+                avg("thirst"),
+                avg("warmth"),
+                avg("rest"),
+            );
+        }
+    }
+    let secs = t0.elapsed().as_secs_f64();
+    if let Some(out) = stats.lock().unwrap().out.take() {
+        out.finish().expect("zstd finish");
+    }
+    let s = stats.lock().unwrap();
+    let alive = sim.alive();
+    println!("seed {seed}: {alive} of {} alive after {days} days, {:.1} s", sim.people.len(), secs);
+    for d in &deaths {
+        println!("  {d}");
+    }
+    let day_minutes = days as f64 * 600.0;
+    let worst = sim.people.iter().map(|(_, p)| (p.tally.day_sleep_minutes as f64 / day_minutes, p.name.clone())).max_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((share, name)) = worst {
+        println!("  most daytime sleep: {name}, {:.1}% of 08:00-18:00", share * 100.0);
+    }
+    let mix: Vec<String> = s.actions.iter().map(|(k, (n, f))| if *f > 0 { format!("{k} {n} ({f} not done)") } else { format!("{k} {n}") }).collect();
+    println!("  decisions: {}", mix.join(", "));
+    let mut why: Vec<(&String, &u32)> = s.why.iter().collect();
+    why.sort_by(|a, b| b.1.cmp(a.1));
+    let top: Vec<String> = why.iter().take(8).map(|(k, n)| format!("{k} ({n})")).collect();
+    if !top.is_empty() {
+        println!("  not done because: {}", top.join("; "));
+    }
+    if s.written > 0 && a.opts.contains_key("traces") {
+        println!("  wrote {} traces to {}", s.written, a.opts["traces"]);
+    }
+}
+
+fn cmd_water(a: &Args) {
+    use sim::Water;
+    let sim = Sim::new(a.num("seed", 1u64), a.num("size", 256u32));
+    let m = &sim.map;
+    let n = m.size as i32;
+    let mut mouths = Vec::new();
+    let mut lakes = Vec::new();
+    let mut joins = Vec::new();
+    for y in 1..n - 1 {
+        for x in 1..n - 1 {
+            let i = m.idx(x as u32, y as u32);
+            if m.water[i] != Water::River {
+                continue;
+            }
+            let Some(j) = m.downstream(i) else { continue };
+            match m.water[j] {
+                Water::Sea => mouths.push((x, y)),
+                Water::Lake => lakes.push((x, y)),
+                _ => {}
+            }
+            // Confluence: two or more river tiles that aren't neighbours of each other flow in here.
+            let ins: Vec<usize> = (0..8)
+                .filter_map(|d| {
+                    let (dx, dy) = sim::world::DIRS[d];
+                    let k = m.idx((x + dx) as u32, (y + dy) as u32);
+                    (m.water[k] == Water::River && m.downstream(k) == Some(i)).then_some(k)
+                })
+                .collect();
+            if ins.len() >= 2 && m.flow[ins[0]].min(m.flow[ins[1]]) > m.flow[i] * 0.2 {
+                joins.push((x, y));
+            }
+        }
+    }
+    let show = |name: &str, v: &[(i32, i32)]| {
+        let mut picked: Vec<(i32, i32)> = Vec::new();
+        for &p in v {
+            if picked.iter().all(|q| (q.0 - p.0).abs() + (q.1 - p.1).abs() > 25) {
+                picked.push(p);
+            }
+        }
+        let list: Vec<String> = picked.iter().take(4).map(|(x, y)| format!("{x},{y}")).collect();
+        println!("{name}: {}", if list.is_empty() { "none".into() } else { list.join("  ") });
+    };
+    show("river mouths", &mouths);
+    show("lake inlets", &lakes);
+    show("confluences", &joins);
+}
+
+/// Print the tiles around a spot: water kind, ground height, water level, flow direction.
+fn cmd_tiles(a: &Args) {
+    use sim::Water;
+    let sim = Sim::new(a.num("seed", 1u64), a.num("size", 256u32));
+    let m = &sim.map;
+    let (cx, cy) = (a.num("x", 128i32), a.num("y", 128i32));
+    let r = a.num("r", 4i32);
+    for y in cy - r..=cy + r {
+        let mut line = format!("{y:>4} ");
+        for x in cx - r..=cx + r {
+            if !m.in_bounds(x, y) {
+                continue;
+            }
+            let i = m.idx(x as u32, y as u32);
+            let k = match m.water[i] {
+                Water::None => '.',
+                Water::Sea => 'S',
+                Water::Lake => 'L',
+                Water::River => 'R',
+            };
+            let lvl = if m.water[i].is_water() { format!("{:+.1}", m.water_level[i]) } else { "    ".into() };
+            line += &format!("{k}{:+5.1}{lvl:>5} ", m.elevation[i]);
+        }
+        println!("{line}");
+    }
 }
 
 fn cmd_find(a: &Args) {

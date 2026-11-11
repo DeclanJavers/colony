@@ -311,7 +311,9 @@ name = "colony-run"
 version = "0.1.0"
 dependencies = [
  "png",
+ "serde_json",
  "sim",
+ "zstd",
 ]
 
 [[package]]

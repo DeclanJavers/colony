@@ -1,0 +1,11 @@
+// Things people carry and store.
+//   food:  how much one lowers hunger when eaten
+//   drink: how much one lowers thirst when drunk
+//   fuel:  hours one keeps a fire burning
+[
+    (id: "berries", name: "Berries", food: 0.2, drink: 0.02, fuel: 0.0),
+    (id: "water", name: "Water", food: 0.0, drink: 0.25, fuel: 0.0),
+    (id: "wood", name: "Wood", food: 0.0, drink: 0.0, fuel: 3.0),
+    (id: "sticks", name: "Sticks", food: 0.0, drink: 0.0, fuel: 0.75),
+    (id: "stone", name: "Stone", food: 0.0, drink: 0.0, fuel: 0.0),
+]

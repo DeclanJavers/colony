@@ -1,0 +1,30 @@
+// What people can do in the base game (M3). Each action kind's code is in
+// crates/sim/src/actions.rs; these are its numbers. Gathering takes `minutes` per batch of
+// `yield_per` items (faster with skill) from a resource node, then carries them to the camp.
+(
+    gather: [
+        (id: "forage", name: "Forage", node: "berry_bush", item: "berries", skill: "foraging", minutes: 25, yield_per: 3),
+        (id: "chop", name: "Collect wood", node: "tree", item: "wood", skill: "woodcutting", minutes: 30, yield_per: 2),
+        (id: "chop_pine", name: "Collect wood", node: "pine", item: "wood", skill: "woodcutting", minutes: 30, yield_per: 2),
+        (id: "sticks", name: "Gather sticks", node: "sticks", item: "sticks", skill: "woodcutting", minutes: 15, yield_per: 3),
+        (id: "stone", name: "Gather stone", node: "pebbles", item: "stone", skill: "stonework", minutes: 20, yield_per: 2),
+        (id: "quarry", name: "Break stone", node: "rock", item: "stone", skill: "stonework", minutes: 70, yield_per: 3),
+    ],
+    drink_minutes: 6,
+    fetch_water: (minutes: 10, amount: 4),
+    eat_minutes: 15,
+    // Lighting a fire takes sticks for kindling (and wood, if this is above 0); a log from the
+    // stores goes on too if there is one. Success chance rises with skill.
+    light_fire: (minutes: 20, sticks: 3, wood: 0, chance: 0.55, chance_per_level: 0.05),
+    tend_fire_minutes: 5,
+    // Rest by the fire: lowers fun and rest per hour.
+    rest: (minutes: 60, fun_per_hour: 0.25, rest_per_hour: 0.05),
+    explore_minutes: 30,
+    check_stores_minutes: 3,
+    // Berry bushes regrow this many berries per day in each season (spring, summer, autumn, winter).
+    // At the start of winter this share of the berries left on bushes rots.
+    berry_regrow: [3.0, 4.0, 5.0, 0.0],
+    winter_rot: 0.3,
+    // Days of food the group aims to keep in store, per season (they store up before winter).
+    food_target_days: [2.5, 5.0, 10.0, 4.0],
+)

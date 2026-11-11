@@ -27,7 +27,8 @@ fn depth_at(t: vec2<i32>) -> f32 {
 @fragment
 fn fs_post(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let t = vec2<i32>(floor(frag.xy / post.p.x));
-    var c = textureLoad(scene, t, 0).rgb;
+    let px = textureLoad(scene, t, 0);
+    var c = px.rgb;
     let d = depth_at(t);
     // Outline the near side of an edge: any neighbour much further away.
     let far = max(max(depth_at(t + vec2<i32>(1, 0)), depth_at(t - vec2<i32>(1, 0))),
@@ -39,6 +40,7 @@ fn fs_post(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let night = post.p.z;
     let lum = dot(c, vec3<f32>(0.3, 0.59, 0.11));
     let graded = mix(c, vec3<f32>(lum), 0.45) * post.night_tint.rgb;
-    c = mix(c, graded, night);
+    // Alpha is how much the grade applies: fire light keeps its warmth at night.
+    c = mix(c, graded, night * px.a);
     return vec4<f32>(c, 1.0);
 }

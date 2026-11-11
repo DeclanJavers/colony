@@ -1,0 +1,9 @@
+// Given names for founders (and later, children). Invented, short, easy to read.
+(
+    female: ["Ada", "Cyra", "Elin", "Fia", "Gwen", "Iva", "Kira", "Lina", "Mara", "Nell", "Oona", "Pia", "Rhea", "Saga", "Tova",
+             "Uma", "Vera", "Wren", "Yara", "Zia", "Alba", "Brin", "Cleo", "Dina", "Edda", "Freya", "Greta", "Hedda", "Ilse", "Juna",
+             "Liv", "Maja", "Nora", "Ottla", "Runa", "Sela", "Tilde", "Una", "Viva", "Ylva"],
+    male: ["Bo", "Dax", "Finn", "Hal", "Jory", "Kit", "Lio", "Nils", "Pim", "Quin", "Sol", "Tam", "Vale", "Xan", "Zed",
+           "Ari", "Bram", "Cael", "Dag", "Eske", "Fenn", "Gorm", "Hugo", "Ilan", "Jarl", "Knut", "Leif", "Magnus", "Odd", "Oren",
+           "Per", "Rolf", "Sten", "Theo", "Ulf", "Varg", "Wim", "Yngve", "Arne", "Bjorn"],
+)
