@@ -1,0 +1,30 @@
+// Weather (M6). Each morning rolls the day's sky from the season. Rain and snow chances are
+// scaled by how wet the region is (worldgen rain, about 0.45 to 0.75; 0.6 is "average").
+(
+    // Chance of rain (or snow, when it's freezing) on a day, per season: spring, summer,
+    // autumn, winter; and of a cloudy day without rain.
+    wet_chance: [0.32, 0.22, 0.38, 0.30],
+    cloud_chance: [0.25, 0.2, 0.3, 0.35],
+    // Degrees added to the day's temperature: clear skies swing wider (colder nights), clouds
+    // hold the warmth in.
+    clear_night: -2.5,
+    cloudy: 1.0,
+    // A day's random drift (C, either way) and winter cold snaps: chance a winter day starts one,
+    // how much colder, and how many days it lasts.
+    drift: 2.0,
+    snap_chance: 0.12,
+    snap_cold: -7.0,
+    snap_days: 2,
+    // Soil moisture: rain adds this per rainy day; each day dries it by dry_base plus dry_per_c
+    // per degree above 0 (hot days dry soil); ground within 2 tiles of fresh water stays at least
+    // this damp.
+    rain_wet: 0.18,
+    dry_base: 0.03,
+    dry_per_c: 0.012,
+    damp_near_water: 0.6,
+    // Snow cover (0..1): added per snowy day; melted per day per degree above freezing.
+    snow_fall: 0.35,
+    melt_per_c: 0.08,
+    // Being out in rain or snow (not under a roof, not by a lit fire) chills: warmth need per hour.
+    wet_chill: 0.05,
+)

@@ -64,6 +64,21 @@ pub trait Brain: Send {
     fn id(&self) -> &str;
     fn submit(&mut self, req: DecisionRequest);
     fn poll(&mut self) -> Vec<(DecisionRequest, Answer)>;
+    /// Decisions handed over and still being thought about (the sim pauses for these in
+    /// lockstep, and the UI says so).
+    fn in_flight(&self) -> usize {
+        0
+    }
+    /// Decisions collected but not yet handed over.
+    fn queued(&self) -> usize {
+        0
+    }
+    /// Hand over whatever is collected now (everyone is waiting: no point holding on).
+    fn flush(&mut self) {}
+    /// Why this brain has stopped answering (a usage limit), if it has.
+    fn stopped(&self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -151,16 +166,19 @@ impl RulesBrain {
                 }
                 // What it brings back for everyone.
                 let mut gain = 0.0;
-                for it in ["berries", "water", "wood", "sticks", "stone"] {
+                for it in ["berries", "water", "wood", "sticks", "stone", "grain", "meat"] {
                     gain += o.f(&format!("gain.{it}")) * value(it);
                 }
                 s += gain * (0.85 + 0.3 * diligence);
+                // Something the voice from the sky asked for (M8, god tool "speak").
+                s += 1.0 * o.f("asked");
                 // Time costs.
                 s -= o.f("minutes") * 0.0015;
                 s += match &o.kind {
                     // The body clock makes them sleep at night, but only if they're tired too.
                     Kind::Sleep | Kind::SleepHere => 2.4 * sleepy * (need("rest") * 2.5).min(1.0) - 1.2 * (1.0 - sleepy),
-                    Kind::Rest => 0.15 + 0.15 * (1.0 - diligence) - 0.6 * sleepy,
+                    // Sitting by the fire: more when tired (free time can go on other things, M7).
+                    Kind::Rest => 0.1 + 0.12 * (1.0 - diligence) + 0.25 * need("rest") - 0.15 * (1.0 - req.s("food_days") / 3.0).clamp(0.0, 1.0) - 0.6 * sleepy,
                     // Exploring in the evening strands them far from the fire at bedtime.
                     Kind::Explore { .. } => 0.1 + 0.45 * curiosity * (1.0 - req.s("explored")) + 0.5 * req.s("food_unknown") - 0.6 * req.s("evening") - 0.8 * sleepy,
                     Kind::LightFire => 0.3 + 1.6 * req.s("cold") + 0.9 * req.s("evening") + 0.5 * req.s("winter"),
@@ -187,6 +205,41 @@ impl RulesBrain {
                     Kind::Play => 0.15 - 0.9 * sleepy,
                     Kind::Feed { .. } => urgency(o.f("child_hunger")) * 1.5 * (0.4 + 0.6 * o.f("kin")) + 0.1,
                     Kind::Bury { .. } => 0.2 + 0.4 * o.f("kin") + 0.1 * o.f("days_dead").min(3.0) - 0.9 * sleepy,
+                    // Settling down (M6)
+                    Kind::Found { .. } if o.f("homeless") > 0.0 => {
+                        (0.22 + 0.25 * o.f("family") + 0.3 * req.s("night_cold").min(1.0) + 0.15 * diligence) * (0.4 + 0.6 * o.f("materials")) - 0.9 * sleepy
+                    }
+                    Kind::Found { .. } if o.f("seed") > 0.0 => {
+                        let worry = (1.0 - req.s("food_days") / 6.0).clamp(0.0, 1.0);
+                        0.12 + 0.35 * worry + 0.1 * o.f("seed").min(3.0) / 3.0 + 0.1 * diligence - 0.1 * o.f("fields") - 0.8 * sleepy
+                    }
+                    Kind::Found { .. } => (0.05 + 0.08 * o.f("spoiling").min(6.0)) * (0.4 + 0.6 * o.f("materials")) + 0.05 * diligence - 0.9 * sleepy,
+                    Kind::Build { .. } => {
+                        let mine = o.f("mine") * o.f("home");
+                        0.12 + 0.25 * o.f("progress") + 0.35 * mine + 0.2 * mine * req.s("night_cold").min(1.0) + 0.2 * o.f("field") + 0.15 * diligence + 0.1 * o.f("materials") - 0.9 * sleepy
+                    }
+                    Kind::SleepHome { .. } => 2.4 * sleepy * (need("rest") * 2.5).min(1.0) - 1.2 * (1.0 - sleepy) + 0.3 * o.f("shelter") + 0.3 * o.f("cold") * o.f("shelter"),
+                    Kind::Sow { .. } => 0.45 + 0.3 * (1.0 - req.s("food_days") / 6.0).clamp(0.0, 1.0) - 0.6 * sleepy,
+                    Kind::Tend { .. } => 0.15 + 0.8 * o.f("weeds") * (1.0 - o.f("growth")).max(0.2) - 0.6 * sleepy,
+                    Kind::Harvest { .. } => 0.6 - 0.6 * sleepy,
+                    Kind::MakeSpear => 0.12 + 0.2 * o.f("game_known") - 0.15 * o.f("spears") - 0.6 * sleepy,
+                    Kind::Hunt { .. } => 0.12 + 0.1 * curiosity + 0.15 * o.f("skill") - 0.8 * sleepy,
+                    // Free time (M7): what suits them, their hobbies, and (when beauty matters)
+                    // somewhere lovely. Not while food is short.
+                    Kind::Leisure { .. } => {
+                        let worry = (1.0 - req.s("food_days") / 1.5).clamp(0.0, 1.0);
+                        // The more bored, the more it draws them; what suits them draws them most.
+                        let drive = (0.5 + 1.2 * need("fun")).min(1.0);
+                        let taste = (o.f("appeal") - 0.3).max(0.0) * 0.7;
+                        // Free time spent is no loss: most of its length isn't counted against it.
+                        drive * (0.05 + taste + 0.2 * o.f("hobby") + 0.3 * o.f("beauty") + 0.1 * o.f("makes")) + 0.06 * o.f("company") + 0.06 * o.f("evening")
+                            + 0.0009 * o.f("minutes")
+                            - 0.35 * worry
+                            - 0.4 * req.s("cold")
+                            // Not while hungry, thirsty or cold themselves.
+                            - 1.2 * (need("hunger").max(need("thirst")).max(need("warmth")) - 0.4).max(0.0)
+                            - 0.8 * sleepy
+                    }
                     _ => -0.6 * sleepy,
                 };
                 s + (noise.next_f32() - 0.5) * 0.06

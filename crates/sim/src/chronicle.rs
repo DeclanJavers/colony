@@ -71,6 +71,43 @@ impl Chronicle {
                 if self.first("fire") => {
                     self.add(tick, Kind::World, format!("{name} lit the camp's first fire."), vec![*person], 0.7);
                 }
+            // Settling down (M6): the firsts are history; the rest is everyday.
+            Event::BuildingDone { kind, owner, .. } => {
+                let key = format!("built {kind}");
+                if self.first(&key) {
+                    let text = match kind.as_str() {
+                        "field" => "The first field was cleared for grain.".to_string(),
+                        "storehouse" => "The camp built its first storehouse, to keep food from spoiling.".to_string(),
+                        k => format!("The camp's first {k} was finished."),
+                    };
+                    self.add(tick, Kind::World, text, owner.iter().copied().collect(), 0.7);
+                }
+            }
+            Event::FieldSown { person, name, .. } if self.first("sown") => {
+                self.add(tick, Kind::World, format!("{name} sowed the first field of grain."), vec![*person], 0.8);
+            }
+            Event::Harvested { person, name, amount, .. } if self.first("harvest") => {
+                self.add(tick, Kind::World, format!("{name} brought in the first harvest: {amount} grain."), vec![*person], 0.8);
+            }
+            Event::CropFailed { .. } if self.first("crop failed") => {
+                self.add(tick, Kind::Trouble, "Frost killed a field of grain before it ripened.".to_string(), Vec::new(), 0.5);
+            }
+            Event::SpearMade { person, name } if self.first("spear") => {
+                self.add(tick, Kind::Knowledge, format!("{name} made the camp's first spear."), vec![*person], 0.6);
+            }
+            Event::HobbyFound { person, name, hobby } => {
+                self.add(tick, Kind::Life, format!("{name} took up {hobby}."), vec![*person], 0.35);
+            }
+            Event::Made { person, name, what } if what.contains("statue") && self.first("statue") => {
+                self.add(tick, Kind::World, format!("{name} carved the camp's first statue."), vec![*person], 0.7);
+            }
+            Event::Made { person, name, what } if what.contains("flower bed") && self.first("flower bed") => {
+                self.add(tick, Kind::World, format!("{name} planted the camp's first flower bed."), vec![*person], 0.5);
+            }
+            Event::SettingChanged { what } => self.add(tick, Kind::World, format!("{what}: the rules of the world changed."), Vec::new(), 0.6),
+            Event::Hunted { person, name, animal, .. } if self.first(&format!("hunted {animal}")) => {
+                self.add(tick, Kind::World, format!("{name} killed the camp's first {animal}."), vec![*person], 0.7);
+            }
             _ => {}
         }
     }

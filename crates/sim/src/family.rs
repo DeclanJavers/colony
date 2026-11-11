@@ -248,6 +248,10 @@ pub fn born(people: &Table<Person>, mother: PersonId, father: PersonId, tick: u6
         buried: false,
         grave: None,
         buried_by: None,
+        indoors: None,
+        hobbies: Vec::new(),
+        heard: None,
+        said: None,
     }
 }
 
@@ -310,7 +314,10 @@ pub fn babies(people: &mut Table<Person>, seen: &[Seen], tick: u64, c: &Content)
         let carer = find(seen, cid).unwrap();
         let (cpos, casleep, canim) = (carer.pos, carer.asleep, carer.anim);
         let nursing = b.age < c.life.nursing_age && b.mother == Some(cid) && carer.hunger < 0.8;
+        // A baby sleeps under the same roof as whoever has them.
+        let roof = people.get(cid).and_then(|q| q.indoors);
         let baby = people.get_mut(b.id).unwrap();
+        baby.indoors = if casleep { roof } else { None };
         let k = (b.id.index % 6) as f32;
         let target = (cpos.0 + 0.5 * (k * 1.1).cos(), cpos.1 + 0.5 * (k * 1.1).sin());
         let d = ((target.0 - baby.pos.0).powi(2) + (target.1 - baby.pos.1).powi(2)).sqrt();

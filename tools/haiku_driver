@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Answer the subagent bridge's batches with Claude Haiku (ARCHITECTURE.md section 8).
+
+  tools/haiku_driver runs/bridge-1/bridge            answer batches as they appear, until stopped
+  tools/haiku_driver runs/bridge-1/bridge --once     answer what's waiting, then exit
+  options: --model haiku   --poll 1.0 (seconds between looks)   --timeout 300 (per batch)
+
+Each batch (req-<n>.json) goes to `claude -p --model haiku` in print mode with every tool turned
+off, so it can only read and answer. The answer is written as res-<n>.json. It uses your Claude
+plan (no API key). If the plan's usage limit is hit, it writes stop.json and exits: the run saves
+and stops cleanly, and `colony-run bridge --resume` carries on later.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+LIMIT_WORDS = ("usage limit", "rate limit", "limit reached", "out of credits", "quota", "too many requests", "429")
+
+
+def args():
+    a = sys.argv[1:]
+    if not a or a[0].startswith("-"):
+        print(__doc__)
+        sys.exit(2)
+    opts = {"dir": a[0], "once": "--once" in a, "model": "haiku", "poll": 1.0, "timeout": 300.0}
+    for k in ("model", "poll", "timeout"):
+        if f"--{k}" in a:
+            v = a[a.index(f"--{k}") + 1]
+            opts[k] = v if k == "model" else float(v)
+    return opts
+
+
+def waiting(d):
+    out = []
+    for name in os.listdir(d):
+        if name.startswith("req-") and name.endswith(".json"):
+            n = int(name[4:-5])
+            if not os.path.exists(os.path.join(d, f"res-{n}.json")):
+                out.append(n)
+    return sorted(out)
+
+
+def prompt(batch):
+    parts = [batch["instructions"], ""]
+    for it in batch["items"]:
+        parts.append(f"### Item {it['id']} ({it['options']} options)")
+        parts.append(it["text"].strip())
+        parts.append("")
+    parts.append('Reply with the JSON object only: {"answers": [{"id": ..., "choice": ..., "reason": "..."}, ...]}')
+    return "\n".join(parts)
+
+
+def extract(text):
+    """The answers object from the model's reply (it may wrap it in a sentence or a fence)."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    s, e = text.find("{"), text.rfind("}")
+    if s >= 0 and e > s:
+        try:
+            return json.loads(text[s:e + 1])
+        except ValueError:
+            return None
+    return None
+
+
+def stop(d, reason):
+    with open(os.path.join(d, "stop.json"), "w") as f:
+        json.dump({"reason": reason}, f)
+    print(f"haiku_driver: stopped: {reason}", flush=True)
+    sys.exit(3)
+
+
+def answer(d, n, o):
+    with open(os.path.join(d, f"req-{n}.json")) as f:
+        batch = json.load(f)
+    cmd = ["claude", "-p", "--model", o["model"], "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json"]
+    t0 = time.time()
+    try:
+        r = subprocess.run(cmd, input=prompt(batch), capture_output=True, text=True, timeout=o["timeout"])
+    except subprocess.TimeoutExpired:
+        print(f"haiku_driver: batch {n} timed out; trying again", flush=True)
+        return False
+    reply, err = r.stdout, r.stderr
+    result, is_error = None, r.returncode != 0
+    try:
+        j = json.loads(reply)
+        result = j.get("result")
+        is_error = is_error or bool(j.get("is_error"))
+    except ValueError:
+        result = reply
+    text = f"{result or ''}\n{err}".lower()
+    if is_error and any(w in text for w in LIMIT_WORDS):
+        stop(d, (result or err or "usage limit").strip()[:300])
+    if is_error:
+        print(f"haiku_driver: batch {n} failed ({r.returncode}): {(result or err).strip()[:200]}; trying again", flush=True)
+        time.sleep(5)
+        return False
+    answers = extract(result or "") or {"answers": []}
+    # Written whole, then renamed, so the bridge never reads half an answer.
+    tmp = os.path.join(d, f"res-{n}.json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(answers, f, indent=1)
+    os.replace(tmp, os.path.join(d, f"res-{n}.json"))
+    got = len(answers.get("answers", [])) if isinstance(answers, dict) else 0
+    print(f"haiku_driver: batch {n}: {got} of {len(batch['items'])} answered in {time.time() - t0:.1f} s", flush=True)
+    return True
+
+
+def main():
+    o = args()
+    d = o["dir"]
+    os.makedirs(d, exist_ok=True)
+    print(f"haiku_driver: answering batches in {d} with {o['model']}", flush=True)
+    while True:
+        todo = waiting(d)
+        for n in todo:
+            tries = 0
+            while not answer(d, n, o):
+                tries += 1
+                if tries >= 3:
+                    # Give up on this batch: no answers, so the sim's rules brain decides (and the
+                    # traces say so).
+                    with open(os.path.join(d, f"res-{n}.json"), "w") as f:
+                        json.dump({"answers": []}, f)
+                    print(f"haiku_driver: batch {n} left to the rules brain after 3 tries", flush=True)
+                    break
+        if o["once"] and not waiting(d):
+            return
+        time.sleep(o["poll"])
+
+
+if __name__ == "__main__":
+    main()

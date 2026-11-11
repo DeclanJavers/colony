@@ -103,6 +103,17 @@ pub struct Person {
     /// Where they're buried, and who buried them.
     pub grave: Option<(u16, u16)>,
     pub buried_by: Option<PersonId>,
+    /// Under a roof right now (the building kind): shelters them from cold and rain.
+    pub indoors: Option<u16>,
+    /// Free-time activities they've enjoyed (M7), and which became hobbies.
+    #[serde(default)]
+    pub hobbies: Vec<Hobby>,
+    /// What they last heard you say (M8), while it still counts.
+    #[serde(default)]
+    pub heard: Option<crate::speak::Heard>,
+    /// What they last said aloud, and when (M8: chat lines, shown as a speech bubble).
+    #[serde(default)]
+    pub said: Option<(String, u64)>,
 }
 
 impl Person {
@@ -203,7 +214,8 @@ impl Person {
     }
 
     /// How they feel overall, and why: (score, reasons). Each reason is (points, words).
-    pub fn mood(&self, c: &Content, company: bool, by_fire: bool) -> (i32, Vec<(i32, String)>) {
+    /// `beauty` is the beauty where they are, as it counts (0 when beauty doesn't matter).
+    pub fn mood(&self, c: &Content, company: bool, by_fire: bool, beauty: f32) -> (i32, Vec<(i32, String)>) {
         let mut why: Vec<(i32, String)> = Vec::new();
         for (i, n) in c.needs.iter().enumerate() {
             let v = self.needs[i];
@@ -224,6 +236,10 @@ impl Person {
         }
         if by_fire {
             why.push((1, "By the fire".into()));
+        }
+        let lovely = (beauty * c.leisure.beauty.mood).round() as i32;
+        if lovely > 0 {
+            why.push((lovely, "Lovely here".into()));
         }
         if self.health < 0.7 {
             why.push((-((1.0 - self.health) * 8.0).round() as i32, "Weak and unwell".into()));
@@ -269,6 +285,30 @@ impl Person {
             self.traces.pop_front();
         }
         self.traces.push_back(t);
+    }
+}
+
+/// How much someone has enjoyed a free-time activity; past a threshold it's their hobby.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hobby {
+    /// Which activity (data/base/leisure.ron order).
+    pub act: u16,
+    pub joy: f32,
+    pub times: u32,
+    /// When it became a hobby.
+    pub since: Option<u64>,
+}
+
+impl Person {
+    /// Their hobbies (activity indices), in the order they took them up.
+    pub fn hobby_acts(&self) -> Vec<u16> {
+        let mut h: Vec<&Hobby> = self.hobbies.iter().filter(|h| h.since.is_some()).collect();
+        h.sort_by_key(|h| h.since);
+        h.into_iter().map(|h| h.act).collect()
+    }
+
+    pub fn has_hobby(&self, act: u16) -> bool {
+        self.hobbies.iter().any(|h| h.act == act && h.since.is_some())
     }
 }
 
@@ -339,6 +379,10 @@ pub fn founders(c: &Content, n: u32, start: (u32, u32), map_size: u32, start_tic
             buried: false,
             grave: None,
             buried_by: None,
+            indoors: None,
+            hobbies: Vec::new(),
+            heard: None,
+            said: None,
         });
     }
     // A taught skill is known by its share of the group (at least one person).

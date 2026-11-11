@@ -152,7 +152,7 @@ inspector and traffic lens: 261 fps average.
 - **Speed:** about 1.7 s per game year headless at 25 to 35 people.
 - **Frame rate:** 169 to 423 fps at 3024×1964 with 25 people, the Life tab and a lens open.
 
-## M6: Settling down
+## M6: Settling down (done, signed off 2026-11-11)
 
 - **Building:** shelter, house, storage, fire pit. Homes and families living in them.
 - **Basic farming:** one crop, plant, tend and harvest, with growth from soil moisture,
@@ -171,7 +171,30 @@ inspector and traffic lens: 261 fps average.
   when hunting stops;
 - **played:** the settlement looks lived in and grows in a way that makes sense.
 
-## M7: Leisure, hobbies and beauty
+**Measured (2026-11-11, `crates/sim/tests/settling.rs`):**
+- **Farming:** all 8 seeds tried sowed their first field by day 6 (most on day 1 or 2, once the
+  first shelter stood) and had harvested 353 to 534 grain by the end of year 2.
+  - People found the seed themselves: wild grain in meadows. Founders know farming.
+  - One harvest a year per field: a spring sowing ripens through summer and is cut in autumn.
+- **Trails and trip times** (seeds 1 to 3, first season against year 3):
+  - Trails save 5–6% of walking time at first and 27–33% by year 3.
+  - Pace falls from 251–271 to 207–215 minutes per 100 m.
+  - 93 to 143 tiles are worn at least half way to trails.
+  - The traffic lens shows the stat.
+- **Overhunting** (seed 2): three quarters of the deer were killed in one go, the way hunts kill
+  them (scaring the ground). That took 17 deer to 5. They came back to 11, 12, 12 and 14 over
+  the next 4 years; the land holds 16.
+  - People also hunt on their own: 4 to 6 kills per colony in 6 years. That's mostly deer:
+    rabbits give little meat.
+- **Colonies** (`colony-run life --seeds 1..4 --years 6`):
+  - 10 founders become 16 to 29 people by year 6, in 4 to 8 houses.
+  - They harvest 1,500 to 2,200 grain in all.
+  - Deaths over 4 seeds: 3 of old age, 3 of cold, 2 of starvation.
+  - Food runs low at the end of each winter (0 to 3 days left).
+- **Frame rate:** 385 fps at zoom 16, 196 at 40 and 171 at 120 at 3024×1964 (seed 2, year 3,
+  with buildings, fields and animals).
+
+## M7: Leisure, hobbies and beauty (done, signed off 2026-11-11)
 
 - **Free time:** rest, walk, play, and hobbies (garden, carve, sing), drawn by personality.
 - **Hobbies:** a hobby emerges from repeated enjoyment, appears on the person page and grows a
@@ -185,7 +208,25 @@ inspector and traffic lens: 261 fps average.
 - **measured:** with it off, beauty has no effect on any number;
 - **played:** people have hobbies you can name, and the village has some beauty in it.
 
-## M8: Brains I (subagents, chat, AI budget)
+**Measured (2026-11-11, `crates/sim/tests/beauty.rs`):**
+- **Beauty on vs off** (seeds 3 and 4, a year of samples after two years of making things):
+  - Somewhere beautiful (the same field in both), mood is 5.64 ± 0.18 with beauty mattering and
+    3.13 ± 0.18 without.
+  - That's 383 and 325 samples of awake grown people.
+- **Beauty off changes nothing:** with the switch off, a world where the beauty field is
+  scrambled with noise every tick ends with the same state hash as one where it isn't. That's
+  40 days and about 700 free-time activities.
+- **Hobbies:** after 4 years (seeds 1 to 3), 25 of 36 grown people have one.
+  - They're of 4 kinds: walking, singing, gardening and carving.
+  - People made 62 things: flower beds, statues and steps of decorating a home.
+- **Colonies** (`colony-run life --seeds 1..4 --years 6`):
+  - 21 to 31 people by year 6, up from 16 to 29 in M6. That's partly a fix: babies now sleep
+    under their carer's roof.
+  - 10 to 18 flower beds, 3 to 7 statues and 7 to 15 steps of decorating per colony.
+  - Deaths over 4 seeds: 1 of old age, 1 of cold.
+- **Frame rate:** 359 fps at zoom 16 at 3024×1964 (seed 3, year 3).
+
+## M8: Brains I (subagents, chat, AI budget) (done, signed off 2026-11-11)
 
 - **The subagent bridge:**
   - batches decisions and pauses the sim, with a "Haiku is deciding…" indicator;
@@ -212,7 +253,31 @@ inspector and traffic lens: 261 fps average.
 - **played:** talking to someone changes what they do, and the trace shows why;
 - **played:** subagent colonists feel different from rules colonists in ways you can see.
 
-## M9: Brains II (distilled models and the arena)
+**Measured (2026-11-11):**
+- **A subagent colony runs 3 game days unattended** (`colony-run bridge --seed 3 --days 3` with
+  `tools/haiku_driver`).
+  - **Calls:** 131 batches of up to 24 decisions, about 8 s each, with no failures. That's 394
+    decisions, and 20 minutes of real time.
+  - **Traces:** all 384 closed decision traces have a choice and a reason, and none fell back to
+    rules.
+  - **The colony:** all 10 people alive after 3 days.
+- **Experiment B, Haiku colonies against rules ones** (seed 3, 3 days):
+  - **Agreement:** Haiku picks what the rules brain would have only 8% of the time (31 of 384).
+  - **What Haiku does:** it looks after needs first. 53% of its choices are eating, drinking or
+    sleeping, 20% food and water for the camp, 15% the fire, and 9% free time.
+  - **What it doesn't:** it built nothing and explored 9 times. The same seed under rules made
+    56 building choices and explored 63 times. The bridge's instructions put urgent needs
+    first, which may be why.
+  - **Cost:** about 44 Haiku calls per game day with 10 people.
+- **On Low the game runs with no servers:** Low is the rules brain, and chat and speaking are
+  code (templates and keywords). Every test runs that way.
+- **Speaking changes what people do** (`crates/sim/tests/speak.rs`): asked for wood, 12 of 16
+  people fetched it within their next 3 decisions, against 1 of 16 unasked. The trace shows the
+  request on the option and in the text.
+- **Not done (needs you):** the local LLM (llama.cpp needs a model download), so chat and
+  speaking use only their code rungs. Medium and High wait for M9's models.
+
+## M9: Brains II (distilled models and the arena) (in progress)
 
 - **`colony-run export`:** datasets from traces, with held-out seeds.
 - **Experiment A, the scorer:** trained on subagent traces, run natively. Compare agreement, speed
@@ -229,6 +294,32 @@ inspector and traffic lens: 261 fps average.
   after experiment B);
 - **measured:** the text model fits the live time limit for named people;
 - **played:** the Arena ledger makes the differences between brains clear at a glance.
+
+**So far (2026-11-11):**
+- **The scorer** (`crates/brains/src/scorer.rs`) is trained in Rust by `colony-run train`
+  (section 9 of ARCHITECTURE.md says why).
+  - **Speed:** about 73 µs per decision.
+  - **Trained on rules** (38k decisions from 10 seeds): it picks the teacher's option 72% of the
+    time on held-out seeds.
+- **The arena** (`colony-run arena`), seeds 1 to 3, 48 days, scorer trained on rules:
+
+  | Brain | Alive | Died of hunger, thirst or cold | Grain | Things made | Hobbies |
+  |---|---|---|---|---|---|
+  | rules | 18.3 | 0 | 468 | 20.7 | 8.3 |
+  | scorer@rules-v1 | 16.7 | 2.7 | 166 | 12.7 | 1.7 |
+
+  It agrees with rules only 54% of the time in play. Its own mistakes take it into situations
+  the training data never showed.
+- **Branching:** `colony-run fork` makes a branch whose chance events go their own way.
+- **Export:** `colony-run export` writes `features.jsonl` and `text.jsonl`, each row marked train
+  or held-out by seed. 512 Haiku decisions are in `brain/data/haiku`.
+- **The Arena ledger** in game (developer view: the Arena button) shows the last report as bars.
+- **The beauty question** (`--beauty-off`): with beauty not mattering, rules colonies still make
+  24 things each and scorer colonies 13. Both make them for the fun of it.
+- **Still to do:**
+  - the text model (Colab);
+  - the Laya adapter;
+  - a scorer trained on Haiku, compared in the arena with Haiku colonies.
 
 ## M10: Finishing the base
 

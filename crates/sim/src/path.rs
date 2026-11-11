@@ -6,6 +6,10 @@ use crate::world::{DIRS, Map, Water};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+/// Walking pace off the trails, by biome (data/base/biomes.ron order): sea, lake, river,
+/// beach, marsh, meadow, forest, pine forest, hills, mountain, snow.
+const ROUGH: [f32; 11] = [1.0, 1.0, 1.0, 0.85, 0.65, 0.85, 0.7, 0.75, 0.8, 0.65, 0.6];
+
 /// How many footsteps make a tile a full trail.
 pub const TRAIL_STEPS: f32 = 120.0;
 
@@ -18,6 +22,11 @@ pub fn tile_cost(map: &Map, i: usize) -> Option<f32> {
     };
     if map.node_at[i] != 0 {
         c += 1.5;
+    }
+    match map.built[i] {
+        1 => return None,
+        2 => c += 0.6,
+        _ => {}
     }
     // Trails pull people onto them early, so traffic gathers into paths.
     c *= 1.0 - 0.45 * (map.footfall[i] / (TRAIL_STEPS * 0.25)).min(1.0);
@@ -36,7 +45,30 @@ pub fn walk_pace(map: &Map, i: usize) -> f32 {
     if map.node_at[i] != 0 {
         p *= 0.8;
     }
-    p * (1.0 + 0.15 * (map.footfall[i] / TRAIL_STEPS).min(1.0))
+    if map.built[i] == 2 {
+        p *= 0.85;
+    }
+    // Rough ground (undergrowth, tussocks, mud) is slow going; a worn trail is quick.
+    let rough = ROUGH.get(map.biome[i] as usize).copied().unwrap_or(1.0);
+    let trail = (map.footfall[i] / TRAIL_STEPS).min(1.0);
+    p * (rough + (1.15 - rough) * trail)
+}
+
+/// The same tile's pace if it had never been walked (for the trip-time stat: how much the trails
+/// save on the trips people actually make).
+pub fn walk_pace_untrodden(map: &Map, i: usize) -> f32 {
+    let mut p = match map.water[i] {
+        Water::River => 0.4,
+        Water::None => 1.0,
+        _ => 0.3,
+    };
+    if map.node_at[i] != 0 {
+        p *= 0.8;
+    }
+    if map.built[i] == 2 {
+        p *= 0.85;
+    }
+    p * ROUGH.get(map.biome[i] as usize).copied().unwrap_or(1.0)
 }
 
 #[derive(PartialEq)]

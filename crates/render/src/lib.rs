@@ -133,6 +133,47 @@ pub struct CampDraw {
     pub lit: bool,
 }
 
+/// A building, field or other placed thing to draw this frame (a model by file name).
+#[derive(Clone, Copy, Debug)]
+pub struct ThingDraw {
+    pub model: &'static str,
+    pub transform: Mat4,
+    /// Colour for the model's `leaves` parts (ripening grain).
+    pub tint: Option<[f32; 3]>,
+    /// Windows lit (someone's home and awake).
+    pub lit: bool,
+}
+
+/// An animal to draw this frame. Kinds whose model has a rig (deer) are skinned and play `clip`;
+/// the others (rabbits) are drawn whole, hopping while they move.
+#[derive(Clone, Copy, Debug)]
+pub struct AnimalDraw {
+    pub key: u64,
+    /// Animal kind (data/base/animals.ron order) and which of its model variants.
+    pub kind: usize,
+    pub variant: usize,
+    pub pos: Vec3,
+    pub facing: f32,
+    pub size: f32,
+    /// idle, graze, walk or run.
+    pub clip: &'static str,
+    /// How fast to play the clip.
+    pub rate: f32,
+}
+
+/// Lenses drawn on the ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GroundLens {
+    #[default]
+    Off,
+    /// Footsteps shown as heat.
+    Traffic,
+    /// Soil richness and moisture.
+    Soil,
+    /// How beautiful each place is (needs `Frame::beauty`).
+    Beauty,
+}
+
 /// What to draw this frame.
 pub struct Frame<'a> {
     pub camera: &'a Camera,
@@ -141,12 +182,26 @@ pub struct Frame<'a> {
     pub time: f32,
     /// The UI, laid out by the ui crate (None draws no UI).
     pub ui: Option<ui::Output<'a>>,
-    /// The traffic lens: footsteps shown as heat on the ground.
-    pub traffic: bool,
+    /// A lens drawn on the ground itself (footsteps, or the soil).
+    pub ground: GroundLens,
     pub people: &'a [PersonDraw],
     pub camp: Option<CampDraw>,
-    /// A gold ring around a selected thing (not a person): where, and how wide (metres).
-    pub marker: Option<(Vec3, f32)>,
+    /// Buildings, sites and fields.
+    pub things: &'a [ThingDraw],
+    /// The beauty field (per tile, 0..1), for the beauty lens.
+    pub beauty: Option<&'a [f32]>,
+    pub animals: &'a [AnimalDraw],
+    /// How a selected thing (not a person) is marked.
+    pub marker: Option<Marker>,
+}
+
+/// The gold mark on a selected thing.
+#[derive(Clone, Copy, Debug)]
+pub enum Marker {
+    /// A ring around it: where, and how wide (metres).
+    Ring(Vec3, f32),
+    /// An outline drawn on the ground around a flat area (a field): x0, z0, x1, z1 in metres.
+    Area([f32; 4]),
 }
 
 /// How the camera maps the world onto the window this frame.
@@ -225,7 +280,9 @@ fn tile_data(map: &Map) -> Vec<u8> {
     let mut tiles = Vec::with_capacity(n * 4);
     for i in 0..n {
         let wear = (map.footfall[i] / sim::path::TRAIL_STEPS * 255.0).clamp(0.0, 255.0) as u8;
-        tiles.extend_from_slice(&[map.biome[i], wear, (map.moisture[i] * 255.0) as u8, 0]);
+        // Alpha: fertility (7 bits) and whether the tile is a field (the low bit).
+        let fert = (map.fertility[i].clamp(0.0, 1.0) * 127.0) as u8;
+        tiles.extend_from_slice(&[map.biome[i], wear, (map.moisture[i] * 255.0) as u8, fert * 2 + (map.built[i] == 2) as u8]);
     }
     tiles
 }
@@ -266,8 +323,10 @@ struct Globals {
     biome: [[f32; 4]; 16],
     pal: [[f32; 4]; 8],
     fire: [f32; 4],
-    /// x: 1 when the traffic lens is on
+    /// x: 1 traffic lens, 2 soil lens, 3 beauty lens
     lens: [f32; 4],
+    /// A selected area outlined on the ground (x0, z0, x1, z1); none when x0 > x1.
+    area: [f32; 4],
 }
 
 #[repr(C)]
@@ -368,6 +427,14 @@ pub struct Renderer {
     dynamic: wgpu::Buffer,
     dynamic_groups: Vec<(usize, u32, u32)>,
     people: Option<PeopleGpu>,
+    /// Per animal kind: its rigged model variants (deer), or none.
+    beasts: Vec<Vec<PeopleGpu>>,
+    /// Per animal kind: its whole (unrigged) model variants (rabbits).
+    beast_models: Vec<Vec<usize>>,
+    /// The tile texture's bytes as built from the map (the beauty lens swaps one channel).
+    tiles_cache: Vec<u8>,
+    /// The world version whose beauty is in the tile texture, while the beauty lens is on.
+    tiles_beauty: Option<u64>,
     /// The map version the nodes and tiles were last built from.
     pub world_version: u64,
     ground: terrain::Ground,
@@ -669,13 +736,41 @@ impl Renderer {
             dynamic,
             dynamic_groups: Vec::new(),
             people: None,
+            beasts: Vec::new(),
+            beast_models: Vec::new(),
+            tiles_cache: Vec::new(),
+            tiles_beauty: None,
             world_version: map.version,
             ground: terrain::Ground::new(map),
         };
         r.build_terrain(map);
+        r.tiles_cache = tile_data(map);
         r.load_models(content, assets)?;
         r.place_nodes(map, nodes, content);
         r.people = Some(r.build_people(&shader, &globals_bgl, &scene_bgl, &assets.join("models/villager.glb"))?);
+        // Animals: a rigged model where there is one (with a skin), else whole models.
+        for def in &content.animals {
+            let (mut rigs, mut whole) = (Vec::new(), Vec::new());
+            for v in 1..=9 {
+                let name = if v == 1 { def.model.clone() } else { format!("{}_{v}", def.model) };
+                let path = assets.join("models").join(format!("{name}.glb"));
+                if !path.exists() {
+                    if v == 1 {
+                        eprintln!("render: no model for '{}' ({})", def.id, path.display());
+                    }
+                    break;
+                }
+                match r.build_people(&shader, &globals_bgl, &scene_bgl, &path) {
+                    Ok(pg) if whole.is_empty() => rigs.push(pg),
+                    _ => {
+                        whole.push(r.models.len());
+                        r.upload_model(&models::load(&path)?);
+                    }
+                }
+            }
+            r.beasts.push(rigs);
+            r.beast_models.push(whole);
+        }
         Ok(r)
     }
 
@@ -746,10 +841,15 @@ impl Renderer {
             }
             self.kind_models.push(list);
         }
-        for name in ["campfire", "stockpile", "prop_barrel"] {
-            let path = assets.join("models").join(format!("{name}.glb"));
-            if path.exists() {
-                self.names.insert(name.into(), self.models.len());
+        // Camp things, buildings (with their variants) and fields.
+        for base in ["campfire", "stockpile", "prop_barrel", "shelter", "house", "storehouse", "site_frame", "crop_tile", "house_decor_1", "house_decor_2", "house_decor_3"] {
+            for v in 1..=9 {
+                let name = if v == 1 { base.to_string() } else { format!("{base}_{v}") };
+                let path = assets.join("models").join(format!("{name}.glb"));
+                if !path.exists() {
+                    break;
+                }
+                self.names.insert(name, self.models.len());
                 self.upload_model(&models::load(&path)?);
             }
         }
@@ -819,6 +919,8 @@ impl Renderer {
         }
         let n = map.size;
         let tiles = tile_data(map);
+        self.tiles_cache = tiles.clone();
+        self.tiles_beauty = None;
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo { texture: &self.tile_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             &tiles,
@@ -920,7 +1022,39 @@ impl Renderer {
                 dyn_list.push((m, if camp.lit { Instance::new(t, None) } else { Instance::unlit(t) }));
             }
         }
-        if let Some((at, width)) = frame.marker
+        for t in frame.things {
+            if let Some(&m) = self.names.get(t.model) {
+                let inst = if t.lit { Instance::lit(t.transform, t.tint) } else { Instance::new(t.transform, t.tint) };
+                dyn_list.push((m, inst));
+            }
+        }
+        // Animals: skinned (posed below), or whole models that hop along when they move.
+        let mut posed: Vec<Vec<&AnimalDraw>> = self.beasts.iter().map(|_| Vec::new()).collect();
+        for a in frame.animals {
+            if self.beasts.get(a.kind).is_some_and(|r| !r.is_empty()) {
+                posed[a.kind].push(a);
+            } else if let Some(list) = self.beast_models.get(a.kind).filter(|l| !l.is_empty()) {
+                let m = list[a.variant % list.len()];
+                let moving = matches!(a.clip, "walk" | "run");
+                let phase = frame.time * if a.clip == "run" { 9.0 } else { 5.0 } * a.rate.max(0.3) + (a.key % 13) as f32;
+                let hop = if moving { phase.sin().abs() * 0.07 * a.size } else { 0.0 };
+                let nibble = if a.clip == "graze" { ((frame.time * 3.0 + a.key as f32).sin() * 0.5 + 0.5) * 0.08 } else { 0.0 };
+                let t = Mat4::from_translation(a.pos + Vec3::new(0.0, hop, 0.0)) * Mat4::from_rotation_y(a.facing) * Mat4::from_rotation_x(nibble) * Mat4::from_scale(Vec3::splat(a.size));
+                dyn_list.push((m, Instance::new(t, None)));
+            }
+        }
+        for (kind, list) in posed.into_iter().enumerate() {
+            let rigs = &mut self.beasts[kind];
+            let n = rigs.len();
+            let mut by_rig: Vec<Vec<&AnimalDraw>> = rigs.iter().map(|_| Vec::new()).collect();
+            for a in list {
+                by_rig[a.variant % n].push(a);
+            }
+            for (pg, list) in rigs.iter_mut().zip(by_rig) {
+                pose_animals(pg, &list, frame.time, &self.queue);
+            }
+        }
+        if let Some(Marker::Ring(at, width)) = frame.marker
             && let Some(&m) = self.names.get("ring")
         {
             let w = width / 0.78;
@@ -1019,17 +1153,37 @@ impl Renderer {
         }
     }
 
+    /// People and the rigged animals (each rig has its own buffers).
     fn draw_people(&self, pass: &mut wgpu::RenderPass, shadow: bool) {
-        let Some(pg) = &self.people else { return };
-        if pg.drawn == 0 {
-            return;
+        for pg in self.people.iter().chain(self.beasts.iter().flatten()) {
+            if pg.drawn == 0 {
+                continue;
+            }
+            pass.set_pipeline(if shadow { &pg.shadow_pipe } else { &pg.pipe });
+            pass.set_bind_group(2, &pg.bg, &[]);
+            pass.set_vertex_buffer(0, pg.vb.slice(..));
+            pass.set_vertex_buffer(1, pg.instances.slice(..));
+            pass.set_index_buffer(pg.ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..pg.count, 0, 0..pg.drawn);
         }
-        pass.set_pipeline(if shadow { &pg.shadow_pipe } else { &pg.pipe });
-        pass.set_bind_group(2, &pg.bg, &[]);
-        pass.set_vertex_buffer(0, pg.vb.slice(..));
-        pass.set_vertex_buffer(1, pg.instances.slice(..));
-        pass.set_index_buffer(pg.ib.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..pg.count, 0, 0..pg.drawn);
+    }
+
+    /// How many variants of a model there are (`house`, `house_2`...; 0 if none).
+    pub fn model_variants(&self, base: &str) -> usize {
+        if !self.names.contains_key(base) {
+            return 0;
+        }
+        (2..=9).take_while(|v| self.names.contains_key(&format!("{base}_{v}"))).count() + 1
+    }
+
+    /// How many model variants an animal kind has.
+    pub fn animal_variants(&self, kind: usize) -> usize {
+        self.beasts.get(kind).map_or(0, |r| r.len()).max(self.beast_models.get(kind).map_or(0, |m| m.len())).max(1)
+    }
+
+    /// Ground speed at which a rigged animal's clip doesn't slide (1 for unrigged kinds).
+    pub fn animal_clip_speed(&self, kind: usize, clip: &str) -> f32 {
+        self.beasts.get(kind).and_then(|r| r.first()).map_or(1.0, |pg| pg.rig.natural_speed(clip))
     }
 
     fn upload_model(&mut self, m: &ModelMesh) {
@@ -1154,8 +1308,40 @@ impl Renderer {
         Some(Vec2::new((c.x / c.w * 0.5 + 0.5) * win.0 as f32, (0.5 - c.y / c.w * 0.5) * win.1 as f32))
     }
 
+    /// Put the beauty field in the tile texture's moisture channel while the beauty lens is on
+    /// (and put the moisture back when it's off).
+    fn beauty_tiles(&mut self, frame: &Frame) {
+        let n = self.map_size;
+        let want = match (frame.ground, frame.beauty) {
+            (GroundLens::Beauty, Some(b)) if b.len() == (n * n) as usize => Some(b),
+            _ => None,
+        };
+        let bytes = match want {
+            Some(b) if self.tiles_beauty != Some(self.world_version) && !self.tiles_cache.is_empty() => {
+                let mut t = self.tiles_cache.clone();
+                for (i, v) in b.iter().enumerate() {
+                    t[i * 4 + 2] = (v.clamp(0.0, 1.0) * 255.0) as u8;
+                }
+                self.tiles_beauty = Some(self.world_version);
+                t
+            }
+            None if self.tiles_beauty.is_some() => {
+                self.tiles_beauty = None;
+                self.tiles_cache.clone()
+            }
+            _ => return,
+        };
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &self.tile_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &bytes,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) },
+            wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+        );
+    }
+
     /// Draw a frame into `target` (`size` pixels, in the renderer's target format).
     pub fn render(&mut self, target: &wgpu::TextureView, size: (u32, u32), frame: &Frame) {
+        self.beauty_tiles(frame);
         let view = View::new(frame.camera, size.0, size.1);
         self.last_view = Some(view);
         self.ensure_low(view.low);
@@ -1184,7 +1370,11 @@ impl Renderer {
         g.ambient = [light.ambient.x, light.ambient.y, light.ambient.z, 1.0];
         g.cam_fwd = [view.forward.x, view.forward.y, view.forward.z, self.map_size as f32];
         g.season = [light.season as f32, light.snow, frame.time, 0.00025];
-        g.lens = [frame.traffic as u8 as f32, 0.0, 0.0, 0.0];
+        g.lens = [match frame.ground { GroundLens::Off => 0.0, GroundLens::Traffic => 1.0, GroundLens::Soil => 2.0, GroundLens::Beauty => 3.0 }, 0.0, 0.0, 0.0];
+        g.area = match frame.marker {
+            Some(Marker::Area(a)) => a,
+            _ => [1.0, 0.0, 0.0, 0.0],
+        };
         g.fire = match frame.camp {
             Some(c) if c.lit => {
                 let flicker = 0.92 + 0.08 * (frame.time * 7.3).sin() * (frame.time * 3.1).cos();
@@ -1345,8 +1535,47 @@ impl Globals {
             pal,
             fire: [0.0, -100.0, 0.0, 0.0],
             lens: [0.0; 4],
+            area: [1.0, 0.0, 0.0, 0.0],
         }
     }
+}
+
+/// Pose one rig's animals for this frame (clip changes blend over a quarter second).
+fn pose_animals(pg: &mut PeopleGpu, list: &[&AnimalDraw], time: f32, queue: &wgpu::Queue) {
+    let jn = pg.rig.joint_count();
+    let mut joints: Vec<Mat4> = Vec::with_capacity(list.len() * jn);
+    let mut inst: Vec<PersonInstance> = Vec::with_capacity(list.len());
+    for a in list.iter().take(MAX_PEOPLE) {
+        let st = pg.anim.entry(a.key).or_insert(AnimState { clip: a.clip, since: time - 1.0, prev: a.clip, phase: 0.0, prev_phase: 0.0, last: time });
+        if st.clip != a.clip {
+            st.prev = st.clip;
+            st.prev_phase = st.phase;
+            st.clip = a.clip;
+            st.since = time;
+            st.phase = 0.0;
+        }
+        st.phase += (time - st.last).clamp(0.0, 0.25) * a.rate;
+        st.last = time;
+        let offset = (a.key % 97) as f32 * 0.137;
+        let blend = ((time - st.since) / 0.25).clamp(0.0, 1.0);
+        let base = joints.len();
+        if blend < 1.0 {
+            pg.rig.pose((st.prev, st.prev_phase + offset), Some((st.clip, st.phase + offset, blend)), &mut joints);
+        } else {
+            pg.rig.pose((st.clip, st.phase + offset), None, &mut joints);
+        }
+        let model = Mat4::from_translation(a.pos) * Mat4::from_rotation_y(a.facing) * Mat4::from_scale(Vec3::splat(a.size));
+        let none = [0.0; 4];
+        inst.push(PersonInstance { model: model.to_cols_array_2d(), skin: none, hair: none, clothes: none, eyes: none, extra: [1.0, base as f32, 0.0, 0.0] });
+    }
+    if !inst.is_empty() {
+        queue.write_buffer(&pg.instances, 0, bytemuck::cast_slice(&inst));
+        let flat: Vec<[[f32; 4]; 4]> = joints.iter().map(|m| m.to_cols_array_2d()).collect();
+        queue.write_buffer(&pg.joints, 0, bytemuck::cast_slice(&flat));
+    }
+    pg.drawn = inst.len() as u32;
+    let keep: std::collections::BTreeSet<u64> = list.iter().map(|a| a.key).collect();
+    pg.anim.retain(|k, _| keep.contains(k));
 }
 
 // ---------------------------------------------------------------------------------------------

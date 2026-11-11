@@ -1,6 +1,8 @@
 //! Models from the Blender pipeline (assets/models/*.glb): each file becomes one mesh with its
 //! material colours baked into the vertices, drawn once per frame for all its instances. Parts
-//! named `leaves1` / `leaves2` take a per-instance colour (seasons).
+//! named `leaves1` / `leaves2` take a per-instance colour (seasons, ripening grain); `flame`s glow;
+//! `window`s glow when the instance says someone's home; roof materials (`roof_*`, except the
+//! dark ridges) take snow.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -13,7 +15,7 @@ pub struct ModelVertex {
     pub normal: [f32; 3],
     /// Linear RGB
     pub colour: [f32; 3],
-    /// 0 fixed, 1 leaves, 2 lighter top leaves
+    /// 0 fixed, 1 leaves, 2 lighter top leaves, 3 flame, 4 window, 5 roof
     pub flag: f32,
 }
 
@@ -33,6 +35,13 @@ impl Instance {
     /// With any flames hidden (a fire that's out).
     pub fn unlit(m: Mat4) -> Self {
         Instance { model: m.to_cols_array_2d(), tint: [0.0, 0.0, 0.0, 2.0] }
+    }
+
+    /// A building with its windows lit (someone's home and awake), and an optional tint for
+    /// any `leaves` parts.
+    pub fn lit(m: Mat4, tint: Option<[f32; 3]>) -> Self {
+        let t = tint.unwrap_or([0.0; 3]);
+        Instance { model: m.to_cols_array_2d(), tint: [t[0], t[1], t[2], if tint.is_some() { 4.0 } else { 3.0 }] }
     }
 }
 
@@ -67,17 +76,21 @@ fn walk(node: &gltf::Node, parent: Mat4, buffers: &[gltf::buffer::Data], out: &m
     let world = parent * local;
     if let Some(mesh) = node.mesh() {
         let name = node.name().or(mesh.name()).unwrap_or("");
-        let flag = if name.starts_with("flame") {
+        let node_flag = if name.starts_with("flame") {
             3.0
         } else if name.starts_with("leaves2") {
             2.0
         } else if name.starts_with("leaves1") {
             1.0
+        } else if name.starts_with("window") {
+            4.0
         } else {
             0.0
         };
         let normal_m = world.inverse().transpose();
         for prim in mesh.primitives() {
+            let mat_name = prim.material().name().unwrap_or("");
+            let flag = if node_flag == 0.0 && mat_name.starts_with("roof_") && !mat_name.ends_with("_dark") { 5.0 } else { node_flag };
             let reader = prim.reader(|b| Some(&buffers[b.index()]));
             let Some(positions) = reader.read_positions() else { continue };
             let positions: Vec<[f32; 3]> = positions.collect();

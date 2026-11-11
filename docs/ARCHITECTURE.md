@@ -210,6 +210,100 @@ Each person carries the following:
   - **Headless check:** `colony-run life --seeds 1..6 --years 16 [--chronicle]` follows colonies
     over the years.
 
+**Settling down (M6).** The numbers live in `data/base/buildings.ron`, `farming.ron`,
+`weather.ron` and `animals.ron`.
+- **Weather:** each day rolls a weather (clear, cloudy, rain, snow; snow only below freezing) from
+  the season and the region's rain.
+  - It shifts the day's temperature: clear nights are colder, cold snaps come in winter.
+  - Rain raises soil moisture, and dry warm days dry it out.
+  - Snow builds a snow cover that melts on warm days. The renderer draws that cover, instead of
+    snow following the calendar.
+  - Being out in rain or snow chills people, unless they're under a roof or by a fire.
+- **Buildings:** a shelter (sleeps 2), a house (a family), and a storehouse (stops food spoiling).
+  The fire pit is the camp's fire.
+  - **Building is a choice like any other.** Someone with no home, or the group short of
+    storage, can "start a house"; the sim picks a clear spot near the camp and makes a site.
+    Anyone can then work on it: they fetch the materials from the stores and build.
+  - **Homes:** a finished home belongs to the household that started it (a couple and their
+    young children). They can sleep there: a roof cuts the night's chill, so a family can get
+    through a winter night without the fire. Whoever sleeps at home is inside, so isn't drawn.
+    - Families build houses, people on their own a shelter. Grown children live in their
+      parents' house until they have a family of their own, then build one.
+    - **Homes change hands** once a day (`settle::rehouse`): a dead owner's home goes to their
+      partner or a child; a household that moved into a house lets its shelter go; an empty
+      home goes to an adult who has none, families first. An empty shelter falls down after 4
+      days, a house after 24.
+  - **Claims:** two people never start the same kind of building at once, or sow, tend or
+    harvest the same field (each sees what the others are doing in the tick's snapshot).
+  - **Order:** people settle before they farm. The first field waits for the first finished home.
+- **Farming (one crop, grain):**
+  - **Seed:** wild grain grows in meadows. Gathering it gives grain, and grain is also seed.
+  - **The field cycle:** clear a field (a 3×3 patch near the camp), sow it with seed in spring or
+    summer, tend it, and harvest it when ripe.
+  - **Growth** each day comes from the soil's moisture, fertility and temperature, and the season.
+    Tending keeps weeds down.
+  - **Frost** (the night's low, below -3 C) scorches unripe grain; 4 degrees lower kills it.
+  - **Harvest:** a ripe field gives up to 120 grain (less for poor health and unskilled hands).
+    From autumn, a field 60% grown can be cut early for that share, rather than lost to the
+    frost. In practice a spring sowing is cut in autumn: one harvest a year per field.
+  - **Stored food spoils:** berries quickly, grain slowly, meat fastest; a storehouse slows all
+    of it.
+  - **What stone is worth** to people rises while the camp needs it: for the storehouse, and for
+    spear points while there are fewer than two spears.
+- **Desire paths:** footfall already makes trails cheaper to route and faster to walk. Rough ground
+  (marsh, forest, hills) is slower off the trails.
+  - **The trip-time stat** (`Stats::walk`, per season): minutes of walking per 100 m, and the
+    same walks' minutes over unworn ground. Their ratio is the share of walking time the trails
+    save, which takes out the effect of where people happen to walk.
+- **Animals:** deer and rabbits live in herds, wander their range, graze, and flee people.
+  - **Population:** they give birth in spring, die of age and of winter crowding, and new
+    animals arrive from the map's edges while the population is below what the land holds.
+  - **Hunting:** with a spear, made from wood and stone by someone who knows stonework. This
+    gives stone, and so stonework, a use. Hunting yields meat, which is filling but spoils fast.
+  - **Fear:** hunted animals become warier, and a hunted area gets a "fear" that fades. Herds move
+    their range off frightened ground; calm herds' ranges drift over good ground.
+  - **Knowing where game is:** people remember a sighting for three days (herds keep to a
+    range), and a hunt follows the animal from there. A stale sighting lowers the expected
+    catch.
+- **Lens:** soil, showing fertility (stepped from poor to rich) with wetter ground darker.
+
+**Leisure, hobbies and beauty (M7).** The numbers live in `data/base/leisure.ron`.
+- **Free time** is choices like any other, picked when needs are met. Rest and play are
+  there already. M7 adds these:
+  - **stroll:** a walk to a pleasant spot and back. Curious people like it.
+  - **sing:** by the fire with others. Sociable people like it.
+  - **garden:** plant a flower bed by home, in spring or summer. Warm, steady people like it.
+  - **carve:** whittle a piece of wood. Curious, calm people like it. With skill, the carving is
+    a statue, set up near home or the fire.
+  - **decorate:** improve your home, one step at a time: stones laid to the door, flower boxes,
+    then carved posts. Diligent people like it.
+  - Each one eases fun (and singing eases social too). A person's personality makes each one
+    more or less appealing, so different people spend their free time differently.
+- **Hobbies emerge.** Doing a free-time activity adds to how much the person has enjoyed it:
+  more when it suits their personality, and more when they needed the fun.
+  - Past a threshold it becomes their hobby (two at most). It then appeals more and is more
+    fun, and it's shown on the person page and written in the chronicle.
+  - Gardening, carving and singing are skills that grow with practice. Better carvers make
+    statues that are more beautiful.
+- **Beauty** is a field over the map (`Sim::beauty`), from what people made and what grows:
+  - **Sources:** wild flowers, flower beds (both much less in winter), statues (more for a
+    skilled carver), and decorated homes (more for each step).
+  - **The field** is rebuilt whenever its sources change. It isn't saved: it's worked out again
+    from the saved world.
+  - **Flower beds fade** unless someone tends them; gardening tends a wilting bed before
+    planting a new one.
+  - **Everyday pastimes** (a stroll, a song) take more enjoyment to become a hobby than making
+    things does, so hobbies vary.
+  - **Free time waits** while the stores hold under a day and a half of food, or while the
+    person is hungry, thirsty or cold themselves.
+- **The "beauty matters" switch** (a world setting, saved, on by default; changed by a command
+  like any god act).
+  - **On:** being somewhere beautiful lifts mood ("Lovely here") and slowly eases boredom.
+    Strolls head for beautiful places.
+  - **Off:** nothing reads the field: not mood, needs, choices, or any other number. The beauty
+    lens still shows it. People still have hobbies and still make things, for the fun of it.
+- **Beauty lens:** the field as a warm glow on the ground, with what made it.
+
 ## 5. Actions
 
 - **What each action kind defines:**
@@ -361,6 +455,42 @@ the same format.
    resume later from the save.
 6. **Chat:** conversations use the same bridge on the Max setting.
 
+**As built (M8):**
+- **The bridge brain** (`crates/brains`, `SubagentBrain`) is a brain like any other, plugged in
+  beside rules.
+  - **Batches:** it collects decisions for 15 game minutes, or until 24 are waiting, then writes
+    them as one batch. The people waiting stand and think meanwhile.
+  - **Flushing:** when everyone who decides is waiting, the batch goes out at once.
+- **Pausing:** while a batch is out, time waits. `Sim::poll_brains` takes answers without moving
+  time on.
+  - **Headless:** `colony-run bridge` waits in lockstep.
+  - **The game:** on Max it pauses, with "Haiku is deciding N choices..." under the top bar.
+- **Checking:** an answer must name one of the numbered options (the possible ones, as the text
+  lists them). Anything else falls back to the rules brain, and the trace says so. Answers may
+  come wrapped in words or a code fence.
+- **`tools/haiku_driver`** sends each batch to `claude -p --model haiku` with every tool turned
+  off (it can only read and answer).
+  - **Retries:** three tries, then the batch is left to the rules brain.
+  - **Usage limits:** a limit message writes `stop.json`. The run saves, stops and prints how to
+    resume (`colony-run bridge --resume`).
+  - **In the game:** the game starts and stops the driver itself on Max.
+- **Speaking (god tool):** the person panel has "Speak to ...". On Low the words are read by
+  keyword (`data/base/speak.ron`) into the actions they ask for.
+  - **What it does:** the request lasts 6 game hours, and hearing it interrupts anything but
+    sleep or an urgent need. Options it asks for carry an `asked` feature, which the rules brain
+    likes (+1.0). The text a text brain sees opens with what they heard.
+  - **Ending:** doing one of the things asked ends the request ("The voice asked me to fetch
+    wood. I'll do it.").
+- **The AI budget** is in World settings. Low (rules) and Max (Haiku) work now. Medium and High
+  need M9's models and a local LLM; until then they act as Low.
+- **Chat on Low** is code templates (`sim::chat`). Starting to talk, someone says a line picked
+  from what's on their mind:
+  - food running short, hunger, cold, rain or snow, the fire out, being tired or lonely;
+  - their hobby, a lovely spot (only when beauty matters), their partner, the other's child;
+  - otherwise a greeting.
+  Singing by the fire gives a line of a song. Lines show as speech bubbles: a fixed size on
+  screen, and never overlapping (the one nearer the camera wins). They don't change any number.
+
 ## 9. Learned brains and training
 
 **The pipeline:** traces → datasets → training → evaluation → `brain/models/<name>@v<n>`.
@@ -372,10 +502,14 @@ the same format.
 
   Seeds are split into train and held-out sets.
 - **Scorer:**
-  - **Training:** tiny, so it trains on the Mac's CPU in seconds to minutes with Python scripts in
-    `brain/`.
-  - **Export:** weights are exported to a small file that Rust runs natively, with no runtime
-    dependency.
+  - **Training:** tiny, so it trains on the Mac's CPU in seconds. (Changed at M9: it trains in
+    Rust, `colony-run train`, instead of Python scripts in `brain/`. That needs no packages
+    installed, and the same code that trains it runs it.)
+  - **The model:** a linear score per option over the option's own features, plus each
+    situation feature weighted per kind of action (so "thirsty" can pull towards drinking and
+    away from chopping). It's trained by softmax over each decision's options.
+  - **Export:** weights in a small JSON file (`brain/models/<name>.json`) that Rust runs
+    natively, with no runtime dependency.
 - **Text model and Laya fine-tunes:** trained on Colab with the cheapest GPU (a T4), exported to
   ONNX (text model). No heavy training on the Mac.
 - **Evaluation,** two ways:
@@ -425,6 +559,17 @@ here.
   stepping. It runs one tile in under the banks, so the waterline follows the ground rather than
   tile edges. Deeper water is darker, with ripples.
 - **Lighting:** one sun with a shadow map, warm point lights (fires, windows) and a night grade.
+- **Buildings, fields and animals (M6)** are drawn fresh each frame from the sim (`ThingDraw`,
+  `AnimalDraw`), as dynamic instances.
+  - **Model flags:** a model's `window` parts glow when the instance is lit (someone lives
+    there, in the evening and before dawn); `roof_*` materials (except the dark ridges) take
+    snow in patches as the cover builds.
+  - **Fields** are drawn by the terrain shader (dug rows, three to a tile, flagged in the tile
+    texture), so they follow the ground. The grain is a model per tile, scaled by growth and
+    tinted green to gold.
+  - **Sites** show scaffolding with logs inside; from half built, the building stands inside it.
+  - **Animals** with a skinned model (the deer: a stag and two does) share the villager's
+    skinning; others (rabbits) are whole models that hop when they move.
 - **Pixel pass** (v1's look, kept):
   - **Pixel size:** 48 art pixels per tile, belonging to the world (24 until M5). An art pixel
     is always a whole number of screen pixels. `COLONY_ART_PER_TILE` overrides it, for
@@ -482,7 +627,20 @@ Art direction is in [STYLE.md](STYLE.md).
   - **Need colours:** body needs are teal `#6CC4A1`, mind needs purple `#B49CF0`.
   - **Score bars:** in traces, the brain's scores are gold and the rules' second opinion is blue.
 - **Lenses (M4):** traffic greys the world and shows footfall as heat in the ground shader;
-  mood and needs put a coloured ring under each person (the selection ring, tinted).
+  mood and needs put a coloured ring under each person (the selection ring, tinted). The
+  traffic lens also shows the trip-time stat. The soil lens (M6) is drawn in the ground shader
+  from the tile texture (fertility and moisture).
+- **Arena ledger (M9):** the Arena button (developer view) shows the last
+  `runs/arena/report.md` with each measure as bars, one colour per brain.
+- **World settings (M7):** the World button opens them. "Beauty matters" is the first; changing
+  it sends a command, so it's in the command log and replays.
+- **Beauty lens (M7):** the renderer puts the beauty field in the tile texture's moisture channel
+  while the lens is on.
+- **Hobbies (M7)** are on the person's Skills tab: their hobbies, and how close other activities
+  are to becoming one.
+- **Top bar (M6):** today's sky (and any cold snap) with the temperature; the tooltip gives snow
+  cover. The era reads "Era 1, foraging" until the first house or sown field, then "Era 2,
+  settling".
 - **Story feed (M4):** built from sim events, stamped with the tick they happened on
   (`Sim::take_timed_events`). The same thing happening to several people within three hours
   groups into one line ("3 people are very thirsty").
@@ -498,7 +656,13 @@ Art direction is in [STYLE.md](STYLE.md).
       of it.
     - **Fire:** fuel, who lit it, and how many can relight it.
     - **Stores:** contents and days of food.
-  - Buildings (M6) will join this list.
+    - **House or shelter (M6):** who lives there and who's asleep inside, what it keeps out;
+      a site shows how far along it is, what it still needs, and who's working on it.
+    - **Field:** the crop's growth, health and weeds, when it'll be ripe, and today's growing
+      conditions (moisture, richness, warmth, season), each with what's best.
+    - **Storehouse:** how slowly each food spoils with it.
+    - **Animal:** what it's doing, its herd, how wary it is, and how its kind is faring in the
+      land (count against what the land holds, how many have been hunted).
 - **Headless UI shots:** `colony --shot out.png --inspect K --tab log --trace N --lens traffic
   --detail analyst --cursor X,Y` renders any view without a window; `--bench` takes the same
   options to time frames with the UI open.

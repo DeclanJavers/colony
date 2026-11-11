@@ -51,6 +51,16 @@ pub struct Knowledge {
     pub stores: StoresBelief,
     /// Coarse map of where they've been: one bit per 16x16-tile cell.
     pub explored: Vec<bool>,
+    /// Animals they've seen lately (where, when).
+    pub animals: BTreeMap<crate::animals::AnimalId, KnownAnimal>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KnownAnimal {
+    pub kind: u16,
+    pub x: f32,
+    pub y: f32,
+    pub when: u64,
 }
 
 /// Cell size of the explored map.
@@ -66,6 +76,16 @@ impl Knowledge {
             water: Vec::new(),
             stores: StoresBelief { items: vec![0; items], fire_lit: false, fire_hours: 0.0, when: 0 },
             explored: vec![false; c * c],
+            animals: BTreeMap::new(),
+        }
+    }
+
+    /// Remember an animal where it was seen; keep the freshest few.
+    pub fn see_animal(&mut self, id: crate::animals::AnimalId, kind: u16, pos: (f32, f32), now: u64) {
+        self.animals.insert(id, KnownAnimal { kind, x: pos.0, y: pos.1, when: now });
+        if self.animals.len() > 16 {
+            let oldest = self.animals.iter().min_by_key(|(i, k)| (k.when, **i)).map(|(i, _)| *i).unwrap();
+            self.animals.remove(&oldest);
         }
     }
 

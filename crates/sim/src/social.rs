@@ -34,6 +34,10 @@ pub enum Effect {
     Tell { from: PersonId, to: PersonId, nodes: Vec<(Id<Node>, KnownNode)>, water: Vec<KnownWater> },
     /// Gossip: `who`'s feeling about `about` moves towards `toward`.
     Opinion { who: PersonId, about: PersonId, toward: f32 },
+    /// A hunter brought an animal down.
+    Kill { animal: crate::animals::AnimalId, by: PersonId },
+    /// Danger here: animals grow wary of this ground.
+    Scare { at: (f32, f32), amount: f32 },
 }
 
 fn mem(tick: u64, text: String, mood: String, about: Option<PersonId>, feeling: f32, importance: f32) -> Memory {
@@ -325,12 +329,7 @@ pub fn options(p: &Person, id: PersonId, ctx: &Ctx, state: &[(String, f32)], wal
 
 fn ctx_food_days(ctx: &Ctx) -> f32 {
     let c = ctx.c;
-    let berries = c.item("berries");
-    let daily = {
-        let h = &c.needs[c.need("hunger")];
-        (h.awake_per_hour * 16.0 + h.asleep_per_hour * 8.0) / c.items[berries].food
-    };
-    (ctx.camp.stores[berries] as f32 / (ctx.alive.max(1) as f32 * daily)).min(20.0)
+    (crate::actions::food_in(c, &ctx.camp.stores) / (ctx.alive.max(1) as f32 * crate::actions::daily_hunger(c))).min(20.0)
 }
 
 fn young_children(seen: &[Seen], id: PersonId) -> usize {
@@ -430,7 +429,11 @@ pub fn step(p: &mut Person, a: &mut crate::actions::Action, ctx: &mut Ctx) -> Op
                     return Some(Ending::Failed(format!("couldn't catch up with {}", o.name)));
                 }
                 match approach(p, a, ctx, o.pos) {
-                    Walk::Arrived => next_phase(a, ctx),
+                    Walk::Arrived => {
+                        // The opening line (chat by template, M8).
+                        p.said = Some((crate::chat::line(p, me, &o, ctx), ctx.tick));
+                        next_phase(a, ctx);
+                    }
                     Walk::NoPath => return Some(Ending::Failed(format!("couldn't reach {}", o.name))),
                     Walk::Moving => {}
                 }
@@ -773,8 +776,18 @@ fn finish_talk(p: &mut Person, with: PersonId, o: &Seen, courting: bool, ctx: &m
 // Applying effects
 
 /// Apply this tick's effects, in order.
+/// The world besides people that effects can change.
+pub struct World<'a> {
+    pub nodes: &'a mut Table<Node>,
+    pub map: &'a mut Map,
+    pub camp_fire: (f32, f32),
+    pub animals: &'a mut Table<crate::animals::Animal>,
+    pub wild: &'a mut crate::animals::Wildlife,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn apply(effects: Vec<Effect>, people: &mut Table<Person>, nodes: &mut Table<Node>, map: &mut Map, camp_fire: (f32, f32), c: &Content, tick: u64, rng: &mut Rng, events: &mut Vec<Event>) {
+pub fn apply(effects: Vec<Effect>, people: &mut Table<Person>, w: World, c: &Content, tick: u64, rng: &mut Rng, events: &mut Vec<Event>) {
+    let World { nodes, map, camp_fire, animals, wild } = w;
     let name = |people: &Table<Person>, id: PersonId| people.get(id).map_or("someone".to_string(), |p| p.name.clone());
     for e in effects {
         match e {
@@ -935,6 +948,15 @@ pub fn apply(effects: Vec<Effect>, people: &mut Table<Person>, nodes: &mut Table
                     }
                 }
             }
+            Effect::Kill { animal, by } => {
+                if let Some(a) = animals.remove(animal) {
+                    if let Some(h) = wild.hunted.get_mut(a.kind as usize) {
+                        *h += 1;
+                    }
+                    let _ = by;
+                }
+            }
+            Effect::Scare { at, amount } => wild.scare(map, at.0, at.1, amount),
             Effect::Opinion { who, about, toward } => {
                 if let Some(p) = people.get_mut(who)
                     && who != about

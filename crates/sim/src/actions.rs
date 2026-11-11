@@ -81,6 +81,19 @@ pub enum Kind {
     Play,
     Feed { child: PersonId },
     Bury { body: PersonId },
+    // Settling down (M6: settle.rs)
+    /// Start a building or field on a spot near the camp (then build it).
+    Found { def: u16, x: u16, y: u16 },
+    Build { site: crate::buildings::StructureId },
+    SleepHome { home: crate::buildings::StructureId },
+    Sow { field: crate::buildings::StructureId },
+    Tend { field: crate::buildings::StructureId },
+    Harvest { field: crate::buildings::StructureId },
+    MakeSpear,
+    Hunt { animal: crate::animals::AnimalId },
+    // Free time (M7: leisure.rs)
+    /// A free-time activity (data/base/leisure.ron order) at a spot.
+    Leisure { act: u16, x: u16, y: u16 },
 }
 
 impl Kind {
@@ -108,12 +121,21 @@ impl Kind {
             Kind::Play => "play".into(),
             Kind::Feed { .. } => "feed".into(),
             Kind::Bury { .. } => "bury".into(),
+            Kind::Found { def, .. } => format!("found_{}", c.buildings[*def as usize].id),
+            Kind::Build { .. } => "build".into(),
+            Kind::SleepHome { .. } => "sleep_home".into(),
+            Kind::Sow { .. } => "sow".into(),
+            Kind::Tend { .. } => "tend".into(),
+            Kind::Harvest { .. } => "harvest".into(),
+            Kind::MakeSpear => "make_spear".into(),
+            Kind::Hunt { .. } => "hunt".into(),
+            Kind::Leisure { act, .. } => c.leisure.acts[*act as usize].id.clone(),
         }
     }
 
     /// Is this something a person can drop for a moment when someone asks them something?
     pub fn leisurely(&self) -> bool {
-        matches!(self, Kind::Rest | Kind::Play | Kind::Explore { .. } | Kind::CheckStores | Kind::Watch { .. } | Kind::Talk { .. })
+        matches!(self, Kind::Rest | Kind::Play | Kind::Explore { .. } | Kind::CheckStores | Kind::Watch { .. } | Kind::Talk { .. } | Kind::Leisure { .. })
     }
 
     /// The need this action is for, if any (an urgent other need may interrupt it).
@@ -121,11 +143,11 @@ impl Kind {
         match self {
             Kind::Eat | Kind::EatAt { .. } => Some(c.need("hunger")),
             Kind::Drink { .. } | Kind::DrinkStored => Some(c.need("thirst")),
-            Kind::Sleep | Kind::SleepHere => Some(c.need("rest")),
+            Kind::Sleep | Kind::SleepHere | Kind::SleepHome { .. } => Some(c.need("rest")),
             Kind::Rest => Some(c.need("fun")),
             Kind::LightFire | Kind::TendFire => Some(c.need("warmth")),
             Kind::Talk { .. } | Kind::Court { .. } => Some(c.need("social")),
-            Kind::Play => Some(c.need("fun")),
+            Kind::Play | Kind::Leisure { .. } => Some(c.need("fun")),
             _ => None,
         }
     }
@@ -149,6 +171,9 @@ pub struct Action {
     pub pace: f32,
     /// Tick the current phase began (social actions time their phases from it).
     pub mark: u64,
+    /// How bored they were when a free-time activity began (M7: it counts towards a hobby).
+    #[serde(default)]
+    pub fun_start: f32,
 }
 
 fn one() -> f32 {
@@ -183,6 +208,18 @@ pub struct Ctx<'a> {
     pub seen: &'a [Seen],
     /// Changes to other people, applied after everyone's turn.
     pub effects: &'a mut Vec<Effect>,
+    /// Buildings and fields (builders work on them directly).
+    pub structures: &'a mut crate::ids::Table<crate::buildings::Structure>,
+    /// Where each kind of building would go if started now.
+    pub sites: &'a [Option<(u16, u16)>],
+    pub animals: &'a crate::ids::Table<crate::animals::Animal>,
+    /// Tiles walked, minutes spent walking, and the minutes the same walking would have taken
+    /// with no trails, this tick (for the trip-time stat).
+    pub walked: &'a mut (f32, f32, f32),
+    /// The beauty field when beauty matters (M7); empty when it doesn't.
+    pub beauty: &'a [f32],
+    /// What people made in their free time.
+    pub works: &'a mut Vec<crate::sim::Work>,
 }
 
 /// Practise a skill; tell everyone when it reaches a new level. A taught skill only grows for
@@ -229,14 +266,14 @@ fn centre(t: (u16, u16)) -> (f32, f32) {
     (t.0 as f32 + 0.5, t.1 as f32 + 0.5)
 }
 
-/// Air temperature at a tile now: the map's mean, the season, and the day's swing (warmest at
-/// 15:00, coldest at 03:00).
+/// Air temperature at a tile now: the map's mean, the season, the day's swing (warmest at
+/// 15:00, coldest at 03:00), and the weather (drift, cold snaps, clear cold nights).
 pub fn air_temp(c: &Content, map: &Map, x: u32, y: u32, tick: u64) -> f32 {
     let cal = &c.calendar;
     let i = map.idx(x.min(map.size - 1), y.min(map.size - 1));
     let hour = cal.minute_of_day(tick) as f32 / 60.0;
     let swing = ((hour - 15.0) / 24.0 * std::f32::consts::TAU).cos() * c.people.day_night_swing;
-    map.temperature[i] + c.people.season_temp[cal.season_index(tick)] + swing
+    map.temperature[i] + c.people.season_temp[cal.season_index(tick)] + swing + map.weather.offset + map.weather.sky_temp(c, hour)
 }
 
 /// How strongly someone's body clock says "sleep" now: 1 at night, 0 by day, with an hour's ramp.
@@ -257,12 +294,27 @@ pub fn sleepy(c: &Content, tick: u64, chronotype: f32) -> f32 {
 // ---------------------------------------------------------------------------------------------
 // Offering options
 
-const ITEMS: [&str; 5] = ["berries", "water", "wood", "sticks", "stone"];
+const ITEMS: [&str; 8] = ["berries", "water", "wood", "sticks", "stone", "grain", "meat", "spear"];
+
+/// What people eat, in the order they eat it: what spoils fastest first.
+pub fn foods(c: &Content) -> [usize; 3] {
+    [c.item("meat"), c.item("berries"), c.item("grain")]
+}
+
+/// Hunger one person works up in a day (in units of an item's `food`).
+pub fn daily_hunger(c: &Content) -> f32 {
+    let h = &c.needs[c.need("hunger")];
+    h.awake_per_hour * 16.0 + h.asleep_per_hour * 8.0
+}
+
+/// How much hunger some stock of items could feed.
+pub fn food_in(c: &Content, items: &[u32]) -> f32 {
+    foods(c).iter().map(|&f| items[f] as f32 * c.items[f].food).sum()
+}
 
 /// Berries one person eats in a day.
 fn daily_berries(c: &Content) -> f32 {
-    let h = &c.needs[c.need("hunger")];
-    (h.awake_per_hour * 16.0 + h.asleep_per_hour * 8.0) / c.items[c.item("berries")].food
+    daily_hunger(c) / c.items[c.item("berries")].food
 }
 
 /// The situation as named numbers: needs, the stores as they believe them, how much each item is
@@ -296,7 +348,8 @@ fn state_features(p: &Person, ctx: &Ctx) -> Vec<(String, f32)> {
     f.push(("fire_lit".into(), b.fire_lit as u8 as f32));
     f.push(("fire_hours".into(), if b.fire_lit { b.fire_hours } else { 0.0 }));
     // What each item is worth to the group now (shortage against a target for the season).
-    let food_days = (b.items[c.item("berries")] + p.carry[c.item("berries")]) as f32 / (n * daily_berries(c));
+    let food_days = (food_in(c, &b.items) + food_in(c, &p.carry)) / (n * daily_hunger(c));
+    let _ = daily_berries;
     let food_target = c.actions.food_target_days[season.min(3)];
     let food_short = (1.0 - food_days / food_target).clamp(0.0, 1.0);
     let fuel = b.items[c.item("wood")] as f32 * c.items[c.item("wood")].fuel
@@ -313,11 +366,29 @@ fn state_features(p: &Person, ctx: &Ctx) -> Vec<(String, f32)> {
     // Without kindling there's no fire: sticks matter a lot then, more so before cold nights.
     let kindling = if b.items[c.item("sticks")] < 3 { 0.05 + 0.12 * night_cold } else { 0.0 };
     f.push(("value.berries".into(), 0.12 * food_short + 0.01));
+    // Grain keeps (and is seed); meat is filling but spoils.
+    f.push(("value.grain".into(), 0.12 * food_short * 1.15 + 0.015));
+    // Meat is prized (a change from berries and grain) even when the stores are full.
+    f.push(("value.meat".into(), 0.12 * food_short * 2.0 + 0.04));
+    f.push(("value.spear".into(), 0.0));
     f.push(("value.water".into(), 0.04 * water_short));
     f.push(("value.wood".into(), (0.04 + 0.1 * night_cold) * fuel_short + 0.003));
     f.push(("value.sticks".into(), (0.015 + 0.03 * night_cold) * fuel_short + 0.002 + kindling));
     f.push(("night_cold".into(), night_cold));
-    f.push(("value.stone".into(), 0.004));
+    // Stone is wanted for a storehouse (once the camp is big enough for one) and spear points.
+    let stone = c.item("stone");
+    let store_k = c.building("storehouse");
+    let store_stone = match ctx.structures.iter().find(|(_, s)| s.kind == store_k) {
+        Some((_, s)) => s.owed(c).iter().filter(|(i, _)| *i == stone).map(|(_, n)| *n).sum::<u32>(),
+        None if ctx.alive >= 8 => c.buildings[store_k as usize].cost.iter().filter(|(i, _)| i == "stone").map(|(_, n)| *n).sum(),
+        None => 0,
+    };
+    let spears = b.items[c.item("spear")] + p.carry[c.item("spear")];
+    let spear_stone = 2u32.saturating_sub(spears) * c.actions.spear.stone;
+    let stone_want = (store_stone + spear_stone) as f32;
+    let stone_short = if stone_want > 0.0 { (1.0 - b.items[stone] as f32 / stone_want).clamp(0.0, 1.0) } else { 0.0 };
+    f.push(("value.stone".into(), 0.004 + 0.06 * stone_short));
+    f.push(("stone_short".into(), stone_short));
     f.push(("food_days".into(), food_days.min(20.0)));
     f.push(("fuel_hours".into(), fuel.min(100.0)));
     f.push(("winter".into(), (season == 3) as u8 as f32 + (season == 2) as u8 as f32 * 0.5));
@@ -428,13 +499,14 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
     }
     // Food
     let berries = c.item("berries");
-    let food = p.carry[berries] + b.items[berries];
-    if food > 0 {
-        let d = if p.carry[berries] > 0 { 0.0 } else { to_camp };
+    let carried = food_in(c, &p.carry);
+    let food = carried + food_in(c, &b.items);
+    if food > 0.0 {
+        let d = if carried > 0.0 { 0.0 } else { to_camp };
         opts.push(choice("Eat".into(), Kind::Eat, c, vec![
             ("dist", d),
             ("minutes", walk(d) + c.actions.eat_minutes as f32),
-            ("relief.hunger", need("hunger").min(food as f32 * c.items[berries].food)),
+            ("relief.hunger", need("hunger").min(food)),
             ("gain.berries", -(need("hunger") / c.items[berries].food).ceil().min(b.items[berries] as f32)),
         ]));
     } else {
@@ -526,19 +598,35 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
     }
     // Talking, courting, family, teaching, answering what others asked (social.rs).
     opts.extend(social::options(p, id, ctx, &state, &walk));
+    opts.extend(crate::settle::options(p, id, ctx, &state, &walk));
+    opts.extend(crate::leisure::options(p, id, ctx, &walk));
     // Children choose from a short list.
     let me = crate::family::find(ctx.seen, id);
     if me.is_some_and(|m| m.stage == Stage::Child) {
         let help = me.is_some_and(|m| m.age >= c.life.help_age);
         opts.retain(|o| match &o.kind {
-            Kind::Gather { def, .. } => help && matches!(c.actions.gather[*def as usize].item.as_str(), "berries" | "sticks"),
+            Kind::Gather { def, .. } => help && matches!(c.actions.gather[*def as usize].item.as_str(), "berries" | "sticks" | "grain"),
             Kind::FetchWater { .. } | Kind::LightFire | Kind::TendFire | Kind::Explore { .. } | Kind::CheckStores | Kind::SleepHere => false,
+            Kind::Found { .. } | Kind::Build { .. } | Kind::Sow { .. } | Kind::Tend { .. } | Kind::Harvest { .. } | Kind::MakeSpear | Kind::Hunt { .. } => false,
             Kind::Ask { ask, .. } => *ask == Ask::Food,
             Kind::Answer { ask, .. } => matches!(ask, Ask::Teach { .. }),
             _ => true,
         });
     }
-    let text = describe(p, ctx, &state, &opts);
+    // What they heard you say (M8): the options it asks for say so, and so does the text.
+    let mut text = describe(p, ctx, &state, &opts);
+    if let Some(h) = p.heard.as_ref().filter(|h| ctx.tick < h.until) {
+        let mut any = false;
+        for o in opts.iter_mut().filter(|o| o.possible) {
+            if h.acts.contains(&o.kind.name(c)) {
+                o.features.push(("asked".into(), 1.0));
+                any = true;
+            }
+        }
+        if any {
+            text = format!("A voice from the sky said to you: \"{}\" (it seems to want you to {}).\n{text}", h.words, h.read_as.join(" or "));
+        }
+    }
     DecisionRequest { person: id, tick: ctx.tick, state, options: opts, text }
 }
 
@@ -653,6 +741,29 @@ pub fn thought(req: &DecisionRequest, o: &Choice, c: &Content) -> String {
         Kind::Play => "I want to play!".into(),
         Kind::Feed { .. } => if o.f("kin") >= 1.0 { "My little one is hungry.".into() } else { "That child needs feeding.".into() },
         Kind::Bury { .. } => if o.f("kin") >= 0.5 { "I have to lay them to rest.".into() } else { "Someone has to bury them.".into() },
+        Kind::Found { def, .. } => match c.buildings[*def as usize].id.as_str() {
+            "house" => "We need a proper roof over our heads. I'll start a house.".into(),
+            "shelter" => "Sleeping out is no life. I'll put up a shelter.".into(),
+            "storehouse" => "Too much food goes bad in the open. We need a storehouse.".into(),
+            _ => "If we plant some of this grain, we won't have to go looking for food.".into(),
+        },
+        Kind::Build { .. } => if o.f("mine") > 0.0 { "I want our home finished before the cold.".into() } else if o.f("field") > 0.0 { "This field won't clear itself.".into() } else { "I'll lend a hand with the building.".into() },
+        Kind::SleepHome { .. } => "Home to bed.".into(),
+        Kind::Sow { .. } => "Time to get the seed in the ground.".into(),
+        Kind::Tend { .. } => "The weeds are choking the grain.".into(),
+        Kind::Harvest { .. } => "The grain is ripe. Let's bring it in.".into(),
+        Kind::MakeSpear => "A good spear and we could eat meat.".into(),
+        Kind::Hunt { .. } => if req.s("food_days") < 2.0 { "We need food. I'll see if I can bring down something.".into() } else { "I saw game nearby. Meat would make a change.".into() },
+        Kind::Leisure { act, .. } => {
+            let hobby = o.f("hobby") > 0.0;
+            match c.leisure.acts[*act as usize].id.as_str() {
+                "stroll" => if o.f("beauty") > 0.25 { "It's lovely over there. I'll take a walk.".into() } else { "I'll stretch my legs for a bit.".into() },
+                "sing" => if o.f("company") > 0.3 { "Everyone's by the fire. Let's have a song.".into() } else { "I feel like singing.".into() },
+                "garden" => if hobby { "The flowers want planting. I love this.".into() } else { "A few flowers would cheer the place up.".into() },
+                "carve" => if hobby { "I've had a figure in mind all day. Time to carve it.".into() } else { "I'll whittle something while there's time.".into() },
+                _ => "Home could look a little nicer.".into(),
+            }
+        }
     }
 }
 
@@ -674,6 +785,7 @@ pub fn start(p: &Person, choice: &Choice, tick: u64) -> Action {
         stored: vec![0; p.carry.len()],
         pace: 1.0,
         mark: tick,
+        fun_start: 0.0,
     }
 }
 
@@ -710,6 +822,9 @@ pub(crate) fn walk(p: &mut Person, a: &mut Action, ctx: &mut Ctx, to: (u16, u16)
     let want = 0.5 * (walk_pace(ctx.map, here) + walk_pace(ctx.map, ahead));
     a.pace += (want - a.pace) * 0.35;
     let mut budget = ctx.c.people.walk_speed * ctx.c.calendar.minutes_per_tick as f32 * a.pace;
+    ctx.walked.1 += ctx.c.calendar.minutes_per_tick as f32;
+    let untrodden = 0.5 * (crate::path::walk_pace_untrodden(ctx.map, here) + crate::path::walk_pace_untrodden(ctx.map, ahead));
+    ctx.walked.2 += ctx.c.calendar.minutes_per_tick as f32 * (want / untrodden.max(0.05)).min(2.0);
     while budget > 0.0 {
         let Some(&next) = a.path.get(a.path_i) else {
             a.anim = Anim::Idle;
@@ -722,6 +837,7 @@ pub(crate) fn walk(p: &mut Person, a: &mut Action, ctx: &mut Ctx, to: (u16, u16)
         if d > 1e-4 {
             p.facing = dx.atan2(dy);
         }
+        ctx.walked.0 += step.min(d);
         if step >= d {
             p.pos = target;
             budget -= d;
@@ -927,9 +1043,8 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
         }
         Kind::DrinkStored | Kind::Eat | Kind::CheckStores => {
             let eating = matches!(a.kind, Kind::Eat);
-            let berries = c.item("berries");
             if a.phase == 0 {
-                if eating && p.carry[berries] > 0 {
+                if eating && food_in(c, &p.carry) > 0.0 {
                     a.phase = 1;
                 } else {
                     match walk(p, a, ctx, camp_tile, true) {
@@ -957,18 +1072,22 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                 match a.kind {
                     Kind::Eat => {
                         let h = c.need("hunger");
-                        let per = c.items[berries].food;
                         let mut ate = 0;
-                        while p.needs[h] > 0.08 {
-                            if p.carry[berries] > 0 {
-                                p.carry[berries] -= 1;
-                            } else if ctx.camp.stores[berries] > 0 {
-                                ctx.camp.stores[berries] -= 1;
-                            } else {
-                                break;
+                        'meal: while p.needs[h] > 0.08 {
+                            // What they carry first, then the stores; meat, then berries, then grain.
+                            for f in foods(c) {
+                                if p.carry[f] > 0 {
+                                    p.carry[f] -= 1;
+                                } else if ctx.camp.stores[f] > 0 && food_in(c, &p.carry) <= 0.0 {
+                                    ctx.camp.stores[f] -= 1;
+                                } else {
+                                    continue;
+                                }
+                                p.needs[h] = (p.needs[h] - c.items[f].food).max(0.0);
+                                ate += 1;
+                                continue 'meal;
                             }
-                            p.needs[h] = (p.needs[h] - per).max(0.0);
-                            ate += 1;
+                            break;
                         }
                         if ate == 0 {
                             return Some(Ending::Failed("there was nothing to eat".into()));
@@ -994,8 +1113,23 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                 return Some(Ending::Done);
             }
         }
-        Kind::Sleep | Kind::SleepHere | Kind::Rest => {
-            let sleeping = matches!(a.kind, Kind::Sleep | Kind::SleepHere);
+        Kind::Sleep | Kind::SleepHere | Kind::Rest | Kind::SleepHome { .. } => {
+            let sleeping = matches!(a.kind, Kind::Sleep | Kind::SleepHere | Kind::SleepHome { .. });
+            if a.phase == 0
+                && let Kind::SleepHome { home } = a.kind
+            {
+                let Some(h) = ctx.structures.get(home).filter(|h| h.done()) else { return Some(Ending::Failed("the home was gone".into())) };
+                let (door, kind) = (h.door(c), h.kind);
+                match walk(p, a, ctx, door, false) {
+                    Walk::Arrived | Walk::NoPath => {
+                        a.phase = 1;
+                        p.asleep = true;
+                        p.indoors = Some(kind);
+                    }
+                    Walk::Moving => {}
+                }
+                return None;
+            }
             if a.phase == 0 && matches!(a.kind, Kind::SleepHere) {
                 a.phase = 1;
                 p.asleep = true;
@@ -1120,6 +1254,10 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
         Kind::Talk { .. } | Kind::Court { .. } | Kind::Ask { .. } | Kind::Answer { .. } | Kind::Watch { .. } | Kind::Play | Kind::Feed { .. } | Kind::Bury { .. } => {
             return social::step(p, a, ctx);
         }
+        Kind::Found { .. } | Kind::Build { .. } | Kind::Sow { .. } | Kind::Tend { .. } | Kind::Harvest { .. } | Kind::MakeSpear | Kind::Hunt { .. } => {
+            return crate::settle::step(p, a, ctx);
+        }
+        Kind::Leisure { .. } => return crate::leisure::step(p, a, ctx),
         Kind::Explore { x, y } => match walk(p, a, ctx, (x, y), false) {
             Walk::Arrived => {
                 practise(p, c.skill("exploring"), (ctx.tick - a.started) as f32 * tm, ctx);

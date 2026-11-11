@@ -203,6 +203,14 @@ pub struct RestDef {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct SpearDef {
+    pub minutes: u32,
+    pub wood: u32,
+    pub stone: u32,
+    pub breaks: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct ActionParams {
     pub gather: Vec<GatherDef>,
     pub drink_minutes: u32,
@@ -215,7 +223,86 @@ pub struct ActionParams {
     pub check_stores_minutes: u32,
     pub berry_regrow: Vec<f32>,
     pub winter_rot: f32,
+    pub spear: SpearDef,
+    pub hunt_minutes: u32,
+    pub lost_at: f32,
     pub food_target_days: Vec<f32>,
+}
+
+/// Weather (data/base/weather.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct WeatherParams {
+    pub wet_chance: Vec<f32>,
+    pub cloud_chance: Vec<f32>,
+    pub clear_night: f32,
+    pub cloudy: f32,
+    pub drift: f32,
+    pub snap_chance: f32,
+    pub snap_cold: f32,
+    pub snap_days: u32,
+    pub rain_wet: f32,
+    pub dry_base: f32,
+    pub dry_per_c: f32,
+    pub damp_near_water: f32,
+    pub snow_fall: f32,
+    pub melt_per_c: f32,
+    pub wet_chill: f32,
+}
+
+/// A kind of building (data/base/buildings.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct BuildingDef {
+    pub id: String,
+    pub name: String,
+    pub w: u16,
+    pub h: u16,
+    pub blocks: bool,
+    pub cost: Vec<(String, u32)>,
+    pub minutes: u32,
+    pub sleeps: u32,
+    pub chill: f32,
+    pub model: String,
+}
+
+/// Farming (data/base/farming.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct FarmParams {
+    pub crop: String,
+    pub seed: u32,
+    pub harvest: u32,
+    pub days_to_ripe: f32,
+    pub sow: Vec<bool>,
+    pub best_temp: (f32, f32),
+    pub best_moisture: (f32, f32),
+    pub frost: f32,
+    pub weeds_per_day: f32,
+    pub sow_minutes: u32,
+    pub tend_minutes: u32,
+    pub harvest_minutes: u32,
+    pub overripe_loss: f32,
+    /// From autumn, a field this far grown can be cut early (for that share of the grain)
+    /// rather than lost to the frost.
+    pub early_harvest: f32,
+    pub spoil: Vec<(String, f32, f32)>,
+}
+
+/// A kind of animal (data/base/animals.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct AnimalDef {
+    pub id: String,
+    pub name: String,
+    pub herd: (u32, u32),
+    pub speed: f32,
+    pub flee: f32,
+    pub wary: f32,
+    pub range: f32,
+    pub lifespan_days: u32,
+    pub births: f32,
+    pub per_1000_tiles: f32,
+    pub meat: u32,
+    pub hit: f32,
+    pub model: String,
+    pub habitats: Vec<String>,
 }
 
 /// Families and society (data/base/life.ron).
@@ -270,6 +357,70 @@ pub struct Names {
     pub male: Vec<String>,
 }
 
+/// A free-time activity (data/base/leisure.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct LeisureDef {
+    pub id: String,
+    pub name: String,
+    pub minutes: u32,
+    /// Fun (and social) eased by doing it once.
+    pub fun: f32,
+    pub social: f32,
+    pub skill: Option<String>,
+    /// Personality traits that make it appeal, and how much.
+    pub traits: Vec<(String, f32)>,
+    /// Materials taken from the stores.
+    pub wood: u32,
+    pub stone: u32,
+    /// Seasons it can be done in (spring, summer, autumn, winter).
+    pub seasons: Vec<bool>,
+    /// Enjoyment past which it becomes someone's hobby.
+    pub hobby_joy: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct BeautyParams {
+    /// Node kind, beauty at the source, radius (tiles), beauty in winter.
+    pub sources: Vec<(String, f32, f32, f32)>,
+    pub statue_per_level: f32,
+    pub decor: Vec<f32>,
+    pub decor_radius: f32,
+    pub mood: f32,
+    pub fun_per_hour: f32,
+}
+
+/// Free time, hobbies and beauty (data/base/leisure.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct LeisureParams {
+    pub acts: Vec<LeisureDef>,
+    pub max_hobbies: usize,
+    pub hobby_appeal: f32,
+    pub hobby_fun: f32,
+    pub statue_level: u32,
+    pub place_radius: u16,
+    pub beauty: BeautyParams,
+}
+
+impl LeisureParams {
+    pub fn act(&self, id: &str) -> u16 {
+        self.acts.iter().position(|a| a.id == id).unwrap_or_else(|| panic!("no free-time activity '{id}'")) as u16
+    }
+}
+
+/// Speaking to someone (data/base/speak.ron): words to the actions they ask for.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SpeakTopic {
+    pub words: Vec<String>,
+    pub acts: Vec<String>,
+    pub read: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SpeakParams {
+    pub hours: f32,
+    pub topics: Vec<SpeakTopic>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Content {
     pub calendar: Calendar,
@@ -284,6 +435,12 @@ pub struct Content {
     pub actions: ActionParams,
     pub names: Names,
     pub life: LifeParams,
+    pub weather: WeatherParams,
+    pub buildings: Vec<BuildingDef>,
+    pub farming: FarmParams,
+    pub animals: Vec<AnimalDef>,
+    pub leisure: LeisureParams,
+    pub speak: SpeakParams,
     pub hash: u64,
 }
 
@@ -299,6 +456,12 @@ const ITEMS: &str = include_str!("../../../data/base/items.ron");
 const ACTIONS: &str = include_str!("../../../data/base/actions.ron");
 const NAMES: &str = include_str!("../../../data/base/names.ron");
 const LIFE: &str = include_str!("../../../data/base/life.ron");
+const WEATHER: &str = include_str!("../../../data/base/weather.ron");
+const BUILDINGS: &str = include_str!("../../../data/base/buildings.ron");
+const FARMING: &str = include_str!("../../../data/base/farming.ron");
+const ANIMALS: &str = include_str!("../../../data/base/animals.ron");
+const LEISURE: &str = include_str!("../../../data/base/leisure.ron");
+const SPEAK: &str = include_str!("../../../data/base/speak.ron");
 
 fn parse<T: for<'de> Deserialize<'de>>(name: &str, text: &str) -> T {
     ron::from_str(text).unwrap_or_else(|e| panic!("data/base/{name}: {e}"))
@@ -308,7 +471,7 @@ impl Content {
     /// The base game's content.
     pub fn base() -> Self {
         let mut all = Vec::new();
-        for t in [CALENDAR, BIOMES, NODES, WORLDGEN, NEEDS, PEOPLE, GENES, SKILLS, ITEMS, ACTIONS, NAMES, LIFE] {
+        for t in [CALENDAR, BIOMES, NODES, WORLDGEN, NEEDS, PEOPLE, GENES, SKILLS, ITEMS, ACTIONS, NAMES, LIFE, WEATHER, BUILDINGS, FARMING, ANIMALS, LEISURE, SPEAK] {
             all.extend_from_slice(t.as_bytes());
         }
         Content {
@@ -324,6 +487,12 @@ impl Content {
             actions: parse("actions.ron", ACTIONS),
             names: parse("names.ron", NAMES),
             life: parse("life.ron", LIFE),
+            weather: parse("weather.ron", WEATHER),
+            buildings: parse("buildings.ron", BUILDINGS),
+            farming: parse("farming.ron", FARMING),
+            animals: parse("animals.ron", ANIMALS),
+            leisure: parse("leisure.ron", LEISURE),
+            speak: parse("speak.ron", SPEAK),
             hash: crate::hash::fnv64(&all),
         }
     }
@@ -347,6 +516,20 @@ impl Content {
     /// Ticks in one year of someone's age.
     pub fn ticks_per_age_year(&self) -> f64 {
         (self.calendar.ticks_per_day() * self.calendar.days_per_year()) as f64 / self.life.age_per_year as f64
+    }
+
+    pub fn building(&self, id: &str) -> u16 {
+        self.buildings.iter().position(|b| b.id == id).unwrap_or_else(|| panic!("no building '{id}'")) as u16
+    }
+
+    pub fn animal(&self, id: &str) -> u16 {
+        self.animals.iter().position(|a| a.id == id).unwrap_or_else(|| panic!("no animal '{id}'")) as u16
+    }
+
+    /// The share of a stored item that spoils per day: (in the open, in a storehouse).
+    pub fn spoil(&self, item: usize) -> (f32, f32) {
+        let id = &self.items[item].id;
+        self.farming.spoil.iter().find(|(i, _, _)| i == id).map_or((0.0, 0.0), |(_, a, b)| (*a, *b))
     }
 
     pub fn node_kind(&self, id: &str) -> u16 {

@@ -658,6 +658,9 @@ pub fn start_site(ctx: &mut GenCtx) {
 
 /// Terrace levels for building and drawing.
 pub fn finish(ctx: &mut GenCtx) {
+    for i in 0..ctx.map.near_water.len() {
+        ctx.map.near_water[i] = !ctx.map.water[i].is_water() && ctx.dist_fresh[i] <= 2;
+    }
     let m = &mut ctx.map;
     for i in 0..m.level.len() {
         let s = if m.water[i].is_water() { m.water_level[i] } else { m.elevation[i] };

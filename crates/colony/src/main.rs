@@ -73,6 +73,27 @@ fn assets_dir() -> PathBuf {
     if here.join("models").exists() { here } else { PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets")) }
 }
 
+/// Where each person's head is on screen (last frame's view), for speech bubbles.
+fn heads(r: &render::Renderer, sim: &Sim, people: &[render::people::PersonDraw], win: (u32, u32)) -> Vec<(sim::PersonId, (f32, f32))> {
+    let ids: std::collections::BTreeMap<u64, sim::PersonId> = sim.people.iter().map(|(id, _)| (view::key(id), id)).collect();
+    people
+        .iter()
+        .filter_map(|d| {
+            let id = *ids.get(&d.key)?;
+            let s = r.to_screen(d.pos + Vec3::new(0.0, 1.65 * d.size * d.height, 0.0), win)?;
+            Some((id, (s.x, s.y)))
+        })
+        .collect()
+}
+
+/// What's drawn of the sim in a frame.
+struct Scene {
+    people: Vec<render::people::PersonDraw>,
+    camp: render::CampDraw,
+    things: Vec<render::ThingDraw>,
+    animals: Vec<render::AnimalDraw>,
+}
+
 /// The sim, plus the clock that drives it in real time.
 pub struct World {
     pub sim: Sim,
@@ -87,6 +108,16 @@ pub struct World {
     pub pause_on: Option<(sim::PersonId, u64)>,
     /// Set when a watched decision paused the game: open that trace.
     pub caught: Option<sim::PersonId>,
+    /// The AI budget (M8): which brain makes everyday decisions.
+    pub ai: hud::Ai,
+    /// On Max: the Haiku driver answering the bridge (a child process), and its folder.
+    driver: Option<(std::process::Child, PathBuf)>,
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        self.stop_driver();
+    }
 }
 
 /// Game minutes per real second at 1x.
@@ -104,12 +135,78 @@ impl World {
         }
         let prev = view::poses(&sim);
         let ground = render::terrain::Ground::new(&sim.map);
-        World { sim, paused: false, speed: 1.0, carry: 0.0, prev, ground, pause_on: None, caught: None }
+        World { sim, paused: false, speed: 1.0, carry: 0.0, prev, ground, pause_on: None, caught: None, ai: hud::Ai::Low, driver: None }
+    }
+
+    /// Change the AI budget. Max sends everyday decisions to Claude Haiku through the bridge, with
+    /// `tools/haiku_driver` answering (it uses your Claude plan); Low is the rules brain, no servers.
+    fn set_ai(&mut self, ai: hud::Ai) {
+        if ai == self.ai {
+            return;
+        }
+        match ai {
+            hud::Ai::Max => {
+                // The repository root (where assets/, tools/ and runs/ are), wherever we run from.
+                let root = assets_dir().parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                let dir = root.join(format!("runs/live-{}/bridge", self.sim.seed));
+                let brain = match brains::SubagentBrain::new(&dir) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("colony: can't start the bridge in {}: {e}", dir.display());
+                        return;
+                    }
+                };
+                let driver = std::process::Command::new(root.join("tools/haiku_driver")).arg(&dir).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+                match driver {
+                    Ok(child) => self.driver = Some((child, dir)),
+                    Err(e) => {
+                        eprintln!("colony: can't start tools/haiku_driver: {e}");
+                        return;
+                    }
+                }
+                self.sim.brains.map.insert("subagent".into(), Box::new(brain));
+                self.ai = ai;
+            }
+            _ => {
+                self.stop_driver();
+                self.ai = ai;
+            }
+        }
+        self.assign_brains();
+    }
+
+    /// Everyone's brain follows the AI budget (newborns too).
+    fn assign_brains(&mut self) {
+        let want = if self.ai == hud::Ai::Max && self.driver.is_some() { "subagent" } else { "rules" };
+        let ids: Vec<sim::PersonId> = self.sim.people.iter().filter(|(_, p)| p.alive && p.brain != want).map(|(id, _)| id).collect();
+        for id in ids {
+            self.sim.set_brain(id, want);
+        }
+    }
+
+    fn stop_driver(&mut self) {
+        if let Some((mut child, _)) = self.driver.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
     fn advance(&mut self, dt: f32) {
         if self.paused {
             return;
+        }
+        // On Max, time waits while Haiku decides (it answers in a few seconds).
+        if self.sim.brains_in_flight() > 0 {
+            self.sim.poll_brains();
+            self.carry = 0.0;
+            return;
+        }
+        if self.ai == hud::Ai::Max {
+            self.assign_brains();
+            if let Some((why, _)) = self.sim.brains_stopped().map(|(_, w)| (w, ())) {
+                eprintln!("colony: Haiku stopped ({why}); back to the rules brain");
+                self.set_ai(hud::Ai::Low);
+            }
         }
         self.carry += dt * MINUTES_PER_SECOND * self.speed / self.sim.content.calendar.minutes_per_tick as f32;
         let n = self.carry.floor();
@@ -157,15 +254,9 @@ impl World {
         let cal = &self.sim.content.calendar;
         let t = self.sim.tick;
         let season = cal.season_index(t);
-        let day_in_season = cal.day_of_season(t) - 1;
         let hour = self.hour();
-        // Snow settles over the first half-day of winter and melts over the first of spring.
-        let snow = match (season, day_in_season) {
-            (3, 0) => (hour / 12.0).min(1.0),
-            (3, _) => 1.0,
-            (0, 0) => (1.0 - hour / 12.0).max(0.0),
-            _ => 0.0,
-        };
+        // Snow cover comes from the weather (it builds on snowy days and melts on warm ones).
+        let snow = self.sim.map.weather.snow.clamp(0.0, 1.0);
         Lighting::at(hour, season, snow)
     }
 
@@ -174,15 +265,21 @@ impl World {
     }
 
     /// Everything the renderer needs from the sim this frame.
-    fn scene(&self, cam: &Camera, selected: Option<sim::PersonId>, walk_ref: f32, lens: hud::Lens) -> (Vec<render::people::PersonDraw>, render::CampDraw) {
+    fn scene(&self, cam: &Camera, selected: Option<sim::PersonId>, r: &render::Renderer, lens: hud::Lens) -> Scene {
         let alpha = if self.paused { 1.0 } else { self.carry.clamp(0.0, 1.0) };
         let tps = if self.paused { 0.0 } else { MINUTES_PER_SECOND * self.speed / self.sim.content.calendar.minutes_per_tick as f32 };
-        let r = cam.right();
-        (view::people(&self.sim, &self.ground, &self.prev, alpha, selected, tps, walk_ref, lens, (r.x, r.z)), view::camp(&self.sim, &self.ground))
+        let side = cam.right();
+        let light = self.lighting();
+        Scene {
+            people: view::people(&self.sim, &self.ground, &self.prev, alpha, selected, tps, r.walk_speed(), lens, (side.x, side.z)),
+            camp: view::camp(&self.sim, &self.ground),
+            things: view::things(&self.sim, &self.ground, r, self.hour(), light.night),
+            animals: view::animals(&self.sim, &self.ground, r, &self.prev, alpha, tps),
+        }
     }
 
     fn status(&self, fps: f32, frame_ms: f32, selected: Option<view::Pick>, hovered: Option<view::Pick>) -> hud::Status {
-        hud::Status { paused: self.paused, speed: self.speed, fps, frame_ms, selected, hovered, pause_on: self.pause_on.map(|w| w.0) }
+        hud::Status { paused: self.paused, speed: self.speed, fps, frame_ms, selected, hovered, pause_on: self.pause_on.map(|w| w.0), ai: self.ai, deciding: self.sim.brains_in_flight(), heads: Vec::new() }
     }
 
     fn nodes(&self) -> Vec<sim::Node> {
@@ -248,6 +345,36 @@ fn stage_ui(a: &Args, world: &mut World, size: (u32, u32)) -> Option<Staged> {
     let thing = a.get("pick").and_then(|what| match what {
         "fire" => Some(view::Pick::Fire),
         "stores" => Some(view::Pick::Stores),
+        // A building or field kind, or an animal kind: the nearest to the camp.
+        kind if world.sim.content.buildings.iter().any(|b| b.id == kind) => {
+            let k = world.sim.content.building(kind);
+            let (sx, sy) = world.sim.camp.stores_pos();
+            let c = &world.sim.content;
+            world
+                .sim
+                .structures
+                .iter()
+                .filter(|(_, s)| s.kind == k)
+                .min_by(|a, b| {
+                    let d = |s: &sim::buildings::Structure| (s.centre(c).0 - sx).powi(2) + (s.centre(c).1 - sy).powi(2);
+                    d(a.1).total_cmp(&d(b.1))
+                })
+                .map(|(id, _)| view::Pick::Structure(id))
+        }
+        kind if world.sim.content.animals.iter().any(|b| b.id == kind) => {
+            let k = world.sim.content.animal(kind);
+            let (sx, sy) = world.sim.camp.stores_pos();
+            world
+                .sim
+                .animals
+                .iter()
+                .filter(|(_, a)| a.kind == k)
+                .min_by(|a, b| {
+                    let d = |a: &sim::animals::Animal| (a.pos.0 - sx).powi(2) + (a.pos.1 - sy).powi(2);
+                    d(a.1).total_cmp(&d(b.1))
+                })
+                .map(|(id, _)| view::Pick::Animal(id))
+        }
         kind => {
             let k = world.sim.content.nodes.iter().position(|n| n.id == kind)? as u16;
             let (sx, sy) = world.sim.camp.stores_pos();
@@ -264,6 +391,13 @@ fn stage_ui(a: &Args, world: &mut World, size: (u32, u32)) -> Option<Staged> {
         }
     });
     let selected = thing.or(person.map(view::Pick::Person));
+    hud.settings = a.has("settings");
+    if a.has("arena") {
+        hud.arena = Some(std::fs::read_to_string("runs/arena/report.md").unwrap_or_default());
+    }
+    if let (Some(words), Some(p)) = (a.get("speak"), person) {
+        hud.speaking = Some((p, words.to_string()));
+    }
     hud.tab = match a.get("tab").unwrap_or("mind") {
         "life" => hud::Tab::Life,
         "body" => hud::Tab::Body,
@@ -275,6 +409,8 @@ fn stage_ui(a: &Args, world: &mut World, size: (u32, u32)) -> Option<Staged> {
         "traffic" => hud::Lens::Traffic,
         "mood" => hud::Lens::Mood,
         "needs" => hud::Lens::Needs,
+        "soil" => hud::Lens::Soil,
+        "beauty" => hud::Lens::Beauty,
         _ => hud::Lens::Off,
     };
     hud.detail = match a.get("detail").unwrap_or("normal") {
@@ -308,30 +444,54 @@ fn shot(a: &Args, path: PathBuf) {
     let mut world = World::new(a);
     let size = a.size("shot-size", (1600, 1000));
     let mut r = headless_renderer(&world);
-    let cam = start_camera(&world.sim, a);
+    let mut cam = start_camera(&world.sim, a);
     let light = world.lighting();
     let mut staged = stage_ui(a, &mut world, size);
     let lens = staged.as_ref().map_or(hud::Lens::Off, |s| s.hud.lens);
     let selected = staged.as_ref().and_then(|s| s.selected);
-    let (people, camp) = world.scene(&cam, selected.and_then(|s| s.person()), r.walk_speed(), lens);
+    // `--look`: centre the camera on the picked thing.
+    if a.has("look")
+        && let Some(m) = selected.and_then(|p| view::marker(&world.sim, &world.ground, p))
+    {
+        let at = match m {
+            render::Marker::Ring(at, _) => at,
+            render::Marker::Area([x0, z0, x1, z1]) => {
+                let (x, z) = ((x0 + x1) * 0.5, (z0 + z1) * 0.5);
+                Vec3::new(x, world.ground.height(x, z), z)
+            }
+        };
+        cam.focus = at;
+    }
+    let Scene { people, camp, things, animals } = world.scene(&cam, selected.and_then(|s| s.person()), &r, lens);
     let marker = selected.and_then(|p| view::marker(&world.sim, &world.ground, p));
     // Put the hover cursor on the hovered person, as if the mouse were there.
     if let Some(st) = staged.as_mut()
         && let Some(h) = st.hovered.and_then(|h| h.person())
         && let Some(d) = people.iter().find(|d| d.key == view::key(h))
     {
-        r.render(&gpu::offscreen_target(r.device(), size, r.target_format()).create_view(&Default::default()), size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, traffic: false, people: &people, camp: Some(camp), marker: None });
+        r.render(&gpu::offscreen_target(r.device(), size, r.target_format()).create_view(&Default::default()), size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, ground: render::GroundLens::Off, people: &people, camp: Some(camp),
+            things: &things,
+            beauty: Some(&world.sim.beauty),
+            animals: &animals, marker: None });
         if let Some(p) = r.to_screen(d.pos + Vec3::new(0.0, 0.55, 0.0), size) {
             st.cursor = (p.x, p.y);
         }
     }
+    if r.last_view.is_none() {
+        r.render(&gpu::offscreen_target(r.device(), size, r.target_format()).create_view(&Default::default()), size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, ground: render::GroundLens::Off, people: &people, camp: Some(camp), things: &things, beauty: None, animals: &animals, marker: None });
+    }
+    let shot_heads = heads(&r, &world.sim, &people, size);
     let ui = staged.as_mut().map(|st| {
-        let status = world.status(60.0, 16.7, st.selected, st.hovered);
+        let mut status = world.status(60.0, 16.7, st.selected, st.hovered);
+        status.heads = shot_heads.clone();
         st.hud.ui.begin((size.0 as f32, size.1 as f32), headless_scale(size), ui::Input { cursor: st.cursor, clicked: false, scroll: 0.0 });
         st.hud.frame(&world.sim, &status);
         st.hud.ui.finish()
     });
-    let frame = Frame { camera: &cam, light: &light, time: 0.0, ui, traffic: lens == hud::Lens::Traffic, people: &people, camp: Some(camp), marker };
+    let frame = Frame { camera: &cam, light: &light, time: 0.0, ui, ground: lens.ground(), people: &people, camp: Some(camp),
+            things: &things,
+            beauty: Some(&world.sim.beauty),
+            animals: &animals, marker };
     let img = gpu::render_to_image(&mut r, size, &frame);
     gpu::write_png(&path, size, &img);
     println!("wrote {} ({}x{}, {})", path.display(), size.0, size.1, world.describe());
@@ -354,14 +514,17 @@ fn bench(a: &Args) {
         // Pan slowly so culling and snapping do real work.
         cam.focus.x += 0.05;
         let t = Instant::now();
-        let (people, camp) = world.scene(&cam, selected, r.walk_speed(), lens);
+        let Scene { people, camp, things, animals } = world.scene(&cam, selected, &r, lens);
         let ui = staged.as_mut().map(|st| {
             let status = world.status(60.0, 16.7, st.selected, st.hovered);
             st.hud.ui.begin((size.0 as f32, size.1 as f32), 2.0, ui::Input { cursor: (size.0 as f32 * 0.5, size.1 as f32 * 0.5), clicked: false, scroll: 0.0 });
             st.hud.frame(&world.sim, &status);
             st.hud.ui.finish()
         });
-        r.render(&view, size, &Frame { camera: &cam, light: &light, time: f as f32 / 60.0, ui, traffic: lens == hud::Lens::Traffic, people: &people, camp: Some(camp), marker: None });
+        r.render(&view, size, &Frame { camera: &cam, light: &light, time: f as f32 / 60.0, ui, ground: lens.ground(), people: &people, camp: Some(camp),
+            things: &things,
+            beauty: Some(&world.sim.beauty),
+            animals: &animals, marker: None });
         r.device().poll(wgpu::PollType::wait_indefinitely()).expect("gpu finished");
         if f >= 20 {
             times.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -405,7 +568,7 @@ fn qa_sheet(a: &Args, out: PathBuf) {
         let mut cam = Camera::new(Vec3::new(x + 0.5, world.ground.height(x + 0.5, z + 0.5), z + 0.5));
         cam.size = a.num("zoom", 12.0);
         let light = world.lighting();
-        let (people, camp) = world.scene(&cam, None, r.walk_speed(), hud::Lens::Off);
+        let Scene { people, camp, things, animals } = world.scene(&cam, None, r, hud::Lens::Off);
         let label = labeller.get_or_insert_with(|| hud::Hud::new(&assets_dir()).unwrap_or_else(|e| panic!("fonts: {e}")));
         label.ui.begin((tile.0 as f32, tile.1 as f32), 1.0, ui::Input::default());
         let tt = ui::Text { font: ui::Font::Sans, size: 13.0, colour: ui::style::TEXT };
@@ -413,7 +576,10 @@ fn qa_sheet(a: &Args, out: PathBuf) {
         let lw = label.ui.measure(&s, tt);
         label.ui.rect(ui::Rect::new(4.0, 4.0, lw + 12.0, 22.0), ui::style::PANEL, 4.0);
         label.ui.text(10.0, 6.0, &s, tt);
-        let img = gpu::render_to_image(r, tile, &Frame { camera: &cam, light: &light, time: 3.0, ui: Some(label.ui.finish()), traffic: false, people: &people, camp: Some(camp), marker: None });
+        let img = gpu::render_to_image(r, tile, &Frame { camera: &cam, light: &light, time: 3.0, ui: Some(label.ui.finish()), ground: render::GroundLens::Off, people: &people, camp: Some(camp),
+            things: &things,
+            beauty: Some(&world.sim.beauty),
+            animals: &animals, marker: None });
         let (ox, oy) = (6 + (k as u32 % cols) * (tile.0 + 6), 6 + (k as u32 / cols) * (tile.1 + 6));
         for y in 0..tile.1 {
             let src = (y * tile.0 * 4) as usize;
@@ -439,8 +605,11 @@ fn pan_test(a: &Args) {
     let mut prev: Option<Vec<u8>> = None;
     let mut changed = Vec::new();
     for _ in 0..9 {
-        let (people, camp) = world.scene(&cam, None, r.walk_speed(), hud::Lens::Off);
-        let img = gpu::render_to_image(&mut r, size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, traffic: false, people: &people, camp: Some(camp), marker: None });
+        let Scene { people, camp, things, animals } = world.scene(&cam, None, &r, hud::Lens::Off);
+        let img = gpu::render_to_image(&mut r, size, &Frame { camera: &cam, light: &light, time: 0.0, ui: None, ground: render::GroundLens::Off, people: &people, camp: Some(camp),
+            things: &things,
+            beauty: Some(&world.sim.beauty),
+            animals: &animals, marker: None });
         if let Some(p) = &prev {
             let n = img.chunks(4).zip(p.chunks(4)).filter(|(x, y)| x != y).count();
             changed.push(n);
@@ -704,7 +873,7 @@ impl App {
         let win = (g.config.width, g.config.height);
         let scale = g.window.scale_factor() as f32;
         let lens = self.hud.as_ref().map_or(hud::Lens::Off, |h| h.lens);
-        let (people, camp) = self.world.scene(&self.camera, self.selected.and_then(|s| s.person()), g.renderer.walk_speed(), lens);
+        let Scene { people, camp, things, animals } = self.world.scene(&self.camera, self.selected.and_then(|s| s.person()), &g.renderer, lens);
         let dragging = self.drag.as_ref().is_some_and(|d| d.moving);
         let picked = if dragging { None } else { view::pick(&g.renderer, &self.world.sim, &self.world.ground, &self.camera, &people, self.cursor, win, scale) };
         let click = std::mem::take(&mut self.click);
@@ -724,7 +893,8 @@ impl App {
             // The UI drawn last frame decides whether the cursor is over it.
             let over = h.ui.over_ui();
             self.hovered = if over { None } else { picked };
-            let status = self.world.status(self.fps.0, self.fps.1, self.selected, self.hovered);
+            let mut status = self.world.status(self.fps.0, self.fps.1, self.selected, self.hovered);
+            status.heads = heads(&g.renderer, &self.world.sim, &people, win);
             h.ui.begin((win.0 as f32, win.1 as f32), scale, ui::Input { cursor: (self.cursor.x, self.cursor.y), clicked: click && !dragging, scroll });
             for act in h.frame(&self.world.sim, &status) {
                 match act {
@@ -735,6 +905,8 @@ impl App {
                     }
                     hud::Action::TogglePause => self.world.paused = !self.world.paused,
                     hud::Action::PauseOnNextDecision(who) => self.world.toggle_watch(who),
+                    hud::Action::Command(c) => self.world.sim.command(c),
+                    hud::Action::SetAi(ai) => self.world.set_ai(ai),
                 }
             }
             if click && !over && !h.ui.over_ui() && h.trace.is_none() {
@@ -753,9 +925,12 @@ impl App {
             light: &light,
             time: elapsed as f32,
             ui: ui_out,
-            traffic: lens == hud::Lens::Traffic,
+            ground: lens.ground(),
             people: &people,
             camp: Some(camp),
+            things: &things,
+            beauty: Some(&self.world.sim.beauty),
+            animals: &animals,
             marker: self.selected.and_then(|p| view::marker(&self.world.sim, &self.world.ground, p)),
         });
         g.window.pre_present_notify();
@@ -809,6 +984,36 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
+                // Typing words to someone (M8): keys go to the text, not the game's shortcuts.
+                if let Some(h) = self.hud.as_mut()
+                    && let Some((who, words)) = h.speaking.as_mut()
+                {
+                    if event.state == ElementState::Pressed {
+                        match code {
+                            KeyCode::Enter | KeyCode::NumpadEnter => {
+                                let (who, said) = (*who, words.trim().to_string());
+                                h.speaking = None;
+                                if !said.is_empty() {
+                                    self.world.sim.command(sim::Command::Speak { person: who, words: said });
+                                }
+                            }
+                            KeyCode::Escape => h.speaking = None,
+                            KeyCode::Backspace => {
+                                words.pop();
+                            }
+                            _ => {
+                                if let Some(text) = event.text.as_ref() {
+                                    for ch in text.chars().filter(|c| !c.is_control()) {
+                                        if words.chars().count() < 120 {
+                                            words.push(ch);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
                 if event.state == ElementState::Pressed {
                     if !event.repeat {
                         match code {
@@ -828,7 +1033,9 @@ impl ApplicationHandler for App {
                                         hud::Lens::Off => hud::Lens::Traffic,
                                         hud::Lens::Traffic => hud::Lens::Mood,
                                         hud::Lens::Mood => hud::Lens::Needs,
-                                        hud::Lens::Needs => hud::Lens::Off,
+                                        hud::Lens::Needs => hud::Lens::Soil,
+                                        hud::Lens::Soil => hud::Lens::Beauty,
+                                        hud::Lens::Beauty => hud::Lens::Off,
                                     };
                                 }
                             }

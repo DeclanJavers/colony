@@ -30,4 +30,24 @@ pub enum Event {
     Buried { person: PersonId, name: String, by: String },
     /// Someone shared food with someone who asked.
     Shared { from: PersonId, to: PersonId, names: String, what: String },
+    // Settling down (M6)
+    BuildingStarted { site: crate::buildings::StructureId, person: PersonId, name: String, kind: String },
+    BuildingDone { site: crate::buildings::StructureId, kind: String, owner: Option<PersonId> },
+    FieldSown { site: crate::buildings::StructureId, person: PersonId, name: String },
+    Harvested { site: crate::buildings::StructureId, person: PersonId, name: String, amount: u32 },
+    /// Frost killed a crop before it ripened.
+    CropFailed { site: crate::buildings::StructureId },
+    SpearMade { person: PersonId, name: String },
+    Hunted { person: PersonId, name: String, animal: String, kind: u16 },
+    /// The day's weather turned (rain, snow, a cold snap).
+    Weather { sky: String, snap: bool },
+    // Free time (M7)
+    /// A free-time activity became someone's hobby.
+    HobbyFound { person: PersonId, name: String, hobby: String },
+    /// Someone made something in their free time ("planted a flower bed", "carved a statue").
+    Made { person: PersonId, name: String, what: String },
+    /// A world setting changed.
+    SettingChanged { what: String },
+    /// You spoke to someone (M8), and how your words were read.
+    Spoken { person: PersonId, name: String, words: String, read_as: String },
 }

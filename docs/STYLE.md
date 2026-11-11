@@ -45,6 +45,8 @@ Warm and saturated, never neon. Shadows lean cool and blue rather than black. sR
 | Plaster wall | `#EAD9B0` | |
 | Timber (beams, frames) | `#5A3620` | |
 | Planks (doors, decks, crates) | `#9C6B3F` | dark `#7A4F2C` |
+| Shelter board roof | `#9C6B3F` | rows `#7A4F2C`, ridge `#5A3620` (named `roof_plank*`, so it takes snow) |
+| Hide (a shelter's door flap) | `#B08A5E` | |
 | Stone (footings, wells, cobbles) | `#9A9590` | dark `#6E6A68`, light `#B8B3AA` |
 | Shutters | `#4E7A6A` (green) | `#4B6A9A` (blue) |
 | Window glass (unlit) | `#2B3550` | lit: `#FFB040` |
@@ -56,7 +58,10 @@ Warm and saturated, never neon. Shadows lean cool and blue rather than black. sR
 | Leaves (autumn, broadleaf only) | `#D9822B`, `#B9472A`, `#E3B23C` | pines stay green |
 | Pine | `#2F6E3A` | top `#24573A` |
 | Soil, dirt path | `#8A5A35` | dark `#5C3A22` |
-| Crops | `#7DB040` | ripe: gold `#F2C640` |
+| Crops, wild grain | `#7DB040` | ripe: gold `#F2C640`; a dead crop `#8A5A35` |
+| Deer | coat `#A0683A` (pale doe `#B88A5C`) | belly `#D9B98C`, rump `#EFE2C4`, hooves `#3A2A20`, antlers `#D2B48C` |
+| Rabbits | `#9C8064`, `#B7A58C`, `#6E5A4A` | tail `#EAD9B0` |
+| Beauty lens | dusk `#6B5A8E` → violet `#B49CF0` → warm white `#F3EADB` | stepped, over the greyed world |
 | Water | `#3C7FC0` | ripple `#7FB8E6`, shore sand `#CCB880` |
 | Fire, lamps, lit windows | `#FFB040` | flame core `#FFE08A` |
 | Berries | `#C8283C` | |
@@ -82,11 +87,28 @@ A new colour goes into this table before it goes into a model.
 - **Variety:** every building type that repeats has variants (`house`, `house_2`...): at least one
   in four houses has a blue roof, and shutters and props differ. The game also turns square
   buildings to face different ways. A street of identical clones is a bug.
+- **Shelters:** a first home: a steep board A-frame on a low stone ring, the open front hung with a
+  hide, a woodpile or pot beside it. 1 tile. They look poorer than houses on purpose.
+- **Building sites:** scaffolding over the footprint, its footing marked in stones, with logs and
+  sticks waiting inside. From half built, the building stands inside the scaffolding.
+- **Fields** are drawn by the terrain shader, not a model, so they follow the ground: dug soil in
+  three raised rows to a tile (`#8A5A35` ridges, `#5C3A22` furrows). The grain is a small model
+  per tile (`crop_tile`), scaled by growth and tinted from green to gold as it ripens.
 - **Trees:** broadleaf trees are lumpy canopies of 6–8 overlapping leaf clumps on a short trunk,
   with lighter clumps on top towards the light (back-left). Pines are stacked cones. Mix both.
   Trees are a little taller than a house's walls.
 - **Props:** crates, barrels, sacks, lamp posts, fences. Small and chunky, used to make places look
   lived in. Keep them inside the building's own footprint so they never poke into a neighbour.
+- **Made in free time (M7):**
+  - **Flower beds:** a stone-edged patch of dug soil with rows of leafy flowers in two or three
+    colours. They're neater and brighter than wild flowers, and shrink a little as they fade
+    untended.
+  - **Statues:** a chunky carved wooden figure (an owl, a standing figure, a bear) on a stone
+    plinth. They block like a rock.
+  - **Decorated houses:** the decor is a separate model drawn with the house (`house_decor_1..3`):
+    stepping stones to the door, then flower boxes under the windows, then carved door posts.
+- **Animals:** deer are rigged like villagers (a stag with antlers and two does; idle, graze,
+  walk and run). Small animals are whole models that hop when they move.
 - **Characters:** low-poly villagers with readable silhouettes and limbs; they keep their own colour.
   Anything they carry is shown big enough to read at normal zoom.
   - **Never draw one figure inside another.** People who share a spot (a riverbank, the fire)
@@ -127,12 +149,15 @@ A new colour goes into this table before it goes into a model.
 
 - Seasons recolour the grass and leaves (spring fresh, summer deep, autumn ochre ground with orange,
   red and gold broadleaves). Winter covers the ground in snow (pale blue-grey, never pure white)
-  and puts brighter snow on roofs, but ridges stay dark so roof shapes still read.
+  and puts brighter snow on roofs, but ridges stay dark so roof shapes still read. Snow cover
+  comes from the weather: a light fall lies on roofs in patches (never a pink tint over red tiles),
+  a heavy one covers them.
 - Rain isn't drawn as particles (it made v1 busy): it shows in the light, wet ground and the top
   bar. Snow is soft flakes that follow the camera.
 - Night is a cool blue grade from the pixel pass. Warm lights keep their colour: windows glow in
   the evening and before dawn wherever someone lives (and in the kitchen and town hall), then go
-  dark while everyone sleeps; lamps burn all night; fires light the ground around them.
+  dark while everyone sleeps; lamps burn all night; fires light the ground around them. People
+  asleep at home are inside, and aren't drawn.
 - Weather and night may dim the colony but must never make it hard to read.
 
 ## Labels and icons (readability first)

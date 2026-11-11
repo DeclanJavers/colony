@@ -7,7 +7,9 @@
         (id: "chop", name: "Collect wood", node: "tree", item: "wood", skill: "woodcutting", minutes: 30, yield_per: 2),
         (id: "chop_pine", name: "Collect wood", node: "pine", item: "wood", skill: "woodcutting", minutes: 30, yield_per: 2),
         (id: "sticks", name: "Gather sticks", node: "sticks", item: "sticks", skill: "woodcutting", minutes: 15, yield_per: 3),
-        (id: "stone", name: "Gather stone", node: "pebbles", item: "stone", skill: "stonework", minutes: 20, yield_per: 2),
+        (id: "grain", name: "Gather wild grain", node: "wild_grain", item: "grain", skill: "foraging", minutes: 30, yield_per: 3),
+        // Anyone can pick up loose stones; breaking rock needs stonework.
+        (id: "stone", name: "Gather stone", node: "pebbles", item: "stone", skill: "foraging", minutes: 20, yield_per: 2),
         (id: "quarry", name: "Break stone", node: "rock", item: "stone", skill: "stonework", minutes: 70, yield_per: 3),
     ],
     drink_minutes: 6,
@@ -25,6 +27,12 @@
     // At the start of winter this share of the berries left on bushes rots.
     berry_regrow: [3.0, 4.0, 5.0, 0.0],
     winter_rot: 0.3,
+    // Making a spear (stonework: a knapped stone point on a wooden shaft), and how often a
+    // spear breaks on a hunt.
+    spear: (minutes: 40, wood: 1, stone: 1, breaks: 0.15),
+    // Hunting: minutes stalking before the throw, and how far the quarry can get before it's lost.
+    hunt_minutes: 45,
+    lost_at: 30.0,
     // Days of food the group aims to keep in store, per season (they store up before winter).
     food_target_days: [2.5, 5.0, 10.0, 4.0],
 )

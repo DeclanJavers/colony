@@ -1,0 +1,11 @@
+// Animals (M6). Herds wander a home range, graze and flee people. Populations grow in spring,
+// thin out in winter when there are more than the land holds, and new herds wander in from the
+// map's edges when there are too few. Speeds are tiles per minute.
+[
+    (id: "deer", name: "Deer", herd: (3, 6), speed: 0.35, flee: 2.2, wary: 14.0, range: 26.0,
+     lifespan_days: 140, births: 0.9, per_1000_tiles: 0.5, meat: 10, hit: 0.4, model: "deer",
+     habitats: ["meadow", "forest", "hills", "pine_forest"]),
+    (id: "rabbit", name: "Rabbit", herd: (2, 5), speed: 0.25, flee: 2.6, wary: 6.0, range: 10.0,
+     lifespan_days: 60, births: 2.4, per_1000_tiles: 1.6, meat: 2, hit: 0.45, model: "rabbit",
+     habitats: ["meadow", "forest", "marsh"]),
+]

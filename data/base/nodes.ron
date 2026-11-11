@@ -24,7 +24,14 @@
      densities: [("meadow", 0.012), ("hills", 0.004), ("forest", 0.002)]),
     (id: "reeds", regrow: 0.2, name: "Reeds", amount: 8.0, variants: 2, blocks: false, clump: 0.6, near_water: 0.025, colour: "#7FA347",
      densities: [("marsh", 0.12)]),
+    (id: "wild_grain", regrow: 0.6, name: "Wild grain", amount: 10.0, variants: 2, blocks: false, clump: 0.8, near_water: 0.0, colour: "#D9B44A",
+     densities: [("meadow", 0.014), ("hills", 0.004)]),
     // Graves: placed where someone is buried, never generated.
+    // Things people make in their free time (M7), never generated. A carving's amount is its beauty.
+    (id: "flower_bed", regrow: 0.0, name: "Flower bed", amount: 1.0, variants: 3, blocks: false, clump: 0.0, near_water: 0.0, colour: "#C8283C",
+     densities: []),
+    (id: "carving", regrow: 0.0, name: "Carving", amount: 0.4, variants: 3, blocks: true, clump: 0.0, near_water: 0.0, colour: "#9C6B3F",
+     densities: []),
     (id: "grave", regrow: 0.0, name: "Grave", amount: 1.0, variants: 1, blocks: false, clump: 0.0, near_water: 0.0, colour: "#8A7F72",
      densities: []),
 ]

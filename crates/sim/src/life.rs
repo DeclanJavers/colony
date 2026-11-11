@@ -9,7 +9,8 @@ use crate::people::Person;
 use crate::world::{Map, Node};
 
 /// Needs and health for one minute (or tick). Returns the cause if this kills them.
-pub fn body(p: &mut Person, c: &Content, map: &Map, camp: &Camp, tick: u64, company: bool) -> Option<String> {
+/// `beauty` is the beauty where they are, as it counts (0 when beauty doesn't matter).
+pub fn body(p: &mut Person, c: &Content, map: &Map, camp: &Camp, tick: u64, company: bool, beauty: f32) -> Option<String> {
     let tm = c.calendar.minutes_per_tick as f32 / 60.0;
     let pp = &c.people;
     for (i, n) in c.needs.iter().enumerate() {
@@ -21,18 +22,28 @@ pub fn body(p: &mut Person, c: &Content, map: &Map, camp: &Camp, tick: u64, comp
     let temp = air_temp(c, map, p.pos.0 as u32, p.pos.1 as u32, tick);
     let (fx, fy) = camp.fire_pos();
     let by_fire = camp.fire_lit && ((p.pos.0 - fx).powi(2) + (p.pos.1 - fy).powi(2)).sqrt() <= pp.fire_reach;
+    // Under a roof the night's chill is cut (a house more than a shelter), and rain can't reach.
+    let roof = p.indoors.map_or(1.0, |k| c.buildings[k as usize].chill);
     if by_fire {
         p.needs[w] -= pp.fire_warmth_per_hour * tm;
     } else if temp < pp.comfort_temp {
         let huddle = if p.asleep && company { pp.huddle } else { 1.0 };
-        p.needs[w] += pp.cold_per_hour * (pp.comfort_temp - temp) * tm * huddle;
+        p.needs[w] += pp.cold_per_hour * (pp.comfort_temp - temp) * tm * huddle * roof;
     } else {
         p.needs[w] -= 0.1 * tm;
+    }
+    if map.weather.sky.wet() && p.indoors.is_none() && !by_fire {
+        p.needs[w] += c.weather.wet_chill * tm;
     }
     // Company
     let s = c.need("social");
     if company && !p.asleep {
         p.needs[s] -= pp.company_per_hour * (0.5 + p.personality[2]) * tm;
+    }
+    // Somewhere beautiful slowly eases boredom.
+    if beauty > 0.0 && !p.asleep {
+        let f = c.need("fun");
+        p.needs[f] -= c.leisure.beauty.fun_per_hour * beauty * tm;
     }
     for v in p.needs.iter_mut() {
         *v = v.clamp(0.0, 1.0);
@@ -65,6 +76,18 @@ pub fn body(p: &mut Person, c: &Content, map: &Map, camp: &Camp, tick: u64, comp
         return Some(cause.to_string());
     }
     None
+}
+
+/// Animals within sight: remember where they were seen.
+pub fn see_animals(p: &mut Person, animals: &Table<crate::animals::Animal>, tick: u64, radius: f32) {
+    for (id, a) in animals.iter() {
+        if (a.pos.0 - p.pos.0).abs() <= radius && (a.pos.1 - p.pos.1).abs() <= radius && ((a.pos.0 - p.pos.0).powi(2) + (a.pos.1 - p.pos.1).powi(2)).sqrt() <= radius {
+            p.knowledge.see_animal(id, a.kind, a.pos, tick);
+        }
+    }
+    // Forget what's long gone.
+    // Herds keep to a range, so a sighting is worth remembering for a few days.
+    p.knowledge.animals.retain(|_, k| tick.saturating_sub(k.when) < 3 * 24 * 60);
 }
 
 /// Look around: resource nodes, fresh water, the camp. What they see replaces what they believed.

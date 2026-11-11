@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sim", "crates/colony-run", "crates/render", "crates/colony", "crates/ui"]
+members = ["crates/sim", "crates/colony-run", "crates/render", "crates/colony", "crates/ui", "crates/brains"]
 
 [workspace.package]
 version = "0.1.0"
@@ -23,6 +23,7 @@ gltf = { version = "=1.4.1", default-features = false, features = ["import", "na
 sim = { path = "crates/sim" }
 render = { path = "crates/render" }
 ui = { path = "crates/ui" }
+brains = { path = "crates/brains" }
 fontdue = "=0.9.5"
 
 # Debug builds stay usable for headless runs: our code lightly optimised, libraries fully.

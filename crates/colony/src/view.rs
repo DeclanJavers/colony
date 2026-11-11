@@ -1,9 +1,10 @@
-//! How the game shows the sim to the renderer: people and the camp (positions smoothed between
-//! ticks, lens rings), and picking people under the cursor. The UI itself is in hud.rs.
+//! How the game shows the sim to the renderer: people, animals, buildings, fields and the camp
+//! (positions smoothed between ticks, lens rings), and picking things under the cursor. The UI
+//! itself is in hud.rs.
 
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use render::people::PersonDraw;
-use render::{CampDraw, Renderer, linear};
+use render::{AnimalDraw, CampDraw, Renderer, ThingDraw, linear};
 use sim::actions::Anim;
 use sim::people::Sex;
 use sim::{PersonId, Sim};
@@ -13,11 +14,18 @@ pub fn key(id: PersonId) -> u64 {
     ((id.index as u64) << 32) | id.generation as u64
 }
 
-/// Positions (x, z, facing) of everyone, to smooth movement between ticks.
+/// An animal's key (kept apart from people's by the top bit).
+pub fn animal_key(id: sim::animals::AnimalId) -> u64 {
+    (1 << 63) | ((id.index as u64) << 32) | id.generation as u64
+}
+
+/// Positions (x, z, facing) of everyone and every animal, to smooth movement between ticks.
 pub type Poses = BTreeMap<u64, (f32, f32, f32)>;
 
 pub fn poses(sim: &Sim) -> Poses {
-    sim.people.iter().filter(|(_, p)| p.alive).map(|(id, p)| (key(id), (p.pos.0, p.pos.1, p.facing))).collect()
+    let mut out: Poses = sim.people.iter().filter(|(_, p)| p.alive).map(|(id, p)| (key(id), (p.pos.0, p.pos.1, p.facing))).collect();
+    out.extend(sim.animals.iter().map(|(id, a)| (animal_key(id), (a.pos.0, a.pos.1, a.facing))));
+    out
 }
 
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
@@ -41,8 +49,9 @@ pub fn people(sim: &Sim, ground: &render::terrain::Ground, prev: &Poses, alpha: 
     let mut out = Vec::new();
     let seen = sim::family::seen(&sim.people, sim.tick, c);
     for (id, p) in sim.people.iter() {
-        // The dead lie where they fell until someone buries them.
-        if !p.alive && p.buried {
+        // The dead lie where they fell until someone buries them. Whoever sleeps at home is
+        // inside.
+        if (!p.alive && p.buried) || (p.alive && p.asleep && p.indoors.is_some()) {
             continue;
         }
         let k = key(id);
@@ -65,6 +74,9 @@ pub fn people(sim: &Sim, ground: &render::terrain::Ground, prev: &Poses, alpha: 
                 Some(&(px, pz, pf)) => (px + (carer.pos.0 - px) * alpha, pz + (carer.pos.1 - pz) * alpha, lerp_angle(pf, carer.facing, alpha)),
                 None => (carer.pos.0, carer.pos.1, carer.facing),
             };
+            if carer.asleep && carer.indoors.is_some() {
+                continue;
+            }
             let sitting = carer.action.as_ref().is_some_and(|a| a.anim == Anim::Sit);
             if me.age < c.life.nursing_age && !carer.asleep && !sitting {
                 continue;
@@ -127,6 +139,114 @@ pub fn people(sim: &Sim, ground: &render::terrain::Ground, prev: &Poses, alpha: 
     out
 }
 
+/// Model names by variant (the renderer says how many of each there are).
+const VARIANTS: &[(&str, [&str; 4])] = &[
+    ("house", ["house", "house_2", "house_3", "house_4"]),
+    ("shelter", ["shelter", "shelter_2", "shelter_3", "shelter"]),
+    ("storehouse", ["storehouse", "storehouse", "storehouse", "storehouse"]),
+];
+
+fn variant(r: &Renderer, base: &str, pick: u64) -> Option<&'static str> {
+    let names = VARIANTS.iter().find(|(b, _)| *b == base)?.1;
+    let n = r.model_variants(base).clamp(1, 4);
+    Some(names[pick as usize % n])
+}
+
+fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+
+/// Buildings, building sites and fields. `hour` and `night` light the windows of homes where
+/// someone lives, in the evening and before dawn.
+pub fn things(sim: &Sim, ground: &render::terrain::Ground, r: &Renderer, hour: f32, night: f32) -> Vec<ThingDraw> {
+    let c = &sim.content;
+    let mut out = Vec::new();
+    let evening = night > 0.15 && ((16.5..22.5).contains(&hour) || (5.0..7.5).contains(&hour));
+    for (id, s) in sim.structures.iter() {
+        let def = &c.buildings[s.kind as usize];
+        let (cx, cz) = s.centre(c);
+        // Stand it on the lowest corner so it never floats (the footing hides the rest).
+        let corners = [(s.x as f32, s.y as f32), (s.x as f32 + def.w as f32, s.y as f32), (s.x as f32, s.y as f32 + def.h as f32), (s.x as f32 + def.w as f32, s.y as f32 + def.h as f32)];
+        let y = corners.iter().map(|&(x, z)| ground.height(x, z)).fold(ground.height(cx, cz), f32::min);
+        let at = Mat4::from_translation(Vec3::new(cx, y, cz));
+        let pick = sim::hash::hash2(0xB11D, s.x as i32, s.y as i32);
+        if def.id == "field" {
+            // The terrain draws the dug soil; the grain stands on each tile, following the ground.
+            let Some(crop) = s.crop.as_ref().filter(|_| s.done()) else { continue };
+            // Green shoots that grow tall, then turn gold as they ripen; a dead crop lies brown.
+            let (h, tint) = if crop.dead {
+                (0.3, linear("#8A5A35"))
+            } else {
+                let g = crop.growth.clamp(0.0, 1.0);
+                (0.12 + 0.88 * g, mix(linear("#7DB040"), linear("#F2C640"), ((g - 0.7) / 0.3).clamp(0.0, 1.0)))
+            };
+            for ty in s.y..s.y + def.h {
+                for tx in s.x..s.x + def.w {
+                    let (x, z) = (tx as f32 + 0.5, ty as f32 + 0.5);
+                    let t = Mat4::from_translation(Vec3::new(x, ground.height(x, z), z)) * Mat4::from_scale(Vec3::new(1.0, h, 1.0));
+                    out.push(ThingDraw { model: "crop_tile", transform: t, tint: Some(tint), lit: false });
+                }
+            }
+            continue;
+        }
+        let base = def.id.as_str();
+        let Some(model) = variant(r, base, pick) else { continue };
+        if !s.done() {
+            // A site: scaffolding over the footprint; once half built, the building stands inside it.
+            let frame = Mat4::from_scale(Vec3::new(def.w as f32 * 0.98, 1.0 + 0.2 * (def.w as f32 - 1.0), def.h as f32 * 0.98));
+            out.push(ThingDraw { model: "site_frame", transform: at * frame, tint: None, lit: false });
+            if s.progress >= 0.5 {
+                out.push(ThingDraw { model, transform: at, tint: None, lit: false });
+            }
+            continue;
+        }
+        let lived_in = def.sleeps > 0 && s.owner.and_then(|o| sim.people.get(o)).is_some_and(|o| o.alive);
+        let _ = id;
+        out.push(ThingDraw { model, transform: at, tint: None, lit: lived_in && evening });
+        // A decorated house: stones to the door, flower boxes, carved posts (M7).
+        if s.decor > 0 && def.id == "house" {
+            let decor = ["house_decor_1", "house_decor_2", "house_decor_3"][(s.decor as usize - 1).min(2)];
+            out.push(ThingDraw { model: decor, transform: at, tint: None, lit: false });
+        }
+    }
+    out
+}
+
+/// Every animal, smoothed between ticks like people. Rigged kinds play a clip at the speed
+/// their feet need; whole models hop.
+pub fn animals(sim: &Sim, ground: &render::terrain::Ground, r: &Renderer, prev: &Poses, alpha: f32, ticks_per_second: f32) -> Vec<AnimalDraw> {
+    let c = &sim.content;
+    let mut out = Vec::with_capacity(sim.animals.len());
+    for (id, a) in sim.animals.iter() {
+        let k = animal_key(id);
+        let (x, z, f, moved) = match prev.get(&k) {
+            Some(&(px, pz, pf)) => (px + (a.pos.0 - px) * alpha, pz + (a.pos.1 - pz) * alpha, lerp_angle(pf, a.facing, alpha), ((a.pos.0 - px).powi(2) + (a.pos.1 - pz).powi(2)).sqrt()),
+            None => (a.pos.0, a.pos.1, a.facing, 0.0),
+        };
+        let kind = a.kind as usize;
+        let def = &c.animals[kind];
+        // Young animals are smaller for their first season.
+        let age_days = sim.tick.saturating_sub(a.born) as f32 / c.calendar.ticks_per_day() as f32;
+        let size = 0.6 + 0.4 * (age_days / (c.calendar.days_per_season as f32)).min(1.0);
+        let clip = if a.state == sim::animals::State::Flee || moved > def.speed * 1.5 {
+            "run"
+        } else if moved > 0.002 {
+            "walk"
+        } else if a.state == sim::animals::State::Graze {
+            "graze"
+        } else {
+            "idle"
+        };
+        let speed = moved * ticks_per_second;
+        let rate = if matches!(clip, "walk" | "run") { (speed / (r.animal_clip_speed(kind, clip) * size).max(0.05)).clamp(0.2, 5.0) } else { 1.0 };
+        // Deer: the stag (the first model) is male, the does (the others) female.
+        let n = r.animal_variants(kind);
+        let variant = if n >= 2 && def.id == "deer" { if a.female { 1 + id.index as usize % (n - 1) } else { 0 } } else { id.index as usize % n };
+        out.push(AnimalDraw { key: k, kind, variant, pos: Vec3::new(x, ground.height(x, z), z), facing: f, size, clip, rate });
+    }
+    out
+}
+
 /// People sharing a spot (two drinking at the same bank, a crowd at the fire) would be drawn
 /// inside each other. Nudge anyone closer than arm's length apart, a little, for drawing only.
 fn personal_space(people: &mut [PersonDraw], ground: &render::terrain::Ground) {
@@ -164,10 +284,13 @@ pub fn camp(sim: &Sim, ground: &render::terrain::Ground) -> CampDraw {
     CampDraw { stores: at(sim.camp.stores_pos()), fire: at(sim.camp.fire_pos()), lit: sim.camp.fire_lit }
 }
 
-/// Anything the player can click: a person, a resource node or grave, or the camp's things.
+/// Anything the player can click: a person, an animal, a building or field, a resource node or
+/// grave, or the camp's things.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Person(PersonId),
+    Animal(sim::animals::AnimalId),
+    Structure(sim::buildings::StructureId),
     Node(sim::ids::Id<sim::Node>),
     Fire,
     Stores,
@@ -223,11 +346,31 @@ pub fn pick(r: &Renderer, sim: &Sim, ground: &render::terrain::Ground, cam: &ren
     offer(near(at(fx, fz), 0.6, 1.1), Pick::Fire);
     let (sx, sz) = sim.camp.stores_pos();
     offer(near(at(sx, sz), 0.4, 1.8), Pick::Stores);
-    // Only nodes near the middle of the view (the camera shows about `size` metres).
+    // Only things near the middle of the view (the camera shows about `size` metres).
     let reach = cam.size * 1.2;
+    let near_view = |x: f32, z: f32| (x - f.x).abs() <= reach * 1.6 && (z - f.z).abs() <= reach * 1.6;
+    for (id, a) in sim.animals.iter() {
+        if !near_view(a.pos.0, a.pos.1) {
+            continue;
+        }
+        let big = sim.content.animals[a.kind as usize].id == "deer";
+        // Animals are small and move: a little more reach, and they beat what they stand on.
+        offer(near(at(a.pos.0, a.pos.1), if big { 1.1 } else { 0.3 }, if big { 1.0 } else { 0.6 }).map(|d| d * 0.8), Pick::Animal(id));
+    }
+    for (id, s) in sim.structures.iter() {
+        let def = &sim.content.buildings[s.kind as usize];
+        let (x, z) = s.centre(&sim.content);
+        if !near_view(x, z) {
+            continue;
+        }
+        let h = if def.id == "field" { 0.3 } else if def.w >= 2 { 2.0 } else { 1.1 };
+        let w = def.w.max(def.h) as f32 * if def.id == "field" { 0.9 } else { 0.8 };
+        // Fields lie flat: anywhere over the soil counts, but whatever stands on them comes first.
+        offer(near(at(x, z), h, w).map(|d| if def.id == "field" { 0.6 + d * 0.4 } else { d }), Pick::Structure(id));
+    }
     for (id, n) in sim.nodes.iter() {
         let (x, z) = (n.x as f32 + 0.5, n.y as f32 + 0.5);
-        if (x - f.x).abs() > reach * 1.6 || (z - f.z).abs() > reach * 1.6 {
+        if !near_view(x, z) {
             continue;
         }
         let def = &sim.content.nodes[n.kind as usize];
@@ -239,21 +382,35 @@ pub fn pick(r: &Renderer, sim: &Sim, ground: &render::terrain::Ground, cam: &ren
 }
 
 /// Where to draw the selection ring for a thing, and how wide.
-pub fn marker(sim: &Sim, ground: &render::terrain::Ground, pick: Pick) -> Option<(Vec3, f32)> {
+pub fn marker(sim: &Sim, ground: &render::terrain::Ground, pick: Pick) -> Option<render::Marker> {
+    use render::Marker::Ring;
     let at = |x: f32, z: f32| Vec3::new(x, ground.height(x, z) + 0.02, z);
     match pick {
         Pick::Person(_) => None,
         Pick::Fire => {
             let (x, z) = sim.camp.fire_pos();
-            Some((at(x, z), 1.1))
+            Some(Ring(at(x, z), 1.1))
         }
         Pick::Stores => {
             let (x, z) = sim.camp.stores_pos();
-            Some((at(x, z), 2.0))
+            Some(Ring(at(x, z), 2.0))
         }
+        Pick::Animal(id) => sim.animals.get(id).map(|a| {
+            let big = sim.content.animals[a.kind as usize].id == "deer";
+            Ring(at(a.pos.0, a.pos.1), if big { 1.3 } else { 0.6 })
+        }),
+        Pick::Structure(id) => sim.structures.get(id).map(|s| {
+            let def = &sim.content.buildings[s.kind as usize];
+            if !def.blocks {
+                // A field lies flat on the ground: outline its tiles instead of ringing it.
+                return render::Marker::Area([s.x as f32, s.y as f32, (s.x + def.w) as f32, (s.y + def.h) as f32]);
+            }
+            let (x, z) = s.centre(&sim.content);
+            Ring(at(x, z), def.w.max(def.h) as f32 * 1.15 + 0.3)
+        }),
         Pick::Node(id) => sim.nodes.get(id).map(|n| {
             let blocks = sim.content.nodes[n.kind as usize].blocks;
-            (at(n.x as f32 + 0.5, n.y as f32 + 0.5), if blocks { 1.1 } else { 0.9 })
+            Ring(at(n.x as f32 + 0.5, n.y as f32 + 0.5), if blocks { 1.1 } else { 0.9 })
         }),
     }
 }

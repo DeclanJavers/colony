@@ -70,6 +70,9 @@ P = {
     "skin": "#E8BC98", "cloth": "#D8D8D8", "sack": "#D2B48C",
     "flower_yellow": "#F2C640", "flower_white": "#F3EADB", "flower_violet": "#9A7FD1",
     "reed": "#7FA347", "reed_head": "#7A4F2C",
+    # A shelter's board roof: plank colours, named roof_* so it takes snow like the tiled roofs.
+    "roof_plank": "#9C6B3F", "roof_plank_mid": "#7A4F2C", "roof_plank_dark": "#5A3620",
+    "hide": "#B08A5E",
 }
 
 
@@ -615,6 +618,148 @@ def site_frame():
         for x in (-0.45, 0.45):
             box("beam", (0.05, 0.96, 0.05), (x, 0, z), m)
     beam("brace", (-0.45, -0.47, 0.05), (0.45, -0.47, 0.95), 0.04, M("plank_dark"))
+    beam("brace", (0.47, -0.45, 0.05), (0.47, 0.45, 0.95), 0.04, M("plank_dark"))
+    # The footing marked out in stones, and the materials waiting inside: logs and a bundle of sticks.
+    rnd = random.Random(3)
+    for i in range(10):
+        a = i / 10 * math.tau
+        blob("st", 0.05, (math.cos(a) * 0.4, math.sin(a) * 0.4, 0.02), M(["stone", "stone_light", "stone_dark"][i % 3]), sub=1, scale=(1.2, 1, 0.6))
+    for i, z in enumerate((0.05, 0.05, 0.05, 0.13, 0.13)):
+        y = -0.18 + (i if i < 3 else i - 2.5) * 0.11
+        beam("log", (-0.22, y, z), (0.2, y + rnd.uniform(-0.02, 0.02), z), 0.09, M("plank" if i % 2 else "plank_dark"))
+    for k in range(4):
+        a = rnd.uniform(-0.3, 0.3)
+        beam("stick", (0.05, 0.2 + k * 0.03, 0.03), (0.05 + math.cos(a) * 0.3, 0.2 + k * 0.03 + math.sin(a) * 0.05, 0.05), 0.03, M("plank_dark"))
+
+
+def shelter(seed=1):
+    """A first home for one or two: a steep board A-frame over a low stone ring, its open front
+    hung with a hide. 1 x 1 tile. Built with the ridge along X and the opening on +X, then turned
+    so the opening faces the front."""
+    F = 0.1
+    footing(0.86, 0.86, F, seed)
+    tiled_roof(0.78, 0.78, 0.95, F, "plank", over=0.08, rows=5)
+    # Back gable: boards; front gable: a dark opening with a hide hung across most of it.
+    hd, h, z = 0.39, 0.95, F
+    poly("gable", [(-0.39, -hd, z), (-0.39, hd, z), (-0.39, 0, z + h)], [(2, 1, 0)], M("plank_dark"))
+    poly("opening", [(0.37, -hd + 0.04, z), (0.37, hd - 0.04, z), (0.37, 0, z + h - 0.06)], [(0, 1, 2)], M("soil_dark"))
+    rnd = random.Random(seed)
+    side = 1 if rnd.random() < 0.5 else -1
+    # The hide covers one side of the opening and is tied back at the top.
+    poly("hide", [(0.39, -side * (hd - 0.06), z + 0.02), (0.39, side * 0.04, z + 0.02), (0.39, 0, z + h - 0.1)],
+         [(0, 1, 2) if side > 0 else (2, 1, 0)], M("hide"))
+    beam("tb", (0.4, 0, z + h - 0.02), (0.4, 0, z), 0.05, M("timber"))
+    door_step = box("step", (0.14, 0.34, 0.05), (0.5, 0, 0.025), M("stone_light"))
+    # A little woodpile or a pot by the wall.
+    if rnd.random() < 0.6:
+        for i in range(3):
+            beam("log", (-0.1 + i * 0.07, side * 0.47, 0.05 + (i % 2) * 0.06), (0.2 + i * 0.07, side * 0.47, 0.05 + (i % 2) * 0.06), 0.06, M("plank" if i % 2 else "plank_dark"))
+    else:
+        barrel((0.15, side * 0.48, 0), r=0.08, h=0.18)
+    rotate_all_z(-math.pi / 2)
+
+
+def crop_tile():
+    """Grain on one tile of a field, in the soil's three rows (the terrain draws the field). The
+    game scales its height by the crop's growth and tints it from green to ripe gold (the stalks
+    are `leaves1`)."""
+    rnd = random.Random(4)
+    stalks = []
+    for i in range(3):
+        y = -1 / 3 + i / 3
+        for j in range(3):
+            x = -1 / 3 + j / 3 + rnd.uniform(-0.03, 0.03)
+            for k in range(3):
+                a = k * math.tau / 3 + rnd.uniform(0, 1)
+                hgt = rnd.uniform(0.34, 0.46)
+                stalks.append(cone("leaves1", 0.055, hgt, (x + math.cos(a) * 0.05, y + math.sin(a) * 0.05, hgt / 2), M("crop"), verts=4))
+    join_named("leaves1", stalks)
+
+
+# ---- Things people make in their free time (M7) --------------------------------------------------
+
+def flower_bed(seed=1, heads=("berry", "flower_yellow", "flower_white")):
+    """A planted bed by someone's home: dark dug soil edged with stones, rows of leafy flowers in
+    two or three colours. Neater and brighter than wild flowers."""
+    rnd = random.Random(40 + seed)
+    box("soil", (0.8, 0.62, 0.06), (0, 0, 0.03), M("soil_dark"))
+    for i in range(12):
+        a = i / 12 * math.tau
+        x, y = math.cos(a) * 0.43, math.sin(a) * 0.34
+        blob("st", 0.055, (x, y, 0.03), M(["stone", "stone_light"][i % 2]), sub=1, scale=(1.2, 1.0, 0.6))
+    for row in range(2):
+        for k in range(4):
+            x = -0.27 + k * 0.18 + rnd.uniform(-0.02, 0.02)
+            y = -0.12 + row * 0.24
+            blob("leaf", 0.07, (x, y, 0.09), M("leaf_light" if (k + row) % 2 else "leaf"), sub=1, scale=(1.1, 1.0, 0.8))
+            col = heads[(k + row * 2 + seed) % len(heads)]
+            for j in range(3):
+                a = j * math.tau / 3 + rnd.uniform(0, 1)
+                blob("head", 0.035, (x + math.cos(a) * 0.04, y + math.sin(a) * 0.04, 0.16 + rnd.uniform(0, 0.04)), M(col), sub=1)
+
+
+def carving(seed=1):
+    """A statue carved by someone with skill, set up near home or the fire: a chunky wooden
+    figure on a stone plinth. Variants: an owl, a standing figure, a bear."""
+    footing(0.5, 0.5, 0.14, 30 + seed)
+    m, d = M("plank"), M("plank_dark")
+    if seed == 1:
+        # An owl: round body, big eyes, ear tufts.
+        blob("body", 0.2, (0, 0, 0.36), m, sub=2, scale=(1.0, 0.9, 1.25))
+        blob("head", 0.15, (0, -0.02, 0.62), m, sub=2)
+        for x in (-0.06, 0.06):
+            blob("eye", 0.045, (x, -0.13, 0.64), M("stone_light"), sub=1)
+            blob("pupil", 0.02, (x, -0.17, 0.64), M("timber"), sub=1)
+            box("tuft", (0.05, 0.05, 0.1), (x * 1.4, 0, 0.77), d, rot=(0, x * 3, 0))
+        box("beak", (0.04, 0.05, 0.06), (0, -0.16, 0.58), d)
+        for x in (-0.15, 0.15):
+            blob("wing", 0.1, (x, 0.02, 0.36), d, sub=1, scale=(0.5, 0.8, 1.4))
+    elif seed == 2:
+        # A standing figure, arms at its sides, a carved face.
+        box("legs", (0.2, 0.14, 0.3), (0, 0, 0.29), d)
+        box("body", (0.26, 0.18, 0.34), (0, 0, 0.6), m)
+        blob("head", 0.12, (0, 0, 0.88), m, sub=2)
+        for x in (-0.16, 0.16):
+            box("arm", (0.06, 0.08, 0.3), (x, 0, 0.6), d)
+        for x in (-0.04, 0.04):
+            box("eye", (0.025, 0.02, 0.025), (x, -0.115, 0.9), M("timber"))
+        box("belt", (0.27, 0.19, 0.04), (0, 0, 0.47), M("timber"))
+    else:
+        # A sitting bear.
+        blob("body", 0.22, (0, 0.03, 0.36), m, sub=2, scale=(1.0, 1.0, 1.1))
+        blob("head", 0.14, (0, -0.1, 0.62), m, sub=2)
+        blob("snout", 0.06, (0, -0.22, 0.6), d, sub=1)
+        for x in (-0.09, 0.09):
+            blob("ear", 0.045, (x, -0.08, 0.74), d, sub=1)
+            blob("paw", 0.07, (x * 1.3, -0.16, 0.2), d, sub=1)
+
+
+def house_decor(level):
+    """What decorating adds to a house, drawn with the house (same origin and front): stones laid
+    to the door (1), then flower boxes under the windows (2), then carved door posts (3)."""
+    W, Z0 = 1.5, 0.24
+    # Stepping stones from the door's step out to the edge of the plot.
+    for i, (x, y) in enumerate([(-0.3, -0.98), (-0.26, -1.18), (-0.33, -1.38), (-0.28, -1.58)]):
+        blob("path", 0.09, (x, y + 0.02, 0.02), M(["stone_light", "stone"][i % 2]), sub=1, scale=(1.4, 1.1, 0.4))
+    if level >= 2:
+        def flower_box(x, y, axis):
+            size = (0.34, 0.1, 0.1) if axis == "y" else (0.1, 0.34, 0.1)
+            box("box", size, (x, y, 0.58), M("plank_dark"))
+            for k in range(3):
+                u = (k - 1) * 0.1
+                px, py = (x + u, y) if axis == "y" else (x, y + u)
+                blob("leaf", 0.045, (px, py, 0.65), M("leaf_light"), sub=1)
+                blob("head", 0.03, (px, py, 0.69), M(["berry", "flower_yellow", "flower_white"][k]), sub=1)
+        flower_box(0.35, -W / 2 - 0.08, "y")
+        flower_box(0.0, W / 2 + 0.08, "y")
+        flower_box(W / 2 + 0.08, 0.0, "x")
+        flower_box(-W / 2 - 0.08, 0.0, "x")
+    if level >= 3:
+        for x in (-0.55, -0.05):
+            box("post", (0.08, 0.08, 0.7), (x, -W / 2 - 0.1, 0.35), M("plank"))
+            blob("knob", 0.06, (x, -W / 2 - 0.1, 0.73), M("plank_dark"), sub=1)
+            for z in (0.2, 0.4):
+                box("notch", (0.09, 0.09, 0.03), (x, -W / 2 - 0.1, z), M("timber"))
 
 
 # ---- Nature -------------------------------------------------------------------------------------
@@ -685,6 +830,26 @@ def wildflowers(seed=1, heads=("flower_yellow", "flower_white")):
     for i in range(12):
         x, y = rnd.uniform(-0.34, 0.34), rnd.uniform(-0.34, 0.34)
         blob("flower", rnd.uniform(0.07, 0.09), (x, y, 0.16 + rnd.uniform(0, 0.08)), M(heads[i % len(heads)]), sub=1, scale=(1, 1, 0.75))
+
+
+def wild_grain(seed=1):
+    """Wild grass gone to seed in a meadow: a full clump of leaning stalks with chunky golden seed
+    heads over a leafy base. Gathered for food, and the first seed for fields."""
+    rnd = random.Random(20 + seed)
+    for i in range(6):
+        a = i * math.tau / 6 + rnd.uniform(0, 0.5)
+        r = rnd.uniform(0.08, 0.22)
+        blob("tuft", rnd.uniform(0.09, 0.12), (math.cos(a) * r, math.sin(a) * r, 0.04), M("leaf_light" if i % 2 else "crop"), sub=1, scale=(1.3, 1.0, 0.7))
+    for i in range(14):
+        a = rnd.uniform(0, math.tau)
+        r = rnd.uniform(0.0, 0.3)
+        x, y = math.cos(a) * r, math.sin(a) * r
+        h = rnd.uniform(0.45, 0.62)
+        lx, ly = math.cos(a) * rnd.uniform(0.04, 0.12), math.sin(a) * rnd.uniform(0.04, 0.12)
+        beam("stalk", (x, y, 0.02), (x + lx, y + ly, h), 0.045, M("crop"))
+        # A drooping head of seed, in two chunky pieces.
+        blob("head", 0.06, (x + lx * 1.2, y + ly * 1.2, h + 0.03), M("flower_yellow"), sub=1, scale=(0.75, 0.75, 1.5))
+        blob("head", 0.045, (x + lx * 1.5, y + ly * 1.5, h + 0.12), M("reed_head" if i % 5 == 0 else "flower_yellow"), sub=1, scale=(0.7, 0.7, 1.3))
 
 
 def reeds(seed=1):
@@ -821,7 +986,13 @@ def colonist():
 
 MODELS = {
     "colonist": colonist, "campfire": campfire, "stockpile": stockpile, "well": well,
-    "farm_plot": farm_plot, "farm_crops": farm_crops,
+    "farm_plot": farm_plot, "farm_crops": farm_crops, "crop_tile": crop_tile,
+    "flower_bed": lambda: flower_bed(1, ("berry", "flower_yellow", "flower_white")),
+    "flower_bed_2": lambda: flower_bed(2, ("flower_violet", "flower_white", "flower_yellow")),
+    "flower_bed_3": lambda: flower_bed(3, ("flower_yellow", "berry", "flower_violet")),
+    "carving": lambda: carving(1), "carving_2": lambda: carving(2), "carving_3": lambda: carving(3),
+    "house_decor_1": lambda: house_decor(1), "house_decor_2": lambda: house_decor(2), "house_decor_3": lambda: house_decor(3),
+    "shelter": lambda: shelter(1), "shelter_2": lambda: shelter(2), "shelter_3": lambda: shelter(3),
     "house": lambda: house("red", 1, "shutter"), "house_2": lambda: house("red", 2, "shutter_blue"),
     "house_3": lambda: house("blue", 3, "shutter"), "house_4": lambda: house("red", 4, "shutter"),
     "storehouse": storehouse, "workshop": workshop, "kitchen": kitchen, "town_hall": town_hall,
@@ -830,6 +1001,7 @@ MODELS = {
     "wildflowers_2": lambda: wildflowers(2, ("flower_violet", "flower_white")),
     "wildflowers_3": lambda: wildflowers(3, ("flower_yellow", "berry")),
     "reeds": lambda: reeds(1), "reeds_2": lambda: reeds(2),
+    "wild_grain": lambda: wild_grain(1), "wild_grain_2": lambda: wild_grain(2),
     "rock": rock, "rock_2": rock_2, "rock_3": rock_3, "berry_bush": berry_bush,
     "sticks": sticks, "pebbles": pebbles, "grave": grave,
     "rabbit": lambda: rabbit("#9C8064"), "rabbit_2": lambda: rabbit("#B7A58C"), "rabbit_3": lambda: rabbit("#6E5A4A"),

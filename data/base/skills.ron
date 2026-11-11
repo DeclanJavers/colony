@@ -11,5 +11,12 @@
         (id: "stonework", name: "Stonework", taught: true, founders_know: 0.2),
         (id: "firemaking", name: "Firemaking", taught: true, founders_know: 0.5),
         (id: "exploring", name: "Exploring", taught: false, founders_know: 1.0),
+        (id: "building", name: "Building", taught: false, founders_know: 1.0),
+        (id: "farming", name: "Farming", taught: false, founders_know: 1.0),
+        (id: "hunting", name: "Hunting", taught: false, founders_know: 1.0),
+        // Free time (M7): skills that grow with a hobby.
+        (id: "singing", name: "Singing", taught: false, founders_know: 1.0),
+        (id: "gardening", name: "Gardening", taught: false, founders_know: 1.0),
+        (id: "carving", name: "Carving", taught: false, founders_know: 1.0),
     ],
 )

@@ -1,0 +1,14 @@
+// Buildings (M6). Houses are timber and wattle (no stone); the storehouse has a stone footing. Footprints are in tiles (w x h). `cost` is taken from the stores as builders
+// work; `minutes` is the total work. `sleeps` is how many sleep under its roof; `chill` scales
+// how much a cold night chills them (1 = like outside, 0 = not at all). `blocks`: walls stop
+// walkers; fields don't.
+[
+    (id: "shelter", name: "Shelter", w: 1, h: 1, blocks: true, cost: [("wood", 3), ("sticks", 8)], minutes: 150,
+     sleeps: 2, chill: 0.45, model: "shelter"),
+    (id: "house", name: "House", w: 2, h: 2, blocks: true, cost: [("wood", 12), ("sticks", 12)], minutes: 600,
+     sleeps: 6, chill: 0.15, model: "house"),
+    (id: "storehouse", name: "Storehouse", w: 2, h: 2, blocks: true, cost: [("wood", 12), ("stone", 2)], minutes: 480,
+     sleeps: 0, chill: 1.0, model: "storehouse"),
+    (id: "field", name: "Field", w: 3, h: 3, blocks: false, cost: [], minutes: 120,
+     sleeps: 0, chill: 1.0, model: "farm_plot"),
+]

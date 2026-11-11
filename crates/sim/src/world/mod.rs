@@ -69,6 +69,14 @@ pub struct Map {
     pub beauty: Vec<f32>,
     /// Node table slot index + 1 on each tile, 0 for none.
     pub node_at: Vec<u32>,
+    /// What's built on each tile: 0 nothing, 1 a building (blocks walking), 2 a field.
+    pub built: Vec<u8>,
+    /// Structure table slot index + 1 on each tile of a building or field, 0 for none.
+    pub building_at: Vec<u32>,
+    /// Within 2 tiles of a river or lake (the soil there stays damp).
+    pub near_water: Vec<bool>,
+    /// Today's weather and the snow on the ground.
+    pub weather: crate::weather::Weather,
     /// Where the first group arrives.
     pub start: (u32, u32),
     /// Bumped on every change to tiles or nodes (caches key on it).
@@ -94,6 +102,10 @@ impl Map {
             footfall: vec![0.0; n],
             beauty: vec![0.0; n],
             node_at: vec![0; n],
+            built: vec![0; n],
+            building_at: vec![0; n],
+            near_water: vec![false; n],
+            weather: Default::default(),
             start: (size / 2, size / 2),
             version: 0,
         }

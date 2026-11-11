@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::thread::JoinHandle;
 
 /// Bumped when the save layout changes.
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 5;
 
 #[derive(Serialize)]
 struct SaveRef<'a> {
@@ -29,6 +29,12 @@ struct SaveRef<'a> {
     camp: &'a Camp,
     streams: &'a Streams,
     chronicle: &'a Chronicle,
+    structures: &'a Table<crate::buildings::Structure>,
+    animals: &'a Table<crate::animals::Animal>,
+    wildlife: &'a crate::animals::Wildlife,
+    stats: &'a crate::sim::Stats,
+    settings: &'a crate::sim::Settings,
+    works: &'a [crate::sim::Work],
     command_log: &'a [(u64, Command)],
 }
 
@@ -44,6 +50,12 @@ struct SaveOwned {
     camp: Camp,
     streams: Streams,
     chronicle: Chronicle,
+    structures: Table<crate::buildings::Structure>,
+    animals: Table<crate::animals::Animal>,
+    wildlife: crate::animals::Wildlife,
+    stats: crate::sim::Stats,
+    settings: crate::sim::Settings,
+    works: Vec<crate::sim::Work>,
     command_log: Vec<(u64, Command)>,
 }
 
@@ -59,6 +71,12 @@ fn snapshot(sim: &Sim) -> SaveRef<'_> {
         camp: &sim.camp,
         streams: &sim.streams,
         chronicle: &sim.chronicle,
+        structures: &sim.structures,
+        animals: &sim.animals,
+        wildlife: &sim.wildlife,
+        stats: &sim.stats,
+        settings: &sim.settings,
+        works: &sim.works,
         command_log: &sim.command_log,
     }
 }
@@ -103,7 +121,7 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Sim, LoadError> {
     if s.format != FORMAT {
         return Err(LoadError::WrongFormat(s.format));
     }
-    let sim = Sim::from_parts(s.seed, s.tick, s.map, s.nodes, s.people, s.camp, s.streams, s.chronicle, s.command_log);
+    let sim = Sim::from_parts(s.seed, s.tick, s.map, s.nodes, s.people, s.camp, s.streams, s.chronicle, (s.structures, s.animals, s.wildlife, s.stats), (s.settings, s.works), s.command_log);
     if sim.content.hash != s.content_hash {
         return Err(LoadError::ContentChanged);
     }

@@ -20,6 +20,8 @@ struct Globals {
     fire: vec4<f32>,
     // x: 1 when the traffic lens is on
     lens: vec4<f32>,
+    // A selected area outlined in gold on the ground (x0, z0, x1, z1); none when x0 > x1.
+    area: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -179,6 +181,16 @@ fn ground_colour(world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
             c = g.pal[7].rgb;
         }
     }
+    let field = (u32(data.a * 255.0 + 0.5) & 1u) == 1u;
+    if (field && !steep) {
+        // A field: dug soil in raised rows (three to a tile, along x), the furrows darker.
+        let row = fract(t.y * 3.0);
+        let ridge = smoothstep(0.12, 0.3, row) * (1.0 - smoothstep(0.62, 0.8, row));
+        c = mix(g.pal[5].rgb, g.pal[4].rgb, ridge) * mix(0.92, 1.06, clump);
+        if (speck > 0.97) {
+            c = g.pal[5].rgb * 0.9;
+        }
+    }
     if (steep && kind != 4) {
         // Cliffs and banks show earth (stone up in the mountains).
         let rock = select(g.pal[4].rgb, g.pal[6].rgb, kind == 3 || world.y > 14.0);
@@ -194,6 +206,20 @@ fn ground_colour(world: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_terrain(i: TerrainOut) -> @location(0) vec4<f32> {
+    let c = terrain_colour(i);
+    if (g.area.x <= g.area.z && i.side < 0.5) {
+        // A selected field: a gold band along the inside of its edge, drawn on the ground so
+        // it follows the slope (a ring at one height would cut into the hill).
+        let p = i.world.xz;
+        let d = min(min(p.x - g.area.x, g.area.z - p.x), min(p.y - g.area.y, g.area.w - p.y));
+        if (d > -0.03 && d < 0.11) {
+            return vec4<f32>(vec3<f32>(0.807, 0.552, 0.138) * 1.15, c.a);
+        }
+    }
+    return c;
+}
+
+fn terrain_colour(i: TerrainOut) -> vec4<f32> {
     let n = normalize(i.normal);
     var c: vec3<f32>;
     if (i.side > 1.5) {
@@ -209,6 +235,41 @@ fn fs_terrain(i: TerrainOut) -> @location(0) vec4<f32> {
         c = ground_colour(i.world, n);
     }
     let lit = shade(c, n, i.world);
+    if (g.lens.x > 2.5 && i.side < 0.5) {
+        // Beauty lens: the world greyed, beautiful places glowing from dusky violet to warm
+        // white, in steps. (The tile texture's moisture channel holds beauty while it's on.)
+        let grey = vec3<f32>(dot(lit.rgb, vec3<f32>(0.3, 0.55, 0.15))) * 0.5;
+        let q = i.world.xz - vec2<f32>(0.5);
+        let b0 = vec2<i32>(floor(q));
+        let fq = fract(q);
+        let a0 = tile_data(b0).b;
+        let a1 = tile_data(b0 + vec2<i32>(1, 0)).b;
+        let a2 = tile_data(b0 + vec2<i32>(0, 1)).b;
+        let a3 = tile_data(b0 + vec2<i32>(1, 1)).b;
+        let beauty = mix(mix(a0, a1, fq.x), mix(a2, a3, fq.x), fq.y);
+        let level = floor(clamp(beauty, 0.0, 1.0) * 4.99) / 4.0;
+        let dusk = vec3<f32>(0.147, 0.102, 0.270);
+        let violet = vec3<f32>(0.456, 0.330, 0.870);
+        let warm = vec3<f32>(0.896, 0.823, 0.701);
+        let col = select(mix(violet, warm, (level - 0.5) * 2.0), mix(dusk, violet, level * 2.0), level < 0.5);
+        return vec4<f32>(mix(grey, col, smoothstep(0.0, 0.1, beauty) * 0.9), lit.a);
+    }
+    if (g.lens.x > 1.5 && i.side < 0.5) {
+        // Soil lens: the world greyed; richness from pale sand (poor) to deep green (rich), and
+        // wetter soil darker and bluer (as wet earth looks).
+        let soil = soil_at(i.world.xz);
+        let grey = vec3<f32>(dot(lit.rgb, vec3<f32>(0.3, 0.55, 0.15))) * 0.5;
+        let poor = vec3<f32>(0.604, 0.479, 0.216);
+        let mid = vec3<f32>(0.497, 0.540, 0.080);
+        let rich = vec3<f32>(0.052, 0.250, 0.036);
+        // Stepped (five bands), so it reads as pixel art and as a map.
+        let f = floor(clamp((soil.x - 0.15) / 0.75, 0.0, 1.0) * 4.99) / 4.0;
+        var col = select(mix(mid, rich, (f - 0.5) * 2.0), mix(poor, mid, f * 2.0), f < 0.5);
+        let wet = floor(clamp(soil.y, 0.0, 1.0) * 3.99) / 3.0;
+        col = mix(col, col * vec3<f32>(0.45, 0.6, 1.1), wet * 0.8);
+        let water = tile_data(vec2<i32>(floor(i.world.xz))).r * 255.0 < 2.5;
+        return vec4<f32>(select(mix(grey, col * 0.9, 0.85), grey, water), lit.a);
+    }
     if (g.lens.x > 0.5 && i.side < 0.5) {
         // Traffic lens: the world greyed and dimmed, footsteps glowing from brown to amber.
         let worn = worn_at(i.world.xz);
@@ -217,6 +278,19 @@ fn fs_terrain(i: TerrainOut) -> @location(0) vec4<f32> {
         return vec4<f32>(mix(grey, heat, smoothstep(0.0, 0.12, worn) * 0.9), lit.a);
     }
     return lit;
+}
+
+/// Soil richness (x) and moisture (y) here, blended across tiles.
+fn soil_at(p: vec2<f32>) -> vec2<f32> {
+    let q = p - vec2<f32>(0.5);
+    let b = vec2<i32>(floor(q));
+    let f = fract(q);
+    var v: array<vec2<f32>, 4>;
+    for (var k = 0; k < 4; k++) {
+        let d = tile_data(b + vec2<i32>(k & 1, k >> 1));
+        v[k] = vec2<f32>(f32(u32(d.a * 255.0 + 0.5) >> 1u) / 127.0, d.b);
+    }
+    return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
 }
 
 /// Footsteps worn into the ground here, as a share of a full trail (blended across tiles).
@@ -358,13 +432,15 @@ struct ModelIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) colour: vec3<f32>,
-    // 0 = fixed colour, 1 = leaves, 2 = lighter top leaves, 3 = flame (glows; hidden when out)
+    // 0 = fixed colour, 1 = leaves, 2 = lighter top leaves, 3 = flame (glows; hidden when out),
+    // 4 = window (glows when lit), 5 = roof (takes snow)
     @location(3) flag: f32,
     @location(4) m0: vec4<f32>,
     @location(5) m1: vec4<f32>,
     @location(6) m2: vec4<f32>,
     @location(7) m3: vec4<f32>,
-    // rgb: leaf colour for this instance; a: 1 = use it, 2 = hide flames
+    // rgb: leaf colour for this instance; a: 1 = use it, 2 = hide flames, 3 = windows lit,
+    // 4 = windows lit and use the leaf colour
     @location(8) tint: vec4<f32>,
 };
 
@@ -384,14 +460,20 @@ fn vs_model(v: ModelIn) -> ModelOut {
     o.world = w.xyz;
     o.normal = normalize((m * vec4<f32>(v.normal, 0.0)).xyz);
     var c = v.colour;
-    if (v.flag > 0.5 && v.tint.a > 0.5 && v.tint.a < 1.5) {
+    let use_tint = (v.tint.a > 0.5 && v.tint.a < 1.5) || v.tint.a > 3.5;
+    if (v.flag > 0.5 && v.flag < 3.5 && use_tint) {
         // Leaves take the season's tint; glowing things (lens rings) take the instance colour.
         c = v.tint.rgb * select(1.0, 1.22, v.flag > 1.5 && v.flag < 2.5);
     }
     o.colour = c;
     o.flag = v.flag;
+    if (v.flag > 3.5 && v.flag < 4.5 && v.tint.a > 2.5) {
+        // A lit window: lamp light (#FFB040), glowing like the fire (flag 6).
+        o.colour = vec3<f32>(1.0, 0.434, 0.051);
+        o.flag = 6.0;
+    }
     o.clip = g.view_proj * w;
-    if (v.flag > 2.5 && v.tint.a > 1.5) {
+    if (v.flag > 2.5 && v.flag < 3.5 && v.tint.a > 1.5 && v.tint.a < 2.5) {
         o.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     return o;
@@ -399,12 +481,28 @@ fn vs_model(v: ModelIn) -> ModelOut {
 
 @fragment
 fn fs_model(i: ModelOut) -> @location(0) vec4<f32> {
-    if (i.flag > 2.5) {
+    if (i.flag > 2.5 && i.flag < 3.5) {
         // Flames glow and keep their colour at night.
         let flicker = 0.85 + 0.15 * sin(g.season.z * 9.0 + i.world.y * 20.0);
         return vec4<f32>(i.colour * 1.6 * flicker, 0.0);
     }
-    return shade(i.colour, normalize(i.normal), i.world);
+    if (i.flag > 5.5) {
+        // Lit windows glow steadily.
+        return vec4<f32>(i.colour * 1.4, 0.0);
+    }
+    let n = normalize(i.normal);
+    var c = i.colour;
+    if (i.flag > 4.5 && i.flag < 5.5) {
+        // Snow settles on roofs, brighter than on the ground so roofs stand out (#F7FAFF). A
+        // light fall lies in patches (per art pixel), so a roof is never tinted pink.
+        let px = floor(i.world * 16.0) / 16.0;
+        let spot = vnoise(px.xz * 2.4 + vec2<f32>(px.y * 1.7, 0.0)) * 0.85 + hash2(px.xz * 16.0 + px.y) * 0.15;
+        let cover = g.season.y * smoothstep(0.25, 0.55, n.y);
+        if (spot < cover * 1.1 - 0.05) {
+            c = vec3<f32>(0.930, 0.955, 1.0);
+        }
+    }
+    return shade(c, n, i.world);
 }
 
 // ---------------------------------------------------------------------------------------------

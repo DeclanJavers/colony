@@ -180,6 +180,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "brains"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sim",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -297,6 +306,7 @@ dependencies = [
 name = "colony"
 version = "0.1.0"
 dependencies = [
+ "brains",
  "glam",
  "png",
  "pollster",
@@ -311,6 +321,7 @@ dependencies = [
 name = "colony-run"
 version = "0.1.0"
 dependencies = [
+ "brains",
  "png",
  "serde_json",
  "sim",

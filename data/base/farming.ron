@@ -1,0 +1,29 @@
+// Farming (M6): one crop, grain. Wild grain in meadows gives the first seed.
+(
+    crop: "grain",
+    // Grain sown per field, and grain a perfect harvest gives.
+    seed: 4,
+    harvest: 120,
+    // Growth per day in the best conditions is 1 / days_to_ripe; a field is ripe at 1.
+    days_to_ripe: 6.0,
+    // Seasons it can be sown in (spring, summer, autumn, winter).
+    sow: [true, true, false, false],
+    // Growth falls off outside these (temperature C, soil moisture 0..1). Below frost unripe
+    // grain is scorched; 4 degrees below that kills it.
+    best_temp: (8.0, 24.0),
+    best_moisture: (0.3, 0.85),
+    frost: -3.0,
+    // Weeds grow each day (0..1) and cut growth and the harvest; tending pulls them.
+    weeds_per_day: 0.08,
+    // Work, in minutes: sowing, tending and harvesting (clearing is the field's build time).
+    sow_minutes: 60,
+    tend_minutes: 40,
+    harvest_minutes: 90,
+    // A ripe field left standing loses this share of its grain per day.
+    overripe_loss: 0.08,
+    // From autumn, a field this far grown can be cut early (for that share of a full harvest)
+    // rather than lost to the frost.
+    early_harvest: 0.6,
+    // Stored food spoils: share lost per day in the open stores, and in a storehouse.
+    spoil: [("berries", 0.05, 0.004), ("grain", 0.01, 0.0), ("meat", 0.3, 0.08)],
+)
