@@ -131,6 +131,8 @@ func _ready() -> void:
 	if args.has("inspect"):
 		_inspect_for_test(String(args["inspect"]))
 
+	if args.has("pan-test"):   # test hook: how much of the picture changes as the camera pans slowly
+		_pan_test()
 	if args.has("shot"):
 		if args.has("shot-zooms"):   # test hook: one screenshot per zoom, <shot>_<zoom>.png, in one run
 			_take_zoom_shots(String(args["shot"]), String(args["shot-zooms"]), float(args.get("shot-delay", "2.0")))
@@ -195,6 +197,31 @@ func _inspect_for_test(what: String) -> void:
 	var pos: Variant = view.target_position(t)
 	if pos != null:
 		cam.focus(pos, true)
+
+
+func _pan_test() -> void:
+	await get_tree().create_timer(3.0).timeout
+	runner.set_speed_index(0)
+	for snap_on in [false, true]:
+		PixelPass.snap = snap_on
+		var counts: Array[int] = []
+		var prev: Image = null
+		for i in 12:
+			cam.position += cam.global_transform.basis.x.normalized() * PixelPass.step_m * 0.25
+			for f in 3:
+				await RenderingServer.frame_post_draw
+			var img := get_viewport().get_texture().get_image()
+			img.convert(Image.FORMAT_RGB8)
+			if prev != null:
+				var d := 0
+				for y in range(80, img.get_height() - 80, 3):
+					for x in range(0, img.get_width() * 2 / 3, 3):
+						if not img.get_pixel(x, y).is_equal_approx(prev.get_pixel(x, y)):
+							d += 1
+				counts.append(d)
+			prev = img
+		print("PAN snap=%s changed pixels per quarter-pixel step: %s" % [snap_on, counts])
+	get_tree().quit()
 
 
 func _take_zoom_shots(path: String, zooms: String, delay: float) -> void:

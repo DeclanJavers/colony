@@ -1,10 +1,18 @@
-.godot/
-/android/
-brain_server/.venv/
-brain_server/__pycache__/
-logs/
-*.blend1
 .DS_Store
-/models/
-assets/preview/
 /.claude/worktrees/
+
+# New build (Rust)
+/target/
+/runs/
+/brain/.venv/
+/brain/models/
+*.blend1
+
+# Archived Godot build (archive/godot-v1)
+.godot/
+logs/
+/archive/godot-v1/android/
+/archive/godot-v1/brain_server/.venv/
+/archive/godot-v1/brain_server/__pycache__/
+/archive/godot-v1/models/
+/archive/godot-v1/assets/preview/

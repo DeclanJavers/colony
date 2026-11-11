@@ -9,21 +9,23 @@ asset and this guide disagree, change the asset, or change the guide on purpose.
 Half-timbered houses with steep tiled roofs, cobbles worn in by footsteps, round leafy trees,
 crates and barrels, all sitting on a block of earth floating on a dark background.
 
-Reference screenshots of the current look are in `docs/style/` (`day`, `night`, `autumn`,
-`winter`, `map`). New work should sit comfortably next to them.
+Reference screenshots are in `docs/style/` (`day`, `night`, `autumn`, `winter`, `map`). They come
+from the first build (`archive/godot-v1`), and the rebuild keeps this look. New work should sit
+comfortably next to them.
 
 ## How we get it in 3D
 
-We build in 3D (Godot) and make it read as pixel art:
+We build in 3D (our Rust renderer, see ARCHITECTURE.md section 11) and make it read as pixel art:
 
 1. **Simple low-poly shapes.** Blocky forms. Nothing thinner than about 0.05 m: it vanishes once
    pixelated. Put detail where the game camera sees it: beams, shutters, tile rows, stones.
 2. **Flat colours from the palette below.** No photo textures, no gradients baked into models, at
    most a base and a darker accent per material. Light and shadow come from the renderer.
-3. **The pixel pass** (`scripts/view/pixel_pass.gd` + `.gdshader`) draws the world in big pixels
-   that belong to the world, like classic pixel art: one art pixel is 1/16 of a tile (the size of a
-   ground texel, so models and ground match), so they grow when you zoom in and shrink when you zoom
-   out (Settings → Pixels: fine 16 per tile, chunky 10, smooth off). It puts dark outlines where
+3. **The pixel pass** (v1: `archive/godot-v1/scripts/view/pixel_pass.gd` + `.gdshader`) draws the world in big pixels
+   that belong to the world, like classic pixel art: 24 art pixels per tile, so they grow when you
+   zoom in and shrink when you zoom out (Settings → Pixels: fine 24 per tile, chunky 14, smooth off).
+   An art pixel is always a whole number of rendered pixels, and the camera snaps to the art-pixel
+   grid, so panning moves the picture a whole art pixel at a time (no crawling or shimmer). It puts dark outlines where
    a shape ends against something further away, adds a softer line where surfaces meet at an angle,
    and applies the night grade. Colour banding is available (`bands`) but off: flat palette colours
    already band. Judge assets *through* the pixel pass in game, never in Blender.
@@ -68,7 +70,7 @@ A new colour goes into this table before it goes into a model.
 ## Shapes, proportions and variety
 
 - **1 tile = 1 m.** Each model's origin is the centre of its footprint at ground level; its front
-  (door) faces -Y in Blender (+Z in Godot).
+  (door) faces -Y in Blender (+Z in the game, Y up).
 - **Buildings:** stone footing (~0.25 m), plaster walls with timber framing (corner posts, top and
   bottom beams, a mid rail, braces on the long walls), shuttered windows, a framed plank door with a
   stone step. Roofs are steep (about 45°) with a 0.15 m overhang, visible tile rows, barge boards, a
@@ -86,9 +88,9 @@ A new colour goes into this table before it goes into a model.
 
 ## Ground
 
-- Grass is a shader (`scripts/view/ground.gdshader`) at 16 texels per tile: soft clumps of darker
-  and lighter green, a few specks, and small "v" tufts. Low contrast, no visible grid.
-- **Paths emerge from footsteps** (`Sim.footfall`): grass wears to dirt where colonists walk often,
+- Grass is a shader at 16 texels per tile: soft clumps of darker and lighter green, a few specks,
+  and small "v" tufts. Low contrast, no visible grid.
+- **Paths emerge from footsteps** (the footfall field): grass wears to dirt where people walk often,
   and the busiest ground near buildings becomes cobblestone. Nobody paints roads.
 - The map is a **diorama block**: the sides show a ragged turf lip over layered brown soil with a
   few stones; rivers that reach the edge show as water there. It floats on the dark background.
@@ -98,7 +100,8 @@ A new colour goes into this table before it goes into a model.
 - Seasons recolour the grass and leaves (spring fresh, summer deep, autumn ochre ground with orange,
   red and gold broadleaves). Winter covers the ground in snow (pale blue-grey, never pure white)
   and puts brighter snow on roofs, but ridges stay dark so roof shapes still read.
-- Rain is thin pale streaks, snow is soft flakes; both follow the camera.
+- Rain isn't drawn as particles (it made v1 busy): it shows in the light, wet ground and the top
+  bar. Snow is soft flakes that follow the camera.
 - Night is a cool blue grade from the pixel pass. Warm lights keep their colour: windows glow in
   the evening and before dawn wherever someone lives (and in the kitchen and town hall), then go
   dark while everyone sleeps; lamps burn all night; fires light the ground around them.
@@ -114,15 +117,14 @@ A new colour goes into this table before it goes into a model.
 
 ## Making new assets
 
-- Models come from `tools/blender/make_models.py`. Use its helpers (`box`, `beam`, `blob`,
-  `tiled_roof`, `timber_face`, `window`, `door`, `crate`, `barrel`...) and its palette `P`, which
-  mirrors the table above. Build one model only:
-  `Blender -b -P tools/blender/make_models.py -- assets/models house_2`
-- Then reimport: `Godot --headless --path . --import`. The game does not reimport on its own.
+- Models come from the Blender pipeline (v1: `archive/godot-v1/tools/blender/`; it moves to
+  `tools/blender/` at M2). Use its helpers (`box`, `beam`, `blob`, `tiled_roof`, `timber_face`,
+  `window`, `door`, `crate`, `barrel`...) and its palette `P`, which mirrors the table above.
+  Build one model only: `Blender -b -P tools/blender/make_models.py -- assets/models house_2`
 - Name the parts the game changes: `window` (lit at night), `leaves1`/`leaves2` (seasonal colour),
   `flame`, `lamp`; roof parts keep their `roof_*` material names (winter snow). Everything else is
   merged per material to keep draw calls low.
 - Variants are `<name>_2.glb`, `<name>_3.glb`..., picked per object automatically.
 - Check every new asset in game with `tools/shot.sh` (it opens on screen 0, in the background) at
   normal zoom (`--zoom 13`), close (`--zoom 9`), whole map (`--zoom 45`), at night (`--time 21`) and
-  in winter (`--day 13`), before calling it done.
+  in winter, before calling it done (the flags are set when shot.sh is rebuilt at M2).
