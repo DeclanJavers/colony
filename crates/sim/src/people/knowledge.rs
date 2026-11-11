@@ -115,15 +115,32 @@ impl Knowledge {
 
     /// Known nodes of a kind with something left, nearest first (up to `k`).
     pub fn nearest_nodes(&self, kind: u16, from: (f32, f32), k: usize) -> Vec<(Id<Node>, &KnownNode, f32)> {
-        let mut v: Vec<(Id<Node>, &KnownNode, f32)> = self
-            .nodes
-            .iter()
-            .filter(|(_, n)| n.kind == kind && n.amount >= 1.0)
-            .map(|(id, n)| (*id, n, ((n.x as f32 + 0.5 - from.0).powi(2) + (n.y as f32 + 0.5 - from.1).powi(2)).sqrt()))
-            .collect();
-        v.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
-        v.truncate(k);
-        v
+        self.nearest_by_kind(from, k, kind as usize + 1).swap_remove(kind as usize)
+    }
+
+    /// For every kind (below `kinds`) at once: known nodes with something left, nearest first
+    /// (up to `k` each). One pass, because people know hundreds of places and k is small.
+    pub fn nearest_by_kind(&self, from: (f32, f32), k: usize, kinds: usize) -> Vec<Vec<(Id<Node>, &KnownNode, f32)>> {
+        let mut out: Vec<Vec<(Id<Node>, &KnownNode, f32)>> = (0..kinds).map(|_| Vec::with_capacity(k + 1)).collect();
+        for (id, n) in &self.nodes {
+            if n.amount < 1.0 || n.kind as usize >= kinds {
+                continue;
+            }
+            let v = &mut out[n.kind as usize];
+            let d2 = (n.x as f32 + 0.5 - from.0).powi(2) + (n.y as f32 + 0.5 - from.1).powi(2);
+            if v.len() == k && v.last().is_some_and(|l| (d2, *id) >= (l.2, l.0)) {
+                continue;
+            }
+            let at = v.partition_point(|e| (e.2, e.0) < (d2, *id));
+            v.insert(at, (*id, n, d2));
+            v.truncate(k);
+        }
+        for v in out.iter_mut() {
+            for e in v.iter_mut() {
+                e.2 = e.2.sqrt();
+            }
+        }
+        out
     }
 
     pub fn nearest_water(&self, from: (f32, f32), k: usize) -> Vec<(&KnownWater, f32)> {

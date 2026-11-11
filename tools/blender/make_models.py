@@ -750,6 +750,23 @@ def pebbles():
              M(["stone", "stone_light", "stone_dark"][i % 3]), sub=1, scale=(1.2, 1, 0.7))
 
 
+def grave():
+    """A grave: a low mound of earth edged with stones (so it reads on worn dirt as well as
+    grass), a standing stone at its head and a few wildflowers. Faces -Y; the head is at +Y."""
+    blob("mound", 0.3, (0, -0.04, 0.0), M("soil_dark"), sub=2, scale=(0.75, 1.25, 0.34))
+    blob("mound_top", 0.2, (0, -0.06, 0.06), M("soil"), sub=1, scale=(0.7, 1.2, 0.3))
+    for i in range(10):
+        a = i / 10 * 2 * math.pi
+        r = 0.05 if i % 3 else 0.06
+        blob("edge_stone", r, (math.cos(a) * 0.25, -0.04 + math.sin(a) * 0.4, r * 0.5),
+             M("stone_light" if i % 2 else "stone"), sub=1, scale=(1.2, 1, 0.7))
+    box("headstone", (0.3, 0.1, 0.4), (0, 0.4, 0.2), M("stone"))
+    box("headstone_top", (0.24, 0.1, 0.07), (0, 0.4, 0.43), M("stone_light"))
+    box("headstone_base", (0.36, 0.16, 0.06), (0, 0.4, 0.03), M("stone_dark"))
+    for i, (x, y) in enumerate([(-0.1, -0.22), (0.1, -0.05), (-0.06, 0.12)]):
+        blob("flower", 0.05, (x, y, 0.11), M(["flower_white", "flower_yellow", "flower_violet"][i]), sub=1)
+
+
 # ---- Animals (scenery: the view moves them; nothing in the sim) ------------------------------
 # Faces -Y like everything else. Parts the view animates keep their names: legs (leg_*), wings
 # (wing_l, wing_r), head.
@@ -814,7 +831,7 @@ MODELS = {
     "wildflowers_3": lambda: wildflowers(3, ("flower_yellow", "berry")),
     "reeds": lambda: reeds(1), "reeds_2": lambda: reeds(2),
     "rock": rock, "rock_2": rock_2, "rock_3": rock_3, "berry_bush": berry_bush,
-    "sticks": sticks, "pebbles": pebbles,
+    "sticks": sticks, "pebbles": pebbles, "grave": grave,
     "rabbit": lambda: rabbit("#9C8064"), "rabbit_2": lambda: rabbit("#B7A58C"), "rabbit_3": lambda: rabbit("#6E5A4A"),
     # (deer, deer_2, deer_3 are rigged and animated: tools/blender/deer.py)
     "bird": lambda: bird("#6B4F3A"), "bird_2": lambda: bird("#3F5E8C"), "bird_3": lambda: bird("#A8452F"),

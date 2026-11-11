@@ -284,6 +284,8 @@ pub struct PersonDraw {
     pub facing: f32,
     pub height: f32,
     pub build: f32,
+    /// Overall size (children are smaller; 1 for grown people).
+    pub size: f32,
     pub skin: [f32; 3],
     pub hair: [f32; 3],
     pub clothes: [f32; 3],

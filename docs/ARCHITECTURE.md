@@ -136,6 +136,80 @@ Each person carries the following:
 | Beliefs | A store of belief records. The base uses it only for world beliefs; religion and politics expansions add more. |
 | Current | Action, target, plan, and the decision that started it. |
 
+**Families and society (M5).** The numbers live in `data/base/life.ron`.
+- **Life pace:** people age 4 years per game year (one per season), so a child grows up in
+  about 80 minutes at 10× and a life lasts about 5 hours.
+  - **Babies** (under 3): make no decisions. They stay at their carer's side (their mother if
+    she's alive, else their father, else the closest grown relative).
+    - Under 2 they nurse from their mother.
+    - After that they share their carer's meals and drinks, and anyone can bring them food and
+      water from the stores.
+  - **Children** (3 to 13): a short list of options: eat, drink, sleep, play, talk, and learn by
+    watching an adult.
+  - **Adults** (14 and up) and **elders** (55 and up): elders' health slowly gets weaker, and
+    the chance of dying of old age rises each year.
+- **Family:** mother, father, partner and children are stored on each person. Kinship (parent,
+  child, sibling, grandparent) is worked out from those links.
+- **Two-person choices use invitations.** Asking someone to be partners, to try for a child, to
+  teach them, or for food puts an invitation in the other person's inbox. It shows up as an
+  option at their next decision, so their own brain accepts or lets it lapse, and that is traced.
+  Unanswered invitations lapse after 6 game hours.
+- **Social actions:**
+  - **Talk:** to someone awake nearby. It eases social for both, raises familiarity, and moves
+    affection by how well their traits fit. A clash can turn into an argument. They pass on news
+    (places the other doesn't know about) and gossip (opinions of a third person).
+  - **Court:** raises romance.
+  - **Ask to be partners** and **try for a child:** both by invitation.
+  - **Feed a baby or child.**
+  - **Teach** (by invitation) and **learn by watching.** Teaching weighs how useful the skill
+    is right now: what its work is worth, and fire before cold nights. So a skill whose products
+    nobody needs (stonework, until tools and building want stone) isn't passed on, and dies out.
+  - **Ask for food:** when someone has none.
+  - **Bury the dead:** a body lies where the person died until someone buries it, and a grave
+    marks the spot.
+- **Relationships:** for each pair: familiarity, affection, respect and romance (each 0 to 1,
+  affection -1 to 1), plus whether they are partners. Familiarity grows with time spent
+  together; the other measures change through talk, help, teaching, arguments and gossip. All of
+  them slowly fade if unused.
+- **Memories:** episodes with a feeling (-1 to 1) and an importance (0 to 1). Their strength
+  fades by the day, slowly for important ones, and weak memories are forgotten. Recent strong
+  memories count towards mood ("Grieving Bram").
+- **Pregnancy and birth:** a child is conceived only after both partners accept "try for a
+  child". Pregnancy lasts 9 months of age-time (about 4.5 game days). The child takes one allele
+  per gene from each parent and gets a name nobody alive has. Each person records their
+  generation.
+- **Skills that can be lost:** skills marked `taught` (firemaking, stonework) are known only at
+  level 1 or more.
+  - Only some founders know them.
+  - Without one, its actions are impossible ("doesn't know how to make fire").
+  - They can only be learned from someone who knows them.
+  - When the last person who knows one dies, a `SkillLost` event and a chronicle entry record it.
+- **The chronicle:** `Sim::chronicle` keeps history written from events: births, deaths,
+  partnerships, teachings, skills lost, firsts, and each year's summary. Each entry has the
+  people involved and an importance. The History ledger shows it as a timeline, filtered by the
+  detail setting. It is saved.
+- **As built (M5):**
+  - **Other people:** actions read a snapshot of everyone taken at the start of the tick
+    (`family::Seen`). Changes to anyone but the person acting are `social::Effect`s, applied in
+    order after everyone's turn, so results never depend on who moved first.
+  - **Inviting someone** interrupts what they're doing only if it's easy-going: resting,
+    playing, exploring, watching, talking.
+  - **Arguments** scale with temper (low calm on both sides), bad feeling, and strain (hunger,
+    tiredness, cold).
+  - **Affection** grows more slowly the higher it already is.
+  - **Ageing in the UI:** spans of time past a season are shown in years of age, so they match
+    people's ages.
+  - **Places by the fire:** each person has their own spot, for sitting and for sleeping. Spots
+    are on rings inside the fire's warmth, and the youngest get the closest. Before this, people
+    stacked on the same tiles. Unstacking first pushed the youngest out of the fire's reach and
+    they froze.
+  - **Burial ground:** someone who dies near the fire is buried at least 8 m out, on the side
+    where they lay. Graves among the living would take their places by the fire.
+  - **Exploring in the evening** scores lower, so people don't end up far from the fire at
+    bedtime.
+  - **Headless check:** `colony-run life --seeds 1..6 --years 16 [--chronicle]` follows colonies
+    over the years.
+
 ## 5. Actions
 
 - **What each action kind defines:**
@@ -352,12 +426,15 @@ here.
   tile edges. Deeper water is darker, with ripples.
 - **Lighting:** one sun with a shadow map, warm point lights (fires, windows) and a night grade.
 - **Pixel pass** (v1's look, kept):
-  - **Pixel size:** 24 art pixels per tile, belonging to the world. An art pixel is always a
-    whole number of screen pixels.
+  - **Pixel size:** 48 art pixels per tile, belonging to the world (24 until M5). An art pixel
+    is always a whole number of screen pixels. `COLONY_ART_PER_TILE` overrides it, for
+    comparing densities.
   - **Camera snap:** the camera snaps to the art-pixel grid so panning doesn't crawl.
   - **Lines:** outlines where depth jumps, softer lines at creases.
-  - **Resolution:** the scene is always drawn at art-pixel resolution, so a full-screen frame costs
-    about the same as a small one. Measured on the M3 Pro: 2 to 5 ms GPU at 3024×1964.
+  - **Resolution:** the scene is always drawn at art-pixel resolution, capped at the window's.
+    At 48 per tile, mid and far zooms render at full window resolution. Measured on the M3 Pro
+    at 3024×1964 with 25 people, the inspector and a lens open: 423 fps at zoom 7, 381 at 16,
+    192 at 40, 169 at 120.
 - **The sharp overlay** is drawn after the pixel pass: text, icons, bubbles, selection rings and
   lens colours.
 - **Targets:** 120+ fps full screen with 50 people on the M3 Pro, and no frame over 16 ms from
@@ -409,6 +486,19 @@ Art direction is in [STYLE.md](STYLE.md).
 - **Story feed (M4):** built from sim events, stamped with the tick they happened on
   (`Sim::take_timed_events`). The same thing happening to several people within three hours
   groups into one line ("3 people are very thirsty").
+- **Everything is clickable:** people, resource nodes (trees, bushes, rocks, sticks, flowers),
+  graves, the fire and the stores.
+  - The cursor picks a person if one is within reach, otherwise the thing whose upright shape on
+    screen it's over (`view::pick`).
+  - A thing gets the same hover card and inspector panel as a person, with a gold ring.
+  - What a thing's inspector shows:
+    - **Grave:** who lies there, how they died, who buried them, their family, and who still
+      remembers them.
+    - **Resource:** what's left, how it grows back, what it's used for, and how many people know
+      of it.
+    - **Fire:** fuel, who lit it, and how many can relight it.
+    - **Stores:** contents and days of food.
+  - Buildings (M6) will join this list.
 - **Headless UI shots:** `colony --shot out.png --inspect K --tab log --trace N --lens traffic
   --detail analyst --cursor X,Y` renders any view without a window; `--bench` takes the same
   options to time frames with the UI open.

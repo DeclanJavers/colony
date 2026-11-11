@@ -1,0 +1,67 @@
+// Families and society (M5): the life course, partners and children, relationships, memories and
+// the social actions' numbers. Ages are in years of age; people age `age_per_year` years each
+// game year (so a life fits in a few hours of play: see docs/ARCHITECTURE.md section 4).
+(
+    age_per_year: 4.0,
+    // Life stages: babies (under child_age) make no decisions; children (under adult_age) choose
+    // from a short list; elders (from elder_age) slowly weaken.
+    child_age: 3.0,
+    adult_age: 14.0,
+    elder_age: 55.0,
+    // Children of this age and up can forage and gather sticks.
+    help_age: 8.0,
+    // Old age: the yearly chance of dying is old_age_hazard * e^((age - elder_age) / old_age_scale),
+    // and the most health an elder can have falls by elder_weakening per year past elder_age.
+    old_age_hazard: 0.01,
+    old_age_scale: 8.0,
+    elder_weakening: 0.01,
+    // Having children: ages, how long pregnancy lasts (years of age), the chance one try
+    // conceives, the wait after a birth before another, and the small risk of dying in childbirth.
+    fertile_female: (16.0, 45.0),
+    fertile_male: (16.0, 70.0),
+    pregnancy_years: 0.75,
+    conceive_chance: 0.35,
+    birth_gap_years: 1.5,
+    childbirth_death: 0.01,
+    // Babies under nursing_age feed from their mother when she's close by. After that, until
+    // they can fend for themselves, someone has to bring them food and water.
+    nursing_age: 2.0,
+    // How much of a grown child's height a baby has at birth.
+    birth_height: 0.3,
+    // Who people are drawn to: the share drawn to the other sex (the rest, the same sex).
+    drawn_to_other: 0.9,
+    // Partners: the largest age gap for courting, and the romance needed to ask.
+    court_age_gap: 15.0,
+    propose_romance: 0.6,
+    // Relationships: familiarity per hour spent close together, and daily fading.
+    familiarity_per_hour: 0.01,
+    affection_fade: 0.99,
+    romance_fade: 0.98,
+    familiarity_fade: 0.002,
+    // Talking: minutes, the chance two excitable people argue, and the places shared as news.
+    talk_minutes: 20,
+    argue_chance: 0.03,
+    news_places: 3,
+    // Courting, asking (walk over and ask), lessons, play, feeding and burying (minutes).
+    court_minutes: 30,
+    ask_minutes: 5,
+    lesson_minutes: 60,
+    watch_minutes: 45,
+    play_minutes: 40,
+    feed_minutes: 10,
+    bury_minutes: 60,
+    together_minutes: 30,
+    // Practice a lesson gives, per minute, scaled by the teacher's level / 5 (0.4 to 2).
+    lesson_rate: 0.5,
+    watch_rate: 0.3,
+    // Lessons are offered to those under this age; younger children learn taught skills only
+    // once they're old enough to help (help_age).
+    learn_until: 25.0,
+    // Invitations lapse after this many hours.
+    invite_hours: 6.0,
+    // Memories fade each day by fade * (1 - importance) of their strength and are forgotten
+    // below forget; at most keep_memories are kept.
+    memory_fade: 0.15,
+    forget: 0.05,
+    keep_memories: 40,
+)

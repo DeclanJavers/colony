@@ -1,4 +1,5 @@
 //! M3 "done when" checks (docs/ROADMAP.md): survival, speed, the body clock, and decision traces.
+//! (M5's are in tests/families.rs.)
 
 use sim::Sim;
 use sim::brain::Ending;
@@ -20,9 +21,17 @@ fn a_rules_colony_survives_a_year_on_ten_seeds() {
         sim.run_ticks(year);
         let secs = t.elapsed().as_secs_f64();
         assert!(secs < 60.0, "seed {seed}: a year took {secs:.1} s (budget 60)");
-        let alive = sim.alive();
-        if alive < sim.people.len() {
-            lost.push(format!("seed {seed}: {} of {} died", sim.people.len() - alive, sim.people.len()));
+        // Survival: nobody dies of hunger, thirst, cold or exhaustion. (Since M5 people are also
+        // born, grow old and can die in childbirth: those are life, not a failure to survive.)
+        let starved: Vec<String> = sim
+            .people
+            .iter()
+            .filter_map(|(_, p)| p.died.as_ref().map(|d| (p, d)))
+            .filter(|(_, d)| !matches!(d.1.as_str(), "old age" | "childbirth"))
+            .map(|(p, d)| format!("{} ({:.0}) of {}", p.name, p.age_years(sim.tick, &sim.content), d.1))
+            .collect();
+        if !starved.is_empty() {
+            lost.push(format!("seed {seed}: {}", starved.join(", ")));
         }
     }
     assert!(lost.is_empty(), "{}", lost.join("; "));

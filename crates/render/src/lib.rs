@@ -1,6 +1,6 @@
 //! Colony's renderer (ARCHITECTURE.md section 11): terrain chunks, water and instanced models,
 //! lit by the sun with a shadow map, drawn into a low-resolution target whose pixels belong to the
-//! world (about 24 per tile), then scaled up by the pixel pass with outlines and the night grade.
+//! world (48 per tile), then scaled up by the pixel pass with outlines and the night grade.
 //! The camera snaps to the art-pixel grid so panning never crawls. The renderer only reads the sim.
 
 pub mod models;
@@ -18,7 +18,13 @@ use terrain::{CHUNK, TerrainVertex, WaterVertex};
 use wgpu::util::DeviceExt;
 
 /// Art pixels per tile (metre) of ground.
-pub const PER_TILE: f32 = 24.0;
+pub const PER_TILE: f32 = 48.0;
+
+/// Art pixels per tile: PER_TILE, or COLONY_ART_PER_TILE for comparing densities.
+fn per_tile() -> f32 {
+    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("COLONY_ART_PER_TILE").ok().and_then(|v| v.parse().ok()).unwrap_or(PER_TILE))
+}
 /// The format the scene is drawn in before the pixel pass.
 const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -139,6 +145,8 @@ pub struct Frame<'a> {
     pub traffic: bool,
     pub people: &'a [PersonDraw],
     pub camp: Option<CampDraw>,
+    /// A gold ring around a selected thing (not a person): where, and how wide (metres).
+    pub marker: Option<(Vec3, f32)>,
 }
 
 /// How the camera maps the world onto the window this frame.
@@ -159,10 +167,10 @@ pub struct View {
 impl View {
     pub fn new(cam: &Camera, w: u32, h: u32) -> View {
         // Zoom snaps to fixed levels so pixels never twitch: close up, an art pixel is exactly
-        // 1/24 m and a whole number of screen pixels; far out, a screen pixel shows a whole number
+        // 1/48 m and a whole number of screen pixels; far out, a screen pixel shows a whole number
         // of art pixels. Between levels nothing changes.
         let wanted = cam.size.max(0.5) / h.max(1) as f32; // metres per screen pixel
-        let art = 1.0 / PER_TILE;
+        let art = 1.0 / per_tile();
         let (px, t) = if wanted <= art {
             (((art / wanted).round() as u32).max(1), art)
         } else {
@@ -912,12 +920,20 @@ impl Renderer {
                 dyn_list.push((m, if camp.lit { Instance::new(t, None) } else { Instance::unlit(t) }));
             }
         }
+        if let Some((at, width)) = frame.marker
+            && let Some(&m) = self.names.get("ring")
+        {
+            let w = width / 0.78;
+            dyn_list.push((m, Instance::new(Mat4::from_translation(at) * Mat4::from_scale(Vec3::new(w, 1.0, w)), None)));
+        }
         if let Some(pg) = self.people.as_mut() {
             let jn = pg.rig.joint_count();
             let mut joints: Vec<Mat4> = Vec::with_capacity(frame.people.len() * jn);
             let mut inst: Vec<PersonInstance> = Vec::with_capacity(frame.people.len());
             for p in frame.people.iter().take(MAX_PEOPLE) {
-                let st = pg.anim.entry(p.key).or_insert(AnimState { clip: p.clip, since: frame.time, prev: p.clip, phase: 0.0, prev_phase: 0.0, last: frame.time });
+                // Someone first seen mid-hold (already sitting or lying) starts settled, not standing.
+                let settled = if Rig::holds(p.clip) { 1.0e3 } else { 0.0 };
+                let st = pg.anim.entry(p.key).or_insert(AnimState { clip: p.clip, since: frame.time - 1.0, prev: p.clip, phase: settled, prev_phase: settled, last: frame.time });
                 if st.clip != p.clip {
                     st.prev = st.clip;
                     st.prev_phase = st.phase;
@@ -939,7 +955,7 @@ impl Renderer {
                 } else {
                     pg.rig.pose((st.clip, local(st.clip, st.phase)), None, &mut joints)
                 };
-                let scale = Vec3::new(0.9 + 0.2 * p.build, p.height, 0.9 + 0.2 * p.build);
+                let scale = Vec3::new(0.9 + 0.2 * p.build, p.height, 0.9 + 0.2 * p.build) * p.size;
                 let model = Mat4::from_translation(p.pos) * Mat4::from_rotation_y(p.facing) * Mat4::from_scale(scale);
                 inst.push(PersonInstance {
                     model: model.to_cols_array_2d(),
@@ -951,10 +967,11 @@ impl Renderer {
                 });
                 if let Some(&m) = self.names.get("ring") {
                     // Gold for the selected person; a lens colour (mood, needs) for everyone else.
+                    let ring = Mat4::from_translation(p.pos) * Mat4::from_scale(Vec3::new(p.size.max(0.5), 1.0, p.size.max(0.5)));
                     if p.selected {
-                        dyn_list.push((m, Instance::new(Mat4::from_translation(p.pos), None)));
+                        dyn_list.push((m, Instance::new(ring, None)));
                     } else if let Some(c) = p.ring {
-                        dyn_list.push((m, Instance::new(Mat4::from_translation(p.pos) * Mat4::from_scale(Vec3::new(0.8, 1.0, 0.8)), Some(c))));
+                        dyn_list.push((m, Instance::new(ring * Mat4::from_scale(Vec3::new(0.8, 1.0, 0.8)), Some(c))));
                     }
                 }
                 if let Some(item) = p.carry
@@ -1123,6 +1140,11 @@ impl Renderer {
     }
 
     /// Where a world point lands in the window last frame (for picking people).
+    /// How tall a node kind's model is (metres), for picking it under the cursor.
+    pub fn kind_height(&self, kind: u16) -> f32 {
+        self.kind_models.get(kind as usize).and_then(|l| l.first()).map_or(0.5, |&m| self.models[m].height)
+    }
+
     pub fn to_screen(&self, p: Vec3, win: (u32, u32)) -> Option<Vec2> {
         let v = self.last_view?;
         let c = v.view_proj * p.extend(1.0);

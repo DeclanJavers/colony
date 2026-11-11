@@ -15,6 +15,12 @@
   initial heading are removed; the game moves the colonist itself).
 * Placeholder clips "idle" and "walk" are hand-keyed so the game can use the rig before any
   Kimodo motions exist. A BVH clip with the same name replaces them.
+* "sit" is always hand-keyed (it replaces Kimodo's): back upright, knees up, forearms resting on
+  the knees. Kimodo's sat hunched forward with straight arms, which read as a lump from the
+  game's high camera.
+* The shipped villager is built with the v1 clips and their chosen takes:
+      Blender -b -P tools/blender/villager.py -- --out assets/models \
+          --bvh archive/godot-v1/assets/anim_src/bvh_v1 --takes archive/godot-v1/tools/animation/takes.json
 """
 import glob
 import math
@@ -290,6 +296,40 @@ def make_placeholders(arm):
         key_world_pose(arm, f + 1, chain(arm, loc), Vector((0, 0, 0.015 * abs(math.cos(t)) - 0.015)))
 
 
+def sit_pose(t):
+    """Rotations for sitting on the ground, blended from standing (t = 0) to seated (t = 1)."""
+    def lerp(a, b):
+        return a + (b - a) * t
+    thigh = lerp(0, -118)     # thighs forward and up (knees raised)
+    shin = lerp(0, 100)       # shins back down to the ground
+    spread = lerp(0, 9)       # knees a little apart
+    return {
+        "Spine1": q_axis((1, 0, 0), lerp(0, 8)),            # a slight lean towards the fire
+        "Head": q_axis((1, 0, 0), lerp(0, -6)),             # looking ahead, not at the ground
+        "LeftLeg": q_axis((0, 1, 0), spread) @ q_axis((1, 0, 0), thigh),
+        "RightLeg": q_axis((0, 1, 0), -spread) @ q_axis((1, 0, 0), thigh),
+        "LeftShin": q_axis((1, 0, 0), shin), "RightShin": q_axis((1, 0, 0), shin),
+        "LeftFoot": q_axis((1, 0, 0), lerp(0, 10)), "RightFoot": q_axis((1, 0, 0), lerp(0, 10)),
+        # Upper arms forward, forearms resting along the thighs towards the knees.
+        "LeftArm": q_axis((1, 0, 0), lerp(0, -42)) @ q_axis((0, 1, 0), 78),
+        "RightArm": q_axis((1, 0, 0), lerp(0, -42)) @ q_axis((0, 1, 0), -78),
+        "LeftForeArm": q_axis((1, 0, 0), lerp(-8, -38)), "RightForeArm": q_axis((1, 0, 0), lerp(-8, -38)),
+    }
+
+
+def make_sit(arm):
+    """Sit down on the ground over about a second, then hold (a one-shot clip)."""
+    if "sit" in bpy.data.actions:
+        bpy.data.actions.remove(bpy.data.actions["sit"])
+    new_action(arm, "sit")
+    frames = 28
+    for f in range(0, frames + 1, 2):
+        t = f / frames
+        t = t * t * (3 - 2 * t)   # ease in and out
+        # The hips come down to just above the ground (0.48 m at rest).
+        key_world_pose(arm, f + 1, chain(arm, sit_pose(t)), Vector((0, 0.02 * t, -0.385 * t)))
+
+
 # ------------------------------------------------------------------------------------ retarget
 
 def retarget_bvh(arm, path, name=None):
@@ -414,6 +454,7 @@ if BVH_DIR:
         if clip in bpy.data.actions:
             bpy.data.actions.remove(bpy.data.actions[clip])   # Kimodo clip replaces placeholder
         retarget_bvh(arm, path, clip)
+make_sit(arm)
 arm.animation_data.action = bpy.data.actions["idle"]
 for pb in arm.pose.bones:
     if "_prevq" in pb:

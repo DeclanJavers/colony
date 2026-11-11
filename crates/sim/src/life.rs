@@ -68,7 +68,8 @@ pub fn body(p: &mut Person, c: &Content, map: &Map, camp: &Camp, tick: u64, comp
 }
 
 /// Look around: resource nodes, fresh water, the camp. What they see replaces what they believed.
-pub fn perceive(p: &mut Person, c: &Content, map: &Map, nodes: &Table<Node>, camp: &Camp, tick: u64, radius: u32) {
+#[allow(clippy::too_many_arguments)]
+pub fn perceive(p: &mut Person, c: &Content, map: &Map, nodes: &Table<Node>, camp: &Camp, tick: u64, radius: u32, check_gone: bool) {
     let n = map.size as i32;
     let r = radius as i32;
     let (px, py) = (p.pos.0 as i32, p.pos.1 as i32);
@@ -97,14 +98,15 @@ pub fn perceive(p: &mut Person, c: &Content, map: &Map, nodes: &Table<Node>, cam
     if let Some((x, y, _)) = water {
         p.knowledge.see_water(x as u16, y as u16, tick, (camp.stores_at.0 as u32, camp.stores_at.1 as u32));
     }
-    // Things they remember here that are gone.
-    let gone: Vec<_> = p
+    // Things they remember here that are gone (checked less often: it's a scan of everything
+    // they know, and things rarely vanish).
+    let gone: Vec<_> = if !check_gone { Vec::new() } else { p
         .knowledge
         .nodes
         .iter()
         .filter(|(id, k)| (k.x as i32 - px).pow(2) + (k.y as i32 - py).pow(2) <= r * r && nodes.get(**id).is_none())
         .map(|(id, _)| *id)
-        .collect();
+        .collect() };
     for id in gone {
         p.knowledge.forget_node(id);
     }

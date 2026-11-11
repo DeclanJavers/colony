@@ -8,7 +8,10 @@ use crate::content::Content;
 use crate::events::Event;
 use crate::ids::{Id, Table};
 use crate::path::{Pathfinder, tile_cost, walk_pace};
+use crate::family::Seen;
+use crate::people::social::{Ask, Stage};
 use crate::people::{Person, PersonId, TRAITS};
+use crate::social::{self, Effect};
 use crate::rng::Rng;
 use crate::world::{Map, Node, Water};
 use serde::{Deserialize, Serialize};
@@ -66,6 +69,18 @@ pub enum Kind {
     TendFire,
     Explore { x: u16, y: u16 },
     CheckStores,
+    // Social (M5: social.rs)
+    Talk { with: PersonId },
+    Court { with: PersonId },
+    /// Walk over and ask (partnership, a child, a lesson, food); then wait for the answer.
+    Ask { with: PersonId, ask: Ask },
+    /// Say yes to what someone asked.
+    Answer { from: PersonId, ask: Ask },
+    /// Follow someone at work and learn by watching.
+    Watch { who: PersonId, skill: u8 },
+    Play,
+    Feed { child: PersonId },
+    Bury { body: PersonId },
 }
 
 impl Kind {
@@ -85,7 +100,20 @@ impl Kind {
             Kind::TendFire => "tend_fire".into(),
             Kind::Explore { .. } => "explore".into(),
             Kind::CheckStores => "check_stores".into(),
+            Kind::Talk { .. } => "talk".into(),
+            Kind::Court { .. } => "court".into(),
+            Kind::Ask { ask, .. } => format!("ask_{}", ask_name(*ask)),
+            Kind::Answer { ask, .. } => format!("answer_{}", ask_name(*ask)),
+            Kind::Watch { .. } => "watch".into(),
+            Kind::Play => "play".into(),
+            Kind::Feed { .. } => "feed".into(),
+            Kind::Bury { .. } => "bury".into(),
         }
+    }
+
+    /// Is this something a person can drop for a moment when someone asks them something?
+    pub fn leisurely(&self) -> bool {
+        matches!(self, Kind::Rest | Kind::Play | Kind::Explore { .. } | Kind::CheckStores | Kind::Watch { .. } | Kind::Talk { .. })
     }
 
     /// The need this action is for, if any (an urgent other need may interrupt it).
@@ -96,6 +124,8 @@ impl Kind {
             Kind::Sleep | Kind::SleepHere => Some(c.need("rest")),
             Kind::Rest => Some(c.need("fun")),
             Kind::LightFire | Kind::TendFire => Some(c.need("warmth")),
+            Kind::Talk { .. } | Kind::Court { .. } => Some(c.need("social")),
+            Kind::Play => Some(c.need("fun")),
             _ => None,
         }
     }
@@ -117,10 +147,21 @@ pub struct Action {
     /// Current walking pace (eases towards the ground's pace instead of jumping).
     #[serde(default = "one")]
     pub pace: f32,
+    /// Tick the current phase began (social actions time their phases from it).
+    pub mark: u64,
 }
 
 fn one() -> f32 {
     1.0
+}
+
+fn ask_name(a: Ask) -> &'static str {
+    match a {
+        Ask::Partner => "partner",
+        Ask::Child => "child",
+        Ask::Teach { .. } => "teach",
+        Ask::Food => "food",
+    }
 }
 
 /// Everything an action touches besides the person.
@@ -134,14 +175,22 @@ pub struct Ctx<'a> {
     pub tick: u64,
     pub events: &'a mut Vec<Event>,
     pub alive: usize,
-    /// This person's slot among the living (for their place by the fire).
+    /// This person's place by the fire (the youngest get the closest).
     pub slot: usize,
     /// Who is acting (for events).
     pub who: PersonId,
+    /// Everyone as they were at the start of this tick.
+    pub seen: &'a [Seen],
+    /// Changes to other people, applied after everyone's turn.
+    pub effects: &'a mut Vec<Effect>,
 }
 
-/// Practise a skill; tell everyone when it reaches a new level.
+/// Practise a skill; tell everyone when it reaches a new level. A taught skill only grows for
+/// those who know it.
 fn practise(p: &mut Person, skill: usize, minutes: f32, ctx: &mut Ctx) {
+    if !p.knows(skill, ctx.c) {
+        return;
+    }
     let before = p.skill_level(skill, ctx.c);
     p.practice[skill] += minutes;
     let after = p.skill_level(skill, ctx.c);
@@ -153,7 +202,7 @@ fn practise(p: &mut Person, skill: usize, minutes: f32, ctx: &mut Ctx) {
 // ---------------------------------------------------------------------------------------------
 // Words
 
-fn direction(from: (f32, f32), to: (f32, f32)) -> &'static str {
+pub fn direction(from: (f32, f32), to: (f32, f32)) -> &'static str {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
     if dx * dx + dy * dy < 9.0 {
         return "right here";
@@ -172,7 +221,7 @@ fn direction(from: (f32, f32), to: (f32, f32)) -> &'static str {
     }
 }
 
-fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
+pub(crate) fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
 }
 
@@ -286,7 +335,7 @@ fn state_features(p: &Person, ctx: &Ctx) -> Vec<(String, f32)> {
     f
 }
 
-fn choice(label: String, kind: Kind, c: &Content, features: Vec<(&str, f32)>) -> Choice {
+pub(crate) fn choice(label: String, kind: Kind, c: &Content, features: Vec<(&str, f32)>) -> Choice {
     let mut f: Vec<(String, f32)> = vec![(format!("act.{}", kind.name(c)), 1.0)];
     f.extend(features.into_iter().map(|(k, v)| (k.to_string(), v)));
     Choice { label, kind, features: f, possible: true, why_not: None }
@@ -309,11 +358,18 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
     let walk = |d: f32| d * 1.3 / speed;
     let need = |n: &str| p.needs[c.need(n)];
 
-    // Gathering
+    // Gathering (the nearest known of each kind, found in one pass)
+    let nearest = p.knowledge.nearest_by_kind(p.pos, 2, c.nodes.len());
     for (gi, g) in c.actions.gather.iter().enumerate() {
         let kind = c.node_kind(&g.node);
         let skill = c.skill(&g.skill);
-        let near = p.knowledge.nearest_nodes(kind, p.pos, 2);
+        if !p.knows(skill, c) {
+            if gi == 0 || c.actions.gather[..gi].iter().all(|e| e.skill != g.skill) {
+                opts.push(impossible(&g.name, Kind::Gather { def: gi as u16, node: Id::default() }, &format!("doesn't know {}", c.skills.skills[skill].name.to_lowercase())));
+            }
+            continue;
+        }
+        let near = nearest[kind as usize].clone();
         if near.is_empty() {
             if gi == 0 {
                 opts.push(impossible(&g.name, Kind::Gather { def: gi as u16, node: Id::default() }, &format!("no {} known", c.nodes[kind as usize].name.to_lowercase())));
@@ -386,7 +442,7 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
     }
     // Eat as they pick: berries straight from a bush they know.
     let bush = c.node_kind("berry_bush");
-    if let Some((nid, kn, d)) = p.knowledge.nearest_nodes(bush, p.pos, 1).into_iter().next() {
+    if let Some(&(nid, kn, d)) = nearest[bush as usize].first() {
         let at = centre((kn.x, kn.y));
         let fresh = (-((ctx.tick.saturating_sub(kn.when)) as f32 / 60.0) / 18.0).exp();
         opts.push(choice(format!("Eat berries at the bush {}", direction(p.pos, at)), Kind::EatAt { node: nid }, c, vec![
@@ -431,8 +487,10 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
         let kindling = b.items[sticks] >= lf.sticks && b.items[wood] >= lf.wood;
         // Without sticks, kindling can be shaved from two logs (harder to catch).
         let shaved = !kindling && b.items[wood] >= 2;
-        if kindling || shaved {
-            let skill = c.skill("firemaking");
+        let skill = c.skill("firemaking");
+        if !p.knows(skill, c) {
+            opts.push(impossible("Light the fire", Kind::LightFire, "doesn't know how to make fire"));
+        } else if kindling || shaved {
             let chance = (lf.chance + lf.chance_per_level * p.skill_level(skill, c) as f32).min(0.98) * if shaved { 0.6 } else { 1.0 };
             opts.push(choice(if shaved { "Light the fire (shaving kindling from wood)".into() } else { "Light the fire".into() }, Kind::LightFire, c, vec![
                 ("dist", to_fire),
@@ -465,6 +523,20 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
             ("dist", to_camp),
             ("minutes", walk(to_camp) + c.actions.check_stores_minutes as f32),
         ]));
+    }
+    // Talking, courting, family, teaching, answering what others asked (social.rs).
+    opts.extend(social::options(p, id, ctx, &state, &walk));
+    // Children choose from a short list.
+    let me = crate::family::find(ctx.seen, id);
+    if me.is_some_and(|m| m.stage == Stage::Child) {
+        let help = me.is_some_and(|m| m.age >= c.life.help_age);
+        opts.retain(|o| match &o.kind {
+            Kind::Gather { def, .. } => help && matches!(c.actions.gather[*def as usize].item.as_str(), "berries" | "sticks"),
+            Kind::FetchWater { .. } | Kind::LightFire | Kind::TendFire | Kind::Explore { .. } | Kind::CheckStores | Kind::SleepHere => false,
+            Kind::Ask { ask, .. } => *ask == Ask::Food,
+            Kind::Answer { ask, .. } => matches!(ask, Ask::Teach { .. }),
+            _ => true,
+        });
     }
     let text = describe(p, ctx, &state, &opts);
     DecisionRequest { person: id, tick: ctx.tick, state, options: opts, text }
@@ -567,6 +639,20 @@ pub fn thought(req: &DecisionRequest, o: &Choice, c: &Content) -> String {
         Kind::TendFire => "The fire's getting low. I'll add some wood.".into(),
         Kind::Explore { .. } => if req.s("food_unknown") > 0.0 { "We need to find more food. I'll look around.".into() } else { "I wonder what's out there.".into() },
         Kind::CheckStores => "I'll see what's left in the stores.".into(),
+        Kind::Talk { .. } => if o.f("news") > 0.0 { "I'll go and catch up, and tell them what I've found.".into() } else { "I could do with some company. I'll go and talk.".into() },
+        Kind::Court { .. } => "I like spending time with them. Maybe more than I let on.".into(),
+        Kind::Ask { ask: Ask::Partner, .. } => "I'm going to ask. I hope they say yes.".into(),
+        Kind::Ask { ask: Ask::Child, .. } => "I'd like us to have a child.".into(),
+        Kind::Ask { ask: Ask::Teach { .. }, .. } => if o.f("knowers") < 0.3 { "Hardly anyone knows this any more. Someone young should learn it.".into() } else { "I can show them how it's done.".into() },
+        Kind::Ask { ask: Ask::Food, .. } => "I'm so hungry and there's nothing left. Maybe they can spare some.".into(),
+        Kind::Answer { ask: Ask::Partner, .. } => "Yes. Of course, yes.".into(),
+        Kind::Answer { ask: Ask::Child, .. } => "Yes, let's.".into(),
+        Kind::Answer { ask: Ask::Teach { .. }, .. } => "I'd like to learn that.".into(),
+        Kind::Answer { ask: Ask::Food, .. } => "They need it more than I do.".into(),
+        Kind::Watch { .. } => "I want to learn how they do that.".into(),
+        Kind::Play => "I want to play!".into(),
+        Kind::Feed { .. } => if o.f("kin") >= 1.0 { "My little one is hungry.".into() } else { "That child needs feeding.".into() },
+        Kind::Bury { .. } => if o.f("kin") >= 0.5 { "I have to lay them to rest.".into() } else { "Someone has to bury them.".into() },
     }
 }
 
@@ -587,17 +673,18 @@ pub fn start(p: &Person, choice: &Choice, tick: u64) -> Action {
         needs_start: p.needs.clone(),
         stored: vec![0; p.carry.len()],
         pace: 1.0,
+        mark: tick,
     }
 }
 
-enum Walk {
+pub(crate) enum Walk {
     Moving,
     Arrived,
     NoPath,
 }
 
 /// Walk towards `to` (or next to it). Finds the path on the first call.
-fn walk(p: &mut Person, a: &mut Action, ctx: &mut Ctx, to: (u16, u16), beside: bool) -> Walk {
+pub(crate) fn walk(p: &mut Person, a: &mut Action, ctx: &mut Ctx, to: (u16, u16), beside: bool) -> Walk {
     let here = (p.pos.0 as u32, p.pos.1 as u32);
     if !a.path_ready {
         a.path_ready = true;
@@ -916,9 +1003,14 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
             }
             if a.phase == 0 {
                 let spot = ctx.camp.spot(ctx.slot, sleeping, ctx.map);
-                match walk(p, a, ctx, spot, false) {
+                let tile = (spot.0 as u16, spot.1 as u16);
+                match walk(p, a, ctx, tile, false) {
                     Walk::Arrived | Walk::NoPath => {
                         a.phase = 1;
+                        // Settle onto their own spot (everyone has a different one).
+                        if dist(p.pos, spot) < 1.5 {
+                            p.pos = spot;
+                        }
                         face(p, ctx.camp.fire_pos());
                         if sleeping {
                             p.asleep = true;
@@ -1001,6 +1093,7 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                     camp.stores[wood] -= logs;
                     camp.fire_lit = true;
                     camp.fire_hours = lf.sticks as f32 * c.items[sticks].fuel + logs as f32 * c.items[wood].fuel;
+                    camp.lit_by = Some((ctx.who, ctx.tick));
                     ctx.events.push(Event::FireLit { person: ctx.who, name: p.name.clone() });
                 } else {
                     if !camp.fire_lit {
@@ -1024,6 +1117,9 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
                 return Some(Ending::Done);
             }
         }
+        Kind::Talk { .. } | Kind::Court { .. } | Kind::Ask { .. } | Kind::Answer { .. } | Kind::Watch { .. } | Kind::Play | Kind::Feed { .. } | Kind::Bury { .. } => {
+            return social::step(p, a, ctx);
+        }
         Kind::Explore { x, y } => match walk(p, a, ctx, (x, y), false) {
             Walk::Arrived => {
                 practise(p, c.skill("exploring"), (ctx.tick - a.started) as f32 * tm, ctx);
@@ -1042,6 +1138,13 @@ pub fn step(p: &mut Person, a: &mut Action, ctx: &mut Ctx) -> Option<Ending> {
 
 /// Should an urgent need cut the current action short? Returns the reason.
 pub fn should_interrupt(p: &Person, a: &Action, c: &Content, camp: &Camp) -> Option<String> {
+    // Someone asked them something: easy-going activities can wait.
+    if a.kind.leisurely()
+        && let Some(inv) = p.invites.iter().find(|i| i.tick > a.started)
+    {
+        let _ = inv;
+        return Some(format!("{} was asked something", p.name));
+    }
     let fire_lit = camp.fire_lit;
     let can_light = camp.stores[c.item("sticks")] >= c.actions.light_fire.sticks && camp.stores[c.item("wood")] >= c.actions.light_fire.wood;
     let eases = a.kind.eases(c);

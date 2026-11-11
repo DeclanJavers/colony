@@ -4,11 +4,14 @@
 use crate::actions::{self, Ctx};
 use crate::brain::{self, Answer, Brains, DecisionRequest, Ending, Outcome, RulesBrain, Trace};
 use crate::camp::Camp;
+use crate::chronicle::Chronicle;
 use crate::commands::Command;
 use crate::content::Content;
 use crate::events::Event;
 use crate::ids::Table;
+use crate::family;
 use crate::life;
+use crate::social;
 use crate::path::Pathfinder;
 use crate::people::{self, Person, PersonId};
 use crate::rng::Rng;
@@ -32,6 +35,8 @@ pub struct Sim {
     pub people: Table<Person>,
     pub camp: Camp,
     pub streams: Streams,
+    /// History, written from events as they happen.
+    pub chronicle: Chronicle,
     /// Every command applied so far, with the tick it was applied at.
     pub command_log: Vec<(u64, Command)>,
     pending: Vec<Command>,
@@ -67,6 +72,7 @@ impl Sim {
             nodes: Table::new(),
             people: Table::new(),
             streams: Streams { life: Rng::stream(seed, "sim.life") },
+            chronicle: Chronicle::default(),
             command_log: Vec::new(),
             pending: Vec::new(),
             events: Vec::new(),
@@ -91,9 +97,22 @@ impl Sim {
         let mut rng = Rng::stream(seed, "sim.founders");
         let c = &sim.content;
         for mut p in people::founders(c, c.people.start_group, start, sim.map.size, sim.tick, &mut rng) {
-            life::perceive(&mut p, c, &sim.map, &sim.nodes, &sim.camp, sim.tick, c.people.sight + 10);
+            life::perceive(&mut p, c, &sim.map, &sim.nodes, &sim.camp, sim.tick, c.people.sight + 10, true);
             sim.people.insert(p);
         }
+        // Founders start out knowing each other a little.
+        let ids: Vec<PersonId> = sim.people.iter().map(|(id, _)| id).collect();
+        for &a in &ids {
+            for &b in &ids {
+                if a != b {
+                    let r = sim.people.get_mut(a).unwrap().rel_mut(b);
+                    r.familiarity = 0.2;
+                    r.affection = 0.1;
+                }
+            }
+        }
+        let n = sim.people.len();
+        sim.chronicle.add(sim.tick, crate::chronicle::Kind::World, format!("{n} foragers settled by fresh water and made camp."), ids, 1.0);
         sim
     }
 
@@ -107,6 +126,7 @@ impl Sim {
         mut people: Table<Person>,
         camp: Camp,
         streams: Streams,
+        chronicle: Chronicle,
         command_log: Vec<(u64, Command)>,
     ) -> Self {
         // Brains aren't saved: anyone waiting for an answer decides again.
@@ -123,6 +143,7 @@ impl Sim {
             people,
             camp,
             streams,
+            chronicle,
             command_log,
             pending: Vec::new(),
             events: Vec::new(),
@@ -142,6 +163,7 @@ impl Sim {
 
     /// Advance one tick.
     pub fn step(&mut self) {
+        let first_event = self.events.len();
         for c in std::mem::take(&mut self.pending) {
             self.apply(&c);
             self.command_log.push((self.tick, c));
@@ -153,9 +175,17 @@ impl Sim {
         if self.tick.is_multiple_of(cal.ticks_per_day()) {
             self.events.push(Event::DayStarted { day: cal.day_index(self.tick) });
             if cal.day_index(self.tick).is_multiple_of(cal.days_per_season as u64) {
-                self.events.push(Event::SeasonStarted { season: cal.season(self.tick).to_string(), year: cal.year(self.tick) });
+                let (season, year) = (cal.season(self.tick).to_string(), cal.year(self.tick));
+                if season == cal.seasons[0] && year > 1 {
+                    let alive = self.alive();
+                    self.chronicle.add(self.tick, crate::chronicle::Kind::World, format!("Year {year} began, with {alive} people in the camp."), Vec::new(), 0.4);
+                }
+                self.events.push(Event::SeasonStarted { season, year });
             }
             self.new_day();
+        }
+        for e in &self.events[first_event..] {
+            self.chronicle.record(self.tick, e);
         }
         let at = self.tick - 1;
         self.event_ticks.resize(self.events.len(), at);
@@ -199,10 +229,18 @@ impl Sim {
         let alive = ids.len();
         let hour = self.content.calendar.minute_of_day(self.tick) / 60;
         let tm = self.content.calendar.minutes_per_tick as u64;
+        let seen = family::seen(&self.people, self.tick, &self.content);
+        let mut effects: Vec<social::Effect> = Vec::new();
+        let mut deaths: Vec<(PersonId, String)> = Vec::new();
         let Sim { content: c, map, nodes, people, camp, streams, path, events, tick, brains, seed, mode, trace_sink, .. } = self;
         let mut requests: Vec<DecisionRequest> = Vec::new();
         let mut finished: Vec<(PersonId, Ending)> = Vec::new();
+        // Places by the fire go to the youngest first (the closest, warmest places).
+        let mut by_age: Vec<(i64, PersonId)> = ids.iter().map(|&id| (-self_born(people, id), id)).collect();
+        by_age.sort();
+        let fire_slot = |id: PersonId| by_age.iter().position(|&(_, i)| i == id).unwrap_or(0);
         for (slot, &id) in ids.iter().enumerate() {
+            let baby = family::find(&seen, id).is_some_and(|s| s.stage == crate::people::social::Stage::Baby);
             let p = people.get_mut(id).unwrap();
             let reach = c.people.company_reach;
             let company = awake.iter().filter(|q| ((q.0 - p.pos.0).powi(2) + (q.1 - p.pos.1).powi(2)).sqrt() <= reach).count() > 1;
@@ -214,18 +252,19 @@ impl Sim {
                 }
             }
             if let Some(cause) = died {
-                p.alive = false;
-                p.asleep = false;
-                p.waiting = false;
-                p.died = Some((*tick, cause.clone()));
                 if p.action.is_some() {
                     finished.push((id, Ending::Interrupted(format!("{} died", p.name))));
                 }
-                events.push(Event::PersonDied { person: id, name: p.name.clone(), cause });
+                deaths.push((id, cause));
                 continue;
             }
             if (*tick + slot as u64).is_multiple_of(15) {
-                life::perceive(p, c, map, nodes, camp, *tick, c.people.sight);
+                let check_gone = (*tick + slot as u64).is_multiple_of(60);
+                life::perceive(p, c, map, nodes, camp, *tick, c.people.sight, check_gone);
+            }
+            if baby {
+                // Babies make no decisions: they're kept close and fed (family::babies).
+                continue;
             }
             if p.asleep && (8..18).contains(&hour) {
                 p.tally.day_sleep_minutes += tm;
@@ -233,7 +272,7 @@ impl Sim {
             if !p.asleep {
                 p.tally.awake_minutes += tm;
             }
-            let mut ctx = Ctx { c, map, nodes, camp, path, rng: &mut streams.life, tick: *tick, events, alive, slot, who: id };
+            let mut ctx = Ctx { c, map, nodes, camp, path, rng: &mut streams.life, tick: *tick, events, alive, slot: fire_slot(id), who: id, seen: &seen, effects: &mut effects };
             if let Some(mut a) = p.action.take() {
                 let mut end = actions::step(p, &mut a, &mut ctx);
                 if end.is_none() && (*tick + slot as u64).is_multiple_of(20) {
@@ -254,6 +293,16 @@ impl Sim {
         // Close finished actions' traces.
         for (id, ending) in finished {
             finish(people, id, ending, *tick, c, trace_sink);
+        }
+        for (id, cause) in deaths {
+            family::die(people, id, cause, *tick, c, events);
+        }
+        // Changes to others from everyone's turn, in order; then births, babies and company.
+        social::apply(effects, people, nodes, map, camp.fire_pos(), c, *tick, &mut streams.life, events);
+        family::births(people, *tick, c, map.size, &mut streams.life, events);
+        family::babies(people, &seen, *tick, c);
+        if tick.is_multiple_of(60) {
+            family::hourly(people, &seen, *tick, c);
         }
         // Hand requests to each person's brain, then take every answer that's ready.
         for req in requests {
@@ -281,6 +330,9 @@ impl Sim {
             let valid = ans.choice < req.options.len() && req.options[ans.choice].possible;
             let (choice, fallback) = if valid { (ans.choice, false) } else { (rules_choice, true) };
             let chosen = req.options[choice].clone();
+            if let crate::actions::Kind::Answer { from, ask } = &chosen.kind {
+                p.invites.retain(|i| !(i.from == *from && i.ask == *ask));
+            }
             p.thought = actions::thought(&req, &chosen, c);
             p.action = Some(actions::start(p, &chosen, *tick));
             p.tally.decisions += 1;
@@ -340,6 +392,8 @@ impl Sim {
             // Trails fade unless walked (half gone in about two weeks).
             *f *= 0.95;
         }
+        let Sim { people, content, tick, streams, events, .. } = self;
+        family::daily(people, *tick, content, &mut streams.life, events);
         self.map.version += 1;
     }
 
@@ -383,6 +437,10 @@ impl Sim {
     pub fn state_hash(&self) -> u64 {
         crate::hash::fnv64(&crate::save::state_bytes(self))
     }
+}
+
+fn self_born(people: &Table<Person>, id: PersonId) -> i64 {
+    people.get(id).map_or(0, |p| p.born)
 }
 
 /// End someone's current action: fill in the outcome of the decision that started it.

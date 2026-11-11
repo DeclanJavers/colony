@@ -10,6 +10,7 @@
 //! it: it's the fallback and the second opinion. Other brains live in their own crate.
 
 use crate::actions::Kind;
+use crate::people::social::Ask;
 use crate::people::PersonId;
 use crate::rng::Rng;
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,7 @@ impl RulesBrain {
         let need = |n: &str| req.s(&format!("need.{n}"));
         let diligence = req.s("trait.diligence");
         let curiosity = req.s("trait.curiosity");
+        let sociability = req.s("trait.sociability");
         let sleepy = req.s("sleepy");
         let value = |item: &str| req.s(&format!("value.{item}"));
         req.options
@@ -159,10 +161,32 @@ impl RulesBrain {
                     // The body clock makes them sleep at night, but only if they're tired too.
                     Kind::Sleep | Kind::SleepHere => 2.4 * sleepy * (need("rest") * 2.5).min(1.0) - 1.2 * (1.0 - sleepy),
                     Kind::Rest => 0.15 + 0.15 * (1.0 - diligence) - 0.6 * sleepy,
-                    Kind::Explore { .. } => 0.1 + 0.45 * curiosity * (1.0 - req.s("explored")) + 0.5 * req.s("food_unknown") - 0.8 * sleepy,
+                    // Exploring in the evening strands them far from the fire at bedtime.
+                    Kind::Explore { .. } => 0.1 + 0.45 * curiosity * (1.0 - req.s("explored")) + 0.5 * req.s("food_unknown") - 0.6 * req.s("evening") - 0.8 * sleepy,
                     Kind::LightFire => 0.3 + 1.6 * req.s("cold") + 0.9 * req.s("evening") + 0.5 * req.s("winter"),
                     Kind::TendFire => (0.2 + 1.4 * req.s("cold") + 0.8 * req.s("evening") + 0.4 * req.s("winter")) * (1.0 - req.s("fire_hours") / 6.0).max(0.0),
                     Kind::CheckStores => 0.05 * req.s("stores_age_hours").min(24.0) / 24.0,
+                    // Social (M5)
+                    Kind::Talk { .. } => 0.0 + 0.1 * sociability + 0.02 * o.f("news") + 0.05 * o.f("affection").max(0.0) - 0.9 * sleepy,
+                    Kind::Court { .. } => 0.1 + 0.15 * sociability + 0.3 * o.f("romance") + 0.1 * o.f("affection").max(0.0) - 0.9 * sleepy,
+                    Kind::Ask { ask: Ask::Partner, .. } => 0.5 + 0.8 * o.f("romance") - 0.6 * sleepy,
+                    Kind::Answer { ask: Ask::Partner, .. } => -0.3 + 1.3 * o.f("romance") + 0.4 * o.f("affection"),
+                    Kind::Ask { ask: Ask::Child, .. } | Kind::Answer { ask: Ask::Child, .. } => {
+                        let food = (o.f("food_days") / 5.0).min(1.0);
+                        let answer = matches!(o.kind, Kind::Answer { .. }) as u8 as f32;
+                        0.15 + 0.1 * answer + 0.2 * o.f("romance") + 0.35 * food - 0.3 * o.f("young_children") - if o.f("food_days") < 2.0 { 0.6 } else { 0.0 } - 0.5 * sleepy
+                    }
+                    Kind::Ask { ask: Ask::Teach { .. }, .. } => {
+                        let useful = o.f("useful");
+                        0.02 + 0.35 * (1.0 - o.f("knowers")).powi(2) * useful + 0.1 * o.f("kin") * useful + 0.05 * diligence - 0.25 * (1.0 - useful) - 0.7 * sleepy
+                    }
+                    Kind::Answer { ask: Ask::Teach { .. }, .. } => 0.1 + 0.35 * (1.0 - o.f("knowers")) * o.f("taught") * o.f("useful") + 0.15 * curiosity - 0.6 * sleepy,
+                    Kind::Ask { ask: Ask::Food, .. } => 0.1,
+                    Kind::Answer { ask: Ask::Food, .. } => 0.2 + 0.3 * o.f("affection") + 0.3 * req.s("trait.warmth") + 0.6 * o.f("their_hunger") - urgency(need("hunger")),
+                    Kind::Watch { .. } => 0.06 + 0.15 * curiosity + 0.1 * o.f("taught") * (1.0 - o.f("my_level")) * o.f("useful") - 0.7 * sleepy,
+                    Kind::Play => 0.15 - 0.9 * sleepy,
+                    Kind::Feed { .. } => urgency(o.f("child_hunger")) * 1.5 * (0.4 + 0.6 * o.f("kin")) + 0.1,
+                    Kind::Bury { .. } => 0.2 + 0.4 * o.f("kin") + 0.1 * o.f("days_dead").min(3.0) - 0.9 * sleepy,
                     _ => -0.6 * sleepy,
                 };
                 s + (noise.next_f32() - 0.5) * 0.06

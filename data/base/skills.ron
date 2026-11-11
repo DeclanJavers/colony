@@ -1,12 +1,15 @@
 // Skills grow with practice: level = floor(sqrt(minutes practised / minutes_per_level_sq)), up to 10.
 // Work goes faster with skill: speed = 0.6 + 0.06 * level.
+// `taught` skills are known only from level 1: without one, its actions are impossible, it can
+// only be learned from someone who knows it, and it's lost when the last person who knows it dies.
+// `founders_know` is the share of the founding group who know a taught skill.
 (
     minutes_per_level_sq: 40.0,
     skills: [
-        (id: "foraging", name: "Foraging"),
-        (id: "woodcutting", name: "Woodcutting"),
-        (id: "stonework", name: "Stonework"),
-        (id: "firemaking", name: "Firemaking"),
-        (id: "exploring", name: "Exploring"),
+        (id: "foraging", name: "Foraging", taught: false, founders_know: 1.0),
+        (id: "woodcutting", name: "Woodcutting", taught: false, founders_know: 1.0),
+        (id: "stonework", name: "Stonework", taught: true, founders_know: 0.2),
+        (id: "firemaking", name: "Firemaking", taught: true, founders_know: 0.5),
+        (id: "exploring", name: "Exploring", taught: false, founders_know: 1.0),
     ],
 )

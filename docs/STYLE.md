@@ -17,14 +17,15 @@ comfortably next to them.
 
 We build in 3D (our Rust renderer, see ARCHITECTURE.md section 11) and make it read as pixel art:
 
-1. **Simple low-poly shapes.** Blocky forms. Nothing thinner than about 0.05 m: it vanishes once
-   pixelated. Put detail where the game camera sees it: beams, shutters, tile rows, stones.
+1. **Simple low-poly shapes.** Blocky forms. Nothing thinner than about 0.04 m (two art
+   pixels): it vanishes once pixelated. Put detail where the game camera sees it: beams, shutters, tile rows, stones.
 2. **Flat colours from the palette below.** No photo textures, no gradients baked into models, at
    most a base and a darker accent per material. Light and shadow come from the renderer.
 3. **The pixel pass** (`crates/render`: the scene is drawn into a low-resolution target, then
    `shaders/post.wgsl` scales it up) draws the world in big pixels
-   that belong to the world, like classic pixel art: about 24 art pixels per tile, so they grow when
-   you zoom in and shrink when you zoom out.
+   that belong to the world, like classic pixel art: 48 art pixels per tile, so they grow when
+   you zoom in and shrink when you zoom out. (It was 24 until M5's play-test: people were about
+   30 art pixels tall and read as blobs. At 48 their faces, arms and clothes read.)
    An art pixel is always a whole number of rendered pixels, and the camera snaps to the art-pixel
    grid, so panning moves the picture a whole art pixel at a time (no crawling or shimmer). It puts dark outlines where
    a shape ends against something further away, adds a softer line where surfaces meet at an angle,
@@ -88,6 +89,13 @@ A new colour goes into this table before it goes into a model.
   lived in. Keep them inside the building's own footprint so they never poke into a neighbour.
 - **Characters:** low-poly villagers with readable silhouettes and limbs; they keep their own colour.
   Anything they carry is shown big enough to read at normal zoom.
+  - **Never draw one figure inside another.** People who share a spot (a riverbank, the fire)
+    are nudged apart when drawn, and everyone resting gets their own seat around the fire.
+  - **Babies:** an infant in a carer's arms isn't drawn while the carer is up and about (a tiny
+    figure on top of theirs only blurs both). It sits or lies beside them when they rest;
+    toddlers walk beside them, to the side on screen.
+  - **Poses must read from the high camera.** Sitting is hand-keyed (upright back, knees up). The
+    rigid skirt is hidden when sitting or lying, because it can't fold over bent legs.
 
 ## Ground
 

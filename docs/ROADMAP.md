@@ -120,7 +120,7 @@ Full screen runs at 245 to 517 fps with no window at 3024×1964. Windowed, it ho
 386 fps, zoom 40: 259 fps, zoom 120: 153 fps (the UI costs 0.3 to 0.7 ms). Windowed with the
 inspector and traffic lens: 261 fps average.
 
-## M5: Families and society
+## M5: Families and society (done, signed off 2026-11-11)
 
 - **Social actions:** talk, share news, ask for help, teach, look after a child, courting.
 - **Relationships and memory:** relationships that change with shared time, help, conflict and
@@ -137,6 +137,20 @@ inspector and traffic lens: 261 fps average.
 - **measured:** at least one seed loses a skill when its last holder dies, and the chronicle
   records it;
 - **played:** reading one family's history in the game tells a real story.
+
+**Measured (2026-11-11, after the people pass: 48 art pixels per tile, places by the fire):**
+- **Inheritance** (`crates/sim/tests/families.rs`, seed 2): 5 generations and 60 children.
+  - Every allele came from a parent (0 mutations seen of about 3 expected).
+  - Heterozygous parents passed on each allele 49.9% of the time over 1,410 (z = -0.11).
+  - Genetic height: slope 1.05 ± 0.21 on the parents' average (1 expected).
+  - Height: slope 0.55 ± 0.18 (h² = 0.81 expected, within 3 standard errors).
+- **Lost skills:** stonework was lost on all 6 seeds tried, each time with a chronicle entry.
+  Nobody bothers to teach it while stone has no use. Firemaking was never lost.
+- **Colonies:** 10 founders become 18 to 40 people by year 16, with 3 to 4 generations.
+  Almost every death is old age (over 6 seeds: one starvation, one childbirth). One seed
+  shrinks for a while when couples are few.
+- **Speed:** about 1.7 s per game year headless at 25 to 35 people.
+- **Frame rate:** 169 to 423 fps at 3024×1964 with 25 people, the Life tab and a lens open.
 
 ## M6: Settling down
 

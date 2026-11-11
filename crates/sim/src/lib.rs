@@ -4,9 +4,11 @@
 pub mod actions;
 pub mod brain;
 pub mod camp;
+pub mod chronicle;
 pub mod commands;
 pub mod content;
 pub mod events;
+pub mod family;
 pub mod hash;
 pub mod ids;
 pub mod life;
@@ -15,6 +17,7 @@ pub mod people;
 pub mod rng;
 pub mod save;
 pub mod sim;
+pub mod social;
 pub mod time;
 pub mod world;
 

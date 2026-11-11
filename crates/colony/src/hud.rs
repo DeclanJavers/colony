@@ -3,11 +3,14 @@
 
 use sim::actions::air_temp;
 use sim::brain::{Ending, Trace};
+use sim::people::social::Stage;
 use sim::people::{Person, Sex, TRAITS};
 use sim::{Event, PersonId, Sim};
 use std::collections::VecDeque;
 use ui::style::*;
 use ui::{Font, Rect, Text, Ui};
+
+use crate::view::Pick;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -74,7 +77,7 @@ struct FeedItem {
 
 /// What the player asked for this frame.
 pub enum Action {
-    Select(Option<PersonId>),
+    Select(Option<Pick>),
     Speed(f32),
     TogglePause,
     PauseOnNextDecision(PersonId),
@@ -86,8 +89,8 @@ pub struct Status {
     pub speed: f32,
     pub fps: f32,
     pub frame_ms: f32,
-    pub selected: Option<PersonId>,
-    pub hovered: Option<PersonId>,
+    pub selected: Option<Pick>,
+    pub hovered: Option<Pick>,
     pub pause_on: Option<PersonId>,
 }
 
@@ -99,6 +102,8 @@ pub struct Hud {
     pub lens: Lens,
     /// The decision trace being viewed: (person, index into their traces, counting back from the newest).
     pub trace: Option<(PersonId, usize)>,
+    /// The History ledger is open (scrolled this many entries from the newest).
+    pub history: Option<usize>,
     feed: VecDeque<FeedItem>,
     log_offset: usize,
     /// Trace view scrolling: (lines of the prompt text, options).
@@ -130,6 +135,33 @@ fn when(sim: &Sim, tick: u64) -> String {
     }
 }
 
+/// A date in words, for history: "today at 14:05", or "spring day 3, year 2".
+fn when_long(sim: &Sim, tick: u64) -> String {
+    let cal = &sim.content.calendar;
+    if cal.day_index(sim.tick) == cal.day_index(tick) {
+        return format!("today at {}", clock(sim, tick));
+    }
+    format!("{} day {}, year {}", cal.season(tick), cal.day_of_season(tick), cal.year(tick))
+}
+
+/// How long ago: hours and days, then years as people count their age (so "8 years ago"
+/// matches someone being 8 years older since).
+fn ago(sim: &Sim, tick: u64) -> String {
+    let c = &sim.content;
+    let ticks = sim.tick.saturating_sub(tick);
+    let mins = ticks * c.calendar.minutes_per_tick as u64;
+    let day = 24 * 60;
+    let years = (ticks as f64 / c.ticks_per_age_year()).floor() as u64;
+    match mins {
+        m if m < 60 => "just now".into(),
+        m if m < day => format!("{} h ago", m / 60),
+        m if m < 2 * day => "yesterday".into(),
+        _ if years < 1 => format!("{} days ago", mins / day),
+        _ if years == 1 => "a year ago".into(),
+        _ => format!("{years} years ago"),
+    }
+}
+
 /// Someone's decisions, newest first: the one under way (if any), then the finished ones.
 pub fn decisions(p: &Person) -> Vec<&Trace> {
     p.open_trace.iter().chain(p.traces.iter().rev()).collect()
@@ -148,6 +180,7 @@ impl Hud {
             feed: VecDeque::new(),
             log_offset: 0,
             trace_scroll: (0, 0),
+            history: None,
         })
     }
 
@@ -173,6 +206,15 @@ impl Hud {
                 }),
                 Event::PersonDied { person, name, cause } => Some(FeedItem { kind: FeedKind::Life, text: format!("{name} died of {cause}"), tick, person: Some(person), group: None }),
                 Event::SeasonStarted { season, year } => Some(FeedItem { kind: FeedKind::World, text: format!("{} came (year {year})", capital(&season)), tick, person: None, group: None }),
+                Event::Born { child, name, parents, .. } => Some(FeedItem { kind: FeedKind::Life, text: format!("{name} was born to {parents}"), tick, person: Some(child), group: None }),
+                Event::Expecting { mother, name, father } => Some(FeedItem { kind: FeedKind::Life, text: format!("{name} and {father} are expecting a child"), tick, person: Some(mother), group: None }),
+                Event::Partnered { a, names, .. } => Some(FeedItem { kind: FeedKind::Social, text: format!("{names} became partners"), tick, person: Some(a), group: None }),
+                Event::GrewUp { person, name } => Some(FeedItem { kind: FeedKind::Life, text: format!("{name} came of age"), tick, person: Some(person), group: None }),
+                Event::Argued { a, names, .. } => Some(FeedItem { kind: FeedKind::Trouble, text: format!("{names} quarrelled"), tick, person: Some(a), group: None }),
+                Event::Learned { learner, name, skill, teacher } => Some(FeedItem { kind: FeedKind::Knowledge, text: format!("{name} learned {skill} from {teacher}"), tick, person: Some(learner), group: None }),
+                Event::SkillLost { skill, last } => Some(FeedItem { kind: FeedKind::Knowledge, text: format!("{} is lost: {last} was the last who knew it", capital(&skill)), tick, person: None, group: None }),
+                Event::Buried { person, name, by } => Some(FeedItem { kind: FeedKind::Life, text: format!("{by} buried {name}"), tick, person: Some(person), group: None }),
+                Event::Shared { to, names, what, .. } => Some(FeedItem { kind: FeedKind::Social, text: format!("{names} {what}"), tick, person: Some(to), group: None }),
                 _ => None,
             };
             let Some(item) = item else { continue };
@@ -212,15 +254,24 @@ impl Hud {
             self.trace_view(sim, pid, k, st, &mut acts);
             return acts;
         }
+        if self.history.is_some() {
+            self.history_view(sim, &mut acts);
+            return acts;
+        }
         self.story(sim, &mut acts);
         self.lenses(sim);
-        if let Some(id) = st.selected {
-            self.inspector(sim, id, st, &mut acts);
+        match st.selected {
+            Some(Pick::Person(id)) => self.inspector(sim, id, st, &mut acts),
+            Some(thing) => self.thing_inspector(sim, thing, &mut acts),
+            None => {}
         }
         if let Some(h) = st.hovered.filter(|h| Some(*h) != st.selected)
             && !self.ui.over_ui()
         {
-            self.hover_card(sim, h, st.selected.is_some());
+            match h {
+                Pick::Person(id) => self.hover_card(sim, id, st.selected.is_some()),
+                thing => self.thing_card(sim, thing, st.selected.is_some()),
+            }
         }
         self.toolbar();
         acts
@@ -247,24 +298,49 @@ impl Hud {
         let muted = t(Font::Sans, 12.5, MUTED);
         let cal = &sim.content.calendar;
         let tick = sim.tick;
-        x += ui.text(x, mid(ui, t(Font::Pixel, 16.0, TEXT)), "The camp", t(Font::Pixel, 16.0, TEXT)) + ui.px(10.0);
-        x += ui.text(x, mid(ui, muted), &format!("{} people · Era 1, foraging", sim.alive()), muted) + pad;
-        ui.rect(Rect::new(x, h * 0.25, 1.0, h * 0.5), BORDER, 0.0);
-        x += pad;
+        // What fits: the right side's buttons and the speed buttons always show; the era, the
+        // weather and the camp's name give way on narrow windows.
+        let dev_label = if self.dev { "Dev: on" } else { "Dev: off" };
+        let det_label = match self.detail {
+            Detail::Minimal => "Detail: minimal",
+            Detail::Normal => "Detail: normal",
+            Detail::Analyst => "Detail: analyst",
+        };
+        let right_w = ui.measure("000 fps", t(Font::Sans, 11.5, FAINT)) + pad + ui.button_width(dev_label) + ui.button_width(det_label) + ui.button_width("History") + ui.px(12.0);
+        let speed_w: f32 = ["II", "1x", "3x", "10x"].iter().map(|l| ui.button_width(l).max(ui.px(36.0)) + ui.px(4.0)).sum();
+        let alive = sim.alive();
+        let young = sim.people.iter().filter(|(_, p)| p.alive && !p.grown(tick, &sim.content)).count();
+        let people = if young > 0 { format!("{alive} people ({young} young)") } else { format!("{alive} people") };
         let date = format!("{} · day {} · year {}", capital(cal.season(tick)), cal.day_of_season(tick), cal.year(tick));
-        x += ui.text(x, mid(ui, body), &date, body) + ui.px(10.0);
-        let clock_t = t(Font::Sans, 14.0, TEXT);
-        x += ui.text(x, mid(ui, clock_t), &clock(sim, tick), clock_t) + ui.px(10.0);
         let (sx, sy) = sim.camp.stores_at;
         let temp = air_temp(&sim.content, &sim.map, sx as u32, sy as u32, tick);
         let fire = if sim.camp.fire_lit { format!("fire lit, {:.0} h of fuel", sim.camp.fire_hours) } else { "fire out".into() };
         let weather = format!("{temp:.0} C, {fire}");
-        let ww = ui.text(x, mid(ui, muted), &weather, muted);
-        let wr = Rect::new(x, 0.0, ww, h);
-        if ui.hovered(wr) {
-            ui.tooltip(vec!["Air temperature at the camp.".into(), "People get cold below 10 C unless they're by a lit fire.".into()]);
+        let camp_t = t(Font::Pixel, 16.0, TEXT);
+        let clock_t = t(Font::Sans, 14.0, TEXT);
+        let base = x + ui.measure(&people, muted) + ui.measure(&date, body) + ui.measure("00:00", clock_t) + 4.0 * pad + speed_w;
+        let room = w - right_w - pad - base;
+        let (camp_w, era_w, weather_w) = (ui.measure("The camp", camp_t) + ui.px(10.0), ui.measure(" · Era 1, foraging", muted), ui.measure(&weather, muted) + pad);
+        let show_weather = room >= weather_w;
+        let show_camp = room >= weather_w * show_weather as u8 as f32 + camp_w;
+        let show_era = room >= weather_w * show_weather as u8 as f32 + camp_w * show_camp as u8 as f32 + era_w;
+        if show_camp {
+            x += ui.text(x, mid(ui, camp_t), "The camp", camp_t) + ui.px(10.0);
         }
-        x += ww + pad;
+        let people = if show_era { format!("{people} · Era 1, foraging") } else { people };
+        x += ui.text(x, mid(ui, muted), &people, muted) + pad;
+        ui.rect(Rect::new(x, h * 0.25, 1.0, h * 0.5), BORDER, 0.0);
+        x += pad;
+        x += ui.text(x, mid(ui, body), &date, body) + ui.px(10.0);
+        x += ui.text(x, mid(ui, clock_t), &clock(sim, tick), clock_t) + ui.px(10.0);
+        if show_weather {
+            let ww = ui.text(x, mid(ui, muted), &weather, muted);
+            let wr = Rect::new(x, 0.0, ww, h);
+            if ui.hovered(wr) {
+                ui.tooltip(vec!["Air temperature at the camp.".into(), "People get cold below 10 C unless they're by a lit fire.".into()]);
+            }
+            x += ww + pad;
+        }
         // Speed
         let bh = ui.px(28.0);
         let by = (h - bh) * 0.5;
@@ -288,7 +364,6 @@ impl Hud {
             ui.tooltip(vec![format!("{:.1} ms per frame", st.frame_ms)]);
         }
         rx -= pad;
-        let dev_label = if self.dev { "Dev: on" } else { "Dev: off" };
         let dw = ui.button_width(dev_label);
         rx -= dw;
         if ui.button(Rect::new(rx, by, dw, bh), dev_label, self.dev) {
@@ -298,11 +373,7 @@ impl Hud {
             ui.tooltip(vec!["Developer view: brains and decision traces.".into()]);
         }
         rx -= ui.px(6.0);
-        let det = match self.detail {
-            Detail::Minimal => "Detail: minimal",
-            Detail::Normal => "Detail: normal",
-            Detail::Analyst => "Detail: analyst",
-        };
+        let det = det_label;
         let detw = ui.button_width(det);
         rx -= detw;
         if ui.button(Rect::new(rx, by, detw, bh), det, false) {
@@ -314,6 +385,17 @@ impl Hud {
         }
         if ui.hovered(Rect::new(rx, by, detw, bh)) {
             ui.tooltip(vec!["Minimal: words only. Normal: words and reasons.".into(), "Analyst: the numbers too.".into()]);
+        }
+        rx -= ui.px(6.0);
+        let hw = ui.button_width("History");
+        rx -= hw;
+        let open = self.history.is_some();
+        if ui.button(Rect::new(rx, by, hw, bh), "History", open) {
+            self.history = if open { None } else { Some(0) };
+            self.trace = None;
+        }
+        if ui.hovered(Rect::new(rx, by, hw, bh)) {
+            ui.tooltip(vec!["The camp's history: births, deaths, partners, skills learned and lost.".into()]);
         }
         let _ = x;
     }
@@ -363,7 +445,7 @@ impl Hud {
             if let Some(p) = it.person
                 && ui.clicked(row)
             {
-                acts.push(Action::Select(Some(p)));
+                acts.push(Action::Select(Some(Pick::Person(p))));
             }
             yy += th + ui.px(6.0);
         }
@@ -443,15 +525,166 @@ impl Hud {
         ui.text(r.x + ui.px(14.0), r.y + (bh - ui.line_height(tt)) * 0.5, text, tt);
     }
 
+    /// A small card for a thing under the cursor.
+    fn thing_card(&mut self, sim: &Sim, pick: Pick, inspecting: bool) {
+        let Some(info) = thing_info(sim, pick) else { return };
+        let ui = &mut self.ui;
+        let (cx, cy) = ui.input.cursor;
+        let pad = ui.px(10.0);
+        let body = t(Font::Sans, 12.5, TEXT);
+        let w = (ui.measure(&info.summary, body).max(ui.measure(&info.title, t(Font::Pixel, 16.0, TEXT))) + 2.0 * pad + ui.px(2.0)).clamp(ui.px(160.0), ui.px(300.0));
+        let h = pad * 2.0 + ui.px(22.0) + ui.wrapped_height(w - 2.0 * pad, &info.summary, body) + ui.px(18.0);
+        let mut r = Rect::new(cx + ui.px(18.0), cy + ui.px(18.0), w, h);
+        let limit = if inspecting { ui.size.0 - ui.px(432.0) } else { ui.size.0 };
+        if r.right() > limit {
+            r.x = cx - w - ui.px(18.0);
+        }
+        if r.bottom() > ui.size.1 {
+            r.y = cy - h - ui.px(18.0);
+        }
+        ui.panel(r);
+        let mut y = r.y + pad;
+        ui.text(r.x + pad, y, &info.title, t(Font::Pixel, 16.0, TEXT));
+        y += ui.px(22.0);
+        y += ui.wrapped(r.x + pad, y, w - 2.0 * pad, &info.summary, body);
+        ui.text(r.x + pad, y, "Click to inspect", t(Font::Sans, 11.0, FAINT));
+    }
+
+    /// The inspector for a thing: a resource, a grave, the fire, the stores.
+    fn thing_inspector(&mut self, sim: &Sim, pick: Pick, acts: &mut Vec<Action>) {
+        let Some(info) = thing_info(sim, pick) else {
+            acts.push(Action::Select(None));
+            return;
+        };
+        let ui = &mut self.ui;
+        let (sw, sh) = ui.size;
+        let w = ui.px(400.0);
+        let top = ui.px(44.0) + ui.px(16.0);
+        let content_h = {
+            let mut hgt = ui.px(46.0) + ui.px(14.0) * 2.0 + ui.px(6.0);
+            for sec in &info.sections {
+                hgt += ui.px(28.0);
+                let body = t(Font::Sans, 12.5, TEXT);
+                let lh = ui.line_height(body);
+                for r in &sec.rows {
+                    let link_lines = (r.links.len() as f32 / 4.0).ceil();
+                    let text = if r.value.is_empty() { 0.0 } else { ui.wrapped_height((w - ui.px(28.0)) * 0.64, &r.value, body) };
+                    hgt += (link_lines * lh + if r.links.is_empty() { text } else { 0.0 }).max(lh) + ui.px(4.0);
+                }
+                if !sec.people.is_empty() {
+                    hgt += ui.px(24.0) * ((sec.people.len() as f32) / 6.0).ceil();
+                }
+                if let Some(n) = &sec.note {
+                    hgt += ui.wrapped_height(w - ui.px(28.0), n, t(Font::Sans, 11.5, FAINT)) + ui.px(4.0);
+                }
+                hgt += ui.px(8.0);
+            }
+            hgt
+        };
+        let panel = Rect::new(sw - w - ui.px(16.0), top, w, content_h.min(sh - top - ui.px(16.0)));
+        ui.panel(panel);
+        let pad = ui.px(14.0);
+        let (x0, inner) = (panel.x + pad, w - 2.0 * pad);
+        let mut y = panel.y + pad;
+        let dot = ui.px(46.0);
+        ui.rect(Rect::new(x0, y, dot, dot), info.colour, dot * 0.5);
+        ui.outline(Rect::new(x0, y, dot, dot), GOLD, dot * 0.5);
+        let nx = x0 + dot + ui.px(12.0);
+        ui.text(nx, y + ui.px(2.0), &info.title, t(Font::Pixel, 20.0, TEXT));
+        ui.text(nx, y + ui.px(26.0), &info.subtitle, t(Font::Sans, 12.5, MUTED));
+        let close = Rect::new(panel.right() - pad - ui.px(28.0), y, ui.px(28.0), ui.px(28.0));
+        if ui.button(close, "x", false) {
+            acts.push(Action::Select(None));
+        }
+        y += dot + ui.px(14.0);
+        let muted = t(Font::Sans, 12.5, MUTED);
+        let body = t(Font::Sans, 12.5, TEXT);
+        for sec in &info.sections {
+            if y + ui.px(40.0) > panel.bottom() {
+                break;
+            }
+            y += Self::section(ui, x0, y, &sec.title);
+            for row in &sec.rows {
+                let vx = x0 + inner * 0.36;
+                let vw = inner * 0.64;
+                let lh = ui.line_height(body);
+                let top = y;
+                ui.text(x0, y, &row.label, muted);
+                let mut nx = vx;
+                for (k, id) in row.links.iter().enumerate() {
+                    let sep = if k + 1 < row.links.len() { ", " } else { "" };
+                    let need = ui.measure(&format!("{}{sep}", sim.people.get(*id).map_or("", |o| &o.name)), body);
+                    if nx + need > vx + vw {
+                        nx = vx;
+                        y += lh;
+                    }
+                    nx += Self::name_link(ui, nx, y, sim, *id, acts);
+                    if !sep.is_empty() {
+                        nx += ui.text(nx, y, sep, muted);
+                    }
+                }
+                if !row.value.is_empty() {
+                    if row.links.is_empty() {
+                        y += ui.wrapped(vx, y, vw, &row.value, body).max(lh);
+                    } else {
+                        let rest = format!(", {}", row.value);
+                        if nx + ui.measure(&rest, muted) <= vx + vw {
+                            ui.text(nx, y, &rest, muted);
+                            y += lh;
+                        } else {
+                            y += lh;
+                            y += ui.wrapped(vx, y, vw, &row.value, muted);
+                        }
+                    }
+                } else {
+                    y += lh;
+                }
+                y += ui.px(4.0);
+                let r = Rect::new(x0, top, inner, y - top);
+                if !row.tip.is_empty() && ui.hovered(r) {
+                    ui.tooltip(row.tip.clone());
+                }
+            }
+            if !sec.people.is_empty() {
+                let mut nx = x0;
+                let lh = ui.px(24.0);
+                for (k, (_, id)) in sec.people.iter().enumerate() {
+                    let sep = if k + 1 < sec.people.len() { ", " } else { "" };
+                    let need = ui.measure(&format!("{}{sep}", sim.people.get(*id).map_or("", |o| &o.name)), body);
+                    if nx + need > x0 + inner {
+                        nx = x0;
+                        y += lh;
+                    }
+                    nx += Self::name_link(ui, nx, y, sim, *id, acts);
+                    if !sep.is_empty() {
+                        nx += ui.text(nx, y, sep, muted);
+                    }
+                }
+                y += lh;
+            }
+            if let Some(n) = &sec.note {
+                y += ui.wrapped(x0, y, inner, n, t(Font::Sans, 11.5, FAINT)) + ui.px(4.0);
+            }
+            y += ui.px(8.0);
+        }
+    }
+
     fn hover_card(&mut self, sim: &Sim, id: PersonId, inspecting: bool) {
         let Some(p) = sim.people.get(id) else { return };
         let c = &sim.content;
         let ui = &mut self.ui;
         let (cx, cy) = ui.input.cursor;
         let pad = ui.px(10.0);
-        let doing_probe = if p.asleep { "Asleep".to_string() } else { p.action.as_ref().map_or("Thinking".to_string(), |a| a.label.clone()) };
-        let w = (ui.measure(&doing_probe, t(Font::Sans, 12.5, TEXT)) + 2.0 * pad + ui.px(2.0)).clamp(ui.px(180.0), ui.px(300.0));
-        let doing = if p.asleep { "Asleep".to_string() } else { p.action.as_ref().map_or("Thinking".to_string(), |a| a.label.clone()) };
+        let doing = if !p.alive {
+            format!("Died of {}", p.died.as_ref().map_or("unknown", |d| d.1.as_str()))
+        } else if p.stage(sim.tick, c) == Stage::Baby {
+            if p.asleep { "A baby, asleep".to_string() } else { "A baby, carried about".to_string() }
+        } else if p.asleep {
+            "Asleep".to_string()
+        } else {
+            p.action.as_ref().map_or("Thinking".to_string(), |a| a.label.clone())
+        };
+        let w = (ui.measure(&doing, t(Font::Sans, 12.5, TEXT)) + 2.0 * pad + ui.px(2.0)).clamp(ui.px(180.0), ui.px(300.0));
         let body = t(Font::Sans, 12.5, TEXT);
         let dh = ui.wrapped_height(w - 2.0 * pad, &doing, body);
         let h = pad * 2.0 + ui.px(20.0) + dh + ui.px(36.0);
@@ -467,7 +700,7 @@ impl Hud {
         ui.panel(r);
         let mut y = r.y + pad;
         let nw = ui.text(r.x + pad, y, &p.name, t(Font::Pixel, 16.0, TEXT));
-        ui.text(r.x + pad + nw + ui.px(8.0), y + ui.px(3.0), &format!("{} · {}", p.age_years(sim.tick, c) as u32, role(p, c)), t(Font::Sans, 11.5, MUTED));
+        ui.text(r.x + pad + nw + ui.px(8.0), y + ui.px(3.0), &format!("{} · {}", p.age_years(sim.tick, c) as u32, role(p, sim.tick, c)), t(Font::Sans, 11.5, MUTED));
         y += ui.px(22.0);
         y += ui.wrapped(r.x + pad, y, w - 2.0 * pad, &doing, body);
         let pressing = p.pressing(c).map_or("nothing pressing".to_string(), |(i, v)| format!("most pressing: {}", c.needs[i].word(v)));
@@ -503,25 +736,45 @@ impl Hud {
         let nx = x0 + dot + ui.px(12.0);
         let nw = ui.text(nx, y + ui.px(2.0), &p.name, t(Font::Pixel, 20.0, TEXT));
         ui.text(nx + nw + ui.px(8.0), y + ui.px(8.0), &format!("{}", p.age_years(sim.tick, c) as u32), t(Font::Sans, 13.0, MUTED));
-        let sex = if p.sex == Sex::Female { "woman" } else { "man" };
-        ui.text(nx, y + ui.px(26.0), &format!("{} · {sex} · the camp", role(p, c)), t(Font::Sans, 12.5, MUTED));
+        let stage = p.stage(sim.tick, c);
+        let sex = match (p.sex, stage) {
+            (Sex::Female, Stage::Baby | Stage::Child) => "girl",
+            (Sex::Male, Stage::Baby | Stage::Child) => "boy",
+            (Sex::Female, _) => "woman",
+            (Sex::Male, _) => "man",
+        };
+        let expecting = if p.pregnant.is_some() { " · expecting" } else { "" };
+        ui.text(nx, y + ui.px(26.0), &format!("{} · {sex} · the camp{expecting}", role(p, sim.tick, c)), t(Font::Sans, 12.5, MUTED));
         let close = Rect::new(panel.right() - pad - ui.px(28.0), y, ui.px(28.0), ui.px(28.0));
         if ui.button(close, "x", false) {
             acts.push(Action::Select(None));
         }
         y += dot + ui.px(10.0);
         if !p.alive {
-            let cause = p.died.as_ref().map_or("unknown".to_string(), |d| d.1.clone());
-            ui.text(x0, y, &format!("Died of {cause}"), t(Font::Sans, 13.0, DANGER));
-            return;
+            // The dead: how and when, then their life and family (Life, Body, Skills).
+            let (when, cause) = p.died.clone().unwrap_or((sim.tick, "unknown".into()));
+            let resting = if p.buried { "buried" } else { "not yet buried" };
+            y += ui.wrapped(x0, y, inner, &format!("Died of {cause}, {}; {resting}.", when_long(sim, when)), t(Font::Sans, 13.0, DANGER)) + ui.px(6.0);
+            if matches!(self.tab, Tab::Mind | Tab::Log) {
+                self.tab = Tab::Life;
+            }
+        } else if stage == Stage::Baby {
+            let carer = sim::family::carer(&sim::family::seen(&sim.people, sim.tick, c), sim::family::find(&sim::family::seen(&sim.people, sim.tick, c), id).unwrap());
+            let with = carer.and_then(|cid| sim.people.get(cid)).map_or("someone".to_string(), |q| q.name.clone());
+            let doing = if p.asleep { format!("Asleep, with {with}") } else { format!("Carried by {with}") };
+            y += ui.wrapped(x0, y, inner, &doing, t(Font::Sans, 13.0, TEXT)) + ui.px(6.0);
+            if matches!(self.tab, Tab::Log) {
+                self.tab = Tab::Mind;
+            }
+        } else {
+            let doing = if p.asleep { "Asleep".to_string() } else { p.action.as_ref().map_or("Thinking".to_string(), |a| a.label.clone()) };
+            let body = t(Font::Sans, 13.0, TEXT);
+            let lbl = t(Font::Sans, 12.0, MUTED);
+            let lw = ui.text(x0, y, "Now ", lbl);
+            y += ui.wrapped(x0 + lw, y, inner - lw, &doing, body);
+            y += ui.wrapped(x0, y + ui.px(2.0), inner, &format!("\"{}\"", p.thought), t(Font::Sans, 13.0, THOUGHT)) + ui.px(4.0);
         }
-        let doing = if p.asleep { "Asleep".to_string() } else { p.action.as_ref().map_or("Thinking".to_string(), |a| a.label.clone()) };
-        let body = t(Font::Sans, 13.0, TEXT);
-        let lbl = t(Font::Sans, 12.0, MUTED);
-        let lw = ui.text(x0, y, "Now ", lbl);
-        y += ui.wrapped(x0 + lw, y, inner - lw, &doing, body);
-        y += ui.wrapped(x0, y + ui.px(2.0), inner, &format!("\"{}\"", p.thought), t(Font::Sans, 13.0, THOUGHT)) + ui.px(4.0);
-        if self.dev {
+        if self.dev && p.alive && stage != Stage::Baby {
             let chip_t = t(Font::Sans, 11.5, TEXT);
             let mut cx = x0;
             for s in [format!("Brain: {}", p.brain), format!("{} decisions", p.tally.decisions)] {
@@ -535,7 +788,8 @@ impl Hud {
             y += ui.px(28.0);
         }
         // Tabs
-        let tabs = [(Tab::Mind, "Mind"), (Tab::Life, "Life"), (Tab::Body, "Body"), (Tab::Skills, "Skills"), (Tab::Log, "Log")];
+        let all_tabs = [(Tab::Mind, "Mind"), (Tab::Life, "Life"), (Tab::Body, "Body"), (Tab::Skills, "Skills"), (Tab::Log, "Log")];
+        let tabs: Vec<(Tab, &str)> = all_tabs.into_iter().filter(|(t, _)| p.alive || !matches!(t, Tab::Mind | Tab::Log)).filter(|(t, _)| stage != Stage::Baby || *t != Tab::Log).collect();
         let mut tx = x0;
         let tab_t = |on: bool| t(Font::Sans, 13.0, if on { TEXT } else { MUTED });
         let th = ui.px(30.0);
@@ -563,10 +817,7 @@ impl Hud {
         let area = Rect::new(x0, y, inner, bottom - y);
         match self.tab {
             Tab::Mind => self.mind_tab(sim, p, area),
-            Tab::Life => {
-                let ui = &mut self.ui;
-                ui.wrapped(area.x, area.y + ui.px(8.0), area.w, "Families, relationships and memories arrive with M5.", t(Font::Sans, 12.5, FAINT));
-            }
+            Tab::Life => self.life_tab(sim, id, p, area, acts),
             Tab::Body => self.body_tab(sim, p, area),
             Tab::Skills => self.skills_tab(sim, p, area),
             Tab::Log => self.log_tab(sim, id, p, area, st, acts),
@@ -839,6 +1090,307 @@ impl Hud {
         let _ = acts;
     }
 
+    /// A name that selects that person when clicked; returns its width.
+    fn name_link(ui: &mut Ui, x: f32, y: f32, sim: &Sim, id: PersonId, acts: &mut Vec<Action>) -> f32 {
+        let Some(q) = sim.people.get(id) else { return 0.0 };
+        let colour = if q.alive { GOLD } else { MUTED };
+        let lt = t(Font::Sans, 12.5, colour);
+        let w = ui.text(x, y, &q.name, lt);
+        let r = Rect::new(x, y, w, ui.line_height(lt));
+        if ui.hovered(r) {
+            ui.rect(Rect::new(x, y + ui.line_height(lt) - ui.px(2.0), w, 1.0), colour, 0.0);
+            let c = &sim.content;
+            let state = if q.alive { format!("{}, {}", q.age_years(sim.tick, c) as u32, role(q, sim.tick, c).to_lowercase()) } else { format!("died aged {}", q.age_years(sim.tick, c) as u32) };
+            ui.tooltip(vec![format!("{}: {state}", q.name), "Click to inspect".into()]);
+        }
+        if ui.clicked(r) {
+            acts.push(Action::Select(Some(Pick::Person(id))));
+        }
+        w
+    }
+
+    fn life_tab(&mut self, sim: &Sim, id: PersonId, p: &Person, area: Rect, acts: &mut Vec<Action>) {
+        let c = &sim.content;
+        let analyst = self.detail == Detail::Analyst;
+        let ui = &mut self.ui;
+        let (x, w) = (area.x, area.w);
+        let mut y = area.y;
+        let muted = t(Font::Sans, 12.5, MUTED);
+        let small = t(Font::Sans, 11.5, FAINT);
+        // Who they are in the family's story.
+        let mut facts = vec![if p.family.generation == 0 { "A founder of the camp".to_string() } else { format!("Generation {} in the camp", p.family.generation + 1) }];
+        if let Some(g) = &p.pregnant {
+            let days = (g.due.saturating_sub(sim.tick)) as f32 / c.calendar.ticks_per_day() as f32;
+            let days = days.max(1.0).round();
+            facts.push(if days <= 1.0 { "expecting a child (due within a day)".to_string() } else { format!("expecting a child (due in about {days:.0} days)") });
+        }
+        y += ui.wrapped(x, y, w, &facts.join(", "), muted) + ui.px(6.0);
+        y += Self::section(ui, x, y, "Family");
+        // Partner (or the one they lost).
+        let late = sim.people.iter().filter(|(_, q)| !q.alive && q.family.partner == Some(id)).map(|(i, _)| i).last();
+        let rows: Vec<(&str, Vec<PersonId>)> = vec![
+            (if p.family.partner.is_some() || late.is_none() { "Partner" } else { "Late partner" }, p.family.partner.or(late).into_iter().collect()),
+            ("Mother", p.family.mother.into_iter().collect()),
+            ("Father", p.family.father.into_iter().collect()),
+            ("Children", p.family.children.clone()),
+            (
+                "Siblings",
+                sim.people
+                    .iter()
+                    .filter(|(q, other)| *q != id && other.family.mother.is_some() && (other.family.mother == p.family.mother || other.family.father == p.family.father) && p.family.mother.is_some())
+                    .map(|(q, _)| q)
+                    .collect(),
+            ),
+        ];
+        let grown = p.grown(sim.tick, c);
+        for (label, ids) in rows {
+            if ids.is_empty() && !matches!(label, "Partner" | "Mother" | "Father") {
+                continue;
+            }
+            if ids.is_empty() && label == "Partner" && !grown {
+                continue;
+            }
+            ui.text(x, y, label, muted);
+            let mut nx = x + w * 0.28;
+            let lh = ui.line_height(muted);
+            if ids.is_empty() {
+                let none = if p.family.generation == 0 && label != "Partner" { "before the camp" } else { "none" };
+                ui.text(nx, y, none, small);
+            }
+            for (k, q) in ids.iter().enumerate() {
+                let sep = if k + 1 < ids.len() { ", " } else { "" };
+                let need = ui.measure(&format!("{}{sep}", sim.people.get(*q).map_or("", |o| &o.name)), t(Font::Sans, 12.5, TEXT));
+                if nx + need > x + w {
+                    nx = x + w * 0.28;
+                    y += lh;
+                }
+                nx += Self::name_link(ui, nx, y, sim, *q, acts);
+                if !sep.is_empty() {
+                    nx += ui.text(nx, y, sep, muted);
+                }
+            }
+            y += lh + ui.px(3.0);
+        }
+        y += ui.px(6.0);
+        // The people who matter most to them.
+        y += Self::section(ui, x, y, "Close to");
+        let mut rels: Vec<(PersonId, &sim::people::social::Rel)> = p.rels.iter().filter(|(q, _)| sim.people.get(**q).is_some_and(|o| o.alive || p.family.partner == Some(**q))).map(|(q, r)| (*q, r)).collect();
+        rels.sort_by(|a, b| {
+            let k = |r: &sim::people::social::Rel| r.familiarity * 0.5 + r.affection.abs() + r.romance;
+            k(b.1).total_cmp(&k(a.1)).then(a.0.cmp(&b.0))
+        });
+        let shown = rels.iter().filter(|(_, r)| r.familiarity > 0.15 || r.affection.abs() > 0.15).take(6).count();
+        if shown == 0 {
+            ui.text(x, y, "Nobody yet.", small);
+            y += ui.px(20.0);
+        }
+        for (q, r) in rels.iter().filter(|(_, r)| r.familiarity > 0.15 || r.affection.abs() > 0.15).take(6) {
+            let row = Rect::new(x, y, w, ui.px(22.0));
+            Self::name_link(ui, x, y, sim, *q, acts);
+            // Family first ("mother", "son"), else how they feel ("close friend").
+            let other = sim.people.get(*q);
+            let female = other.is_some_and(|o| o.sex == Sex::Female);
+            let word = if p.family.mother == Some(*q) {
+                "mother"
+            } else if p.family.father == Some(*q) {
+                "father"
+            } else if p.family.children.contains(q) {
+                if female { "daughter" } else { "son" }
+            } else if p.family.mother.is_some() && other.is_some_and(|o| o.family.mother == p.family.mother || (o.family.father.is_some() && o.family.father == p.family.father)) {
+                if female { "sister" } else { "brother" }
+            } else {
+                r.word(p.family.partner == Some(*q))
+            };
+            ui.text(x + w * 0.28, y, word, muted);
+            let bx = x + w * 0.62;
+            let bw = w * 0.38;
+            if r.affection >= 0.0 {
+                ui.bar(Rect::new(bx, y + ui.px(5.0), bw, ui.px(7.0)), r.affection, AFFECTION);
+            } else {
+                ui.bar(Rect::new(bx, y + ui.px(5.0), bw, ui.px(7.0)), -r.affection, BAD);
+            }
+            if ui.hovered(row) {
+                let name = sim.people.get(*q).map_or("them".to_string(), |o| o.name.clone());
+                let mut lines = vec![format!("How {} feels about {name}", p.name)];
+                if analyst {
+                    lines.push(format!("affection {:+.2}, familiarity {:.2}, respect {:.2}, romance {:.2}", r.affection, r.familiarity, r.respect, r.romance));
+                } else {
+                    let fam = if r.familiarity > 0.6 { "knows them well" } else if r.familiarity > 0.3 { "knows them" } else { "barely knows them" };
+                    let aff = if r.affection > 0.5 { "very fond of them" } else if r.affection > 0.15 { "likes them" } else if r.affection < -0.15 { "dislikes them" } else { "neither here nor there" };
+                    lines.push(format!("{}, {}", capital(fam), aff));
+                }
+                lines.push(format!("Last together {}", ago(sim, r.last)));
+                ui.tooltip(lines);
+            }
+            y += ui.px(22.0);
+        }
+        y += ui.px(6.0);
+        // What they remember.
+        if y + ui.px(60.0) < area.bottom() {
+            y += Self::section(ui, x, y, "Memories");
+            let mut mems: Vec<&sim::people::social::Memory> = p.memories.iter().collect();
+            mems.sort_by_key(|m| std::cmp::Reverse(m.tick));
+            if mems.is_empty() {
+                ui.text(x, y, "Nothing that stays with them yet.", small);
+            }
+            for m in mems {
+                if y + ui.px(20.0) > area.bottom() {
+                    break;
+                }
+                let base = if m.feeling > 0.15 { GOOD } else if m.feeling < -0.15 { BAD } else { TEXT };
+                let fade = 0.45 + 0.55 * m.strength.clamp(0.0, 1.0);
+                let col = [base[0], base[1], base[2], fade];
+                let when = ago(sim, m.tick);
+                let ww = ui.measure(&when, small);
+                ui.text(x + w - ww, y, &when, small);
+                let row = Rect::new(x, y, w, ui.px(19.0));
+                let mut text = m.text.clone();
+                while ui.measure(&text, t(Font::Sans, 12.5, col)) > w - ww - ui.px(10.0) && text.len() > 4 {
+                    text.pop();
+                }
+                ui.text(x, y, &text, t(Font::Sans, 12.5, col));
+                if ui.hovered(row) {
+                    let mut lines = vec![m.text.clone(), format!("Counts towards mood as \"{}\" while it's fresh", m.mood)];
+                    if analyst {
+                        lines.push(format!("feeling {:+.2}, importance {:.2}, strength {:.2}", m.feeling, m.importance, m.strength));
+                    } else {
+                        lines.push(if m.importance > 0.7 { "They'll remember this a long time.".into() } else { "This will fade.".into() });
+                    }
+                    ui.tooltip(lines);
+                }
+                y += ui.px(19.0);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The History ledger
+
+    fn history_view(&mut self, sim: &Sim, acts: &mut Vec<Action>) {
+        let c = &sim.content;
+        let min_importance = match self.detail {
+            Detail::Minimal => 0.6,
+            Detail::Normal => 0.3,
+            Detail::Analyst => 0.0,
+        };
+        let entries: Vec<&sim::chronicle::Entry> = sim.chronicle.entries.iter().filter(|e| e.importance >= min_importance).collect();
+        let scroll = self.ui.input.scroll;
+        let mut first = self.history.unwrap_or(0);
+        if scroll != 0.0 {
+            first = (first as i64 + if scroll > 0.0 { -3 } else { 3 }).clamp(0, entries.len().saturating_sub(1) as i64) as usize;
+        }
+        self.history = Some(first);
+        let ui = &mut self.ui;
+        let (sw, sh) = ui.size;
+        let top = ui.px(44.0);
+        let page = Rect::new(0.0, top, sw, sh - top);
+        ui.rect(page, hex_c("#1E1A1F"), 0.0);
+        ui.block(page);
+        let pad = ui.px(24.0);
+        let mut y = top + ui.px(18.0);
+        let bh = ui.px(30.0);
+        let back = "< Back to the camp";
+        let bw = ui.button_width(back);
+        if ui.button(Rect::new(pad, y, bw, bh), back, false) {
+            self.history = None;
+            return;
+        }
+        let mut x = pad + bw + ui.px(14.0);
+        x += ui.text(x, y + ui.px(2.0), "History", t(Font::Pixel, 24.0, TEXT)) + ui.px(14.0);
+        // The camp in numbers.
+        let living = sim.alive();
+        let born = sim.people.iter().filter(|(_, p)| p.family.mother.is_some()).count();
+        let died = sim.people.iter().filter(|(_, p)| !p.alive).count();
+        let gens = sim.people.iter().map(|(_, p)| p.family.generation).max().unwrap_or(0) + 1;
+        let lost: Vec<String> = c
+            .skills
+            .skills
+            .iter()
+            .enumerate()
+            .filter(|(k, s)| s.taught && !sim.people.iter().any(|(_, p)| p.alive && p.skill_level(*k, c) >= 1))
+            .map(|(_, s)| s.name.to_lowercase())
+            .collect();
+        let mut summary = format!("Year {} · {living} living · {gens} generations · {born} born here, {died} dead", c.calendar.year(sim.tick));
+        if !lost.is_empty() {
+            summary += &format!(" · lost: {}", lost.join(", "));
+        }
+        ui.text(x, y + ui.px(8.0), &summary, t(Font::Sans, 13.0, MUTED));
+        let shown = match self.detail {
+            Detail::Minimal => "Showing the great events (Detail: minimal)",
+            Detail::Normal => "Showing the main events (Detail: normal)",
+            Detail::Analyst => "Showing everything (Detail: analyst)",
+        };
+        let st = t(Font::Sans, 11.5, FAINT);
+        let stw = ui.measure(shown, st);
+        ui.text(sw - pad - stw, y + ui.px(9.0), shown, st);
+        y += bh + ui.px(18.0);
+        let panel = Rect::new(pad, y, sw - 2.0 * pad, sh - y - ui.px(20.0));
+        ui.panel(panel);
+        let ip = ui.px(18.0);
+        let mut ey = panel.y + ip;
+        let entry_t = t(Font::Sans, 13.0, TEXT);
+        let date_t = t(Font::Sans, 11.5, FAINT);
+        let text_x = panel.x + ip + ui.px(170.0);
+        let text_w = panel.right() - ip - text_x;
+        let mut last_year = 0;
+        // Newest first.
+        let order: Vec<&sim::chronicle::Entry> = entries.iter().rev().copied().collect();
+        if order.is_empty() {
+            ui.text(panel.x + ip, ey, "Nothing has happened yet.", t(Font::Sans, 13.0, FAINT));
+        }
+        for e in order.iter().skip(first) {
+            let year = c.calendar.year(e.tick);
+            if year != last_year {
+                if ey + ui.px(60.0) > panel.bottom() {
+                    break;
+                }
+                if last_year != 0 {
+                    ey += ui.px(8.0);
+                }
+                ui.text(panel.x + ip, ey, &format!("Year {year}"), t(Font::Sans, 15.0, GOLD));
+                ui.rect(Rect::new(panel.x + ip, ey + ui.px(24.0), panel.w - 2.0 * ip, 1.0), BORDER, 0.0);
+                ey += ui.px(32.0);
+                last_year = year;
+            }
+            let h = ui.wrapped_height(text_w, &e.text, entry_t).max(ui.line_height(entry_t));
+            if ey + h > panel.bottom() - ip {
+                break;
+            }
+            let row = Rect::new(panel.x + ui.px(6.0), ey - ui.px(3.0), panel.w - ui.px(12.0), h + ui.px(6.0));
+            let person = e.people.first().copied();
+            if person.is_some() && ui.hovered(row) {
+                ui.rect(row, CHIP, ui.px(6.0));
+            }
+            let kind = match e.kind {
+                sim::chronicle::Kind::Life => FeedKind::Life,
+                sim::chronicle::Kind::Social => FeedKind::Social,
+                sim::chronicle::Kind::Knowledge => FeedKind::Knowledge,
+                sim::chronicle::Kind::World => FeedKind::World,
+                sim::chronicle::Kind::Trouble => FeedKind::Trouble,
+            };
+            let d = ui.px(8.0);
+            ui.rect(Rect::new(panel.x + ip, ey + ui.px(5.0), d, d), kind.colour(), d * 0.5);
+            let date = format!("{} day {}, {}", capital(c.calendar.season(e.tick)), c.calendar.day_of_season(e.tick), clock(sim, e.tick));
+            ui.text(panel.x + ip + ui.px(16.0), ey + ui.px(2.0), &date, date_t);
+            let col = if e.importance >= 0.8 { TEXT } else { THOUGHT };
+            ui.wrapped(text_x, ey, text_w, &e.text, t(Font::Sans, 13.0, col));
+            if let Some(q) = person
+                && ui.clicked(row)
+            {
+                acts.push(Action::Select(Some(Pick::Person(q))));
+                self.history = None;
+                self.tab = Tab::Life;
+            }
+            ey += h + ui.px(8.0);
+        }
+        let more = order.len().saturating_sub(first);
+        if first > 0 || more > 0 {
+            let s = format!("{} of {} entries · scroll for more", order.len().min(more), order.len());
+            let w = ui.measure(&s, date_t);
+            ui.text(panel.right() - ip - w, panel.bottom() - ip - ui.px(4.0), &s, date_t);
+        }
+    }
+
     // -----------------------------------------------------------------------------------------
     // The dev trace view
 
@@ -869,7 +1421,7 @@ impl Hud {
         if ui.button(Rect::new(pad, y, bw, bh), &back, false) {
             self.trace = None;
             self.tab = Tab::Log;
-            acts.push(Action::Select(Some(pid)));
+            acts.push(Action::Select(Some(Pick::Person(pid))));
         }
         let mut x = pad + bw + ui.px(14.0);
         x += ui.text(x, y + ui.px(2.0), "Decision trace", t(Font::Pixel, 24.0, TEXT)) + ui.px(14.0);
@@ -1111,8 +1663,14 @@ fn word_level(v: f32) -> &'static str {
     }
 }
 
-/// A short role from what they've practised most.
-pub fn role(p: &Person, c: &sim::Content) -> &'static str {
+/// A short role: their stage of life, or for grown people what they've practised most.
+pub fn role(p: &Person, tick: u64, c: &sim::Content) -> &'static str {
+    match p.stage(tick, c) {
+        Stage::Baby => return "Baby",
+        Stage::Child => return "Child",
+        Stage::Elder => return "Elder",
+        Stage::Adult => {}
+    }
     let best = (0..p.practice.len()).max_by(|a, b| p.practice[*a].total_cmp(&p.practice[*b])).unwrap_or(0);
     match c.skills.skills[best].id.as_str() {
         "foraging" => "Forager",
@@ -1166,6 +1724,254 @@ fn need_why(sim: &Sim, p: &Person, need: &str, company: bool, by_fire: bool) -> 
         }
         "fun" => format!("Last rested by the fire {}.", ago(p.last.rested)),
         _ => String::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Things: what the inspector and hover card say about a node, a grave, the fire or the stores.
+
+struct Row {
+    label: String,
+    value: String,
+    tip: Vec<String>,
+    /// People named in the row, drawn as links before the value.
+    links: Vec<PersonId>,
+}
+
+struct Section {
+    title: String,
+    rows: Vec<Row>,
+    /// People to list as links.
+    people: Vec<(String, PersonId)>,
+    note: Option<String>,
+}
+
+struct ThingInfo {
+    title: String,
+    subtitle: String,
+    colour: [f32; 4],
+    /// One line for the hover card.
+    summary: String,
+    sections: Vec<Section>,
+}
+
+fn row(label: &str, value: impl Into<String>) -> Row {
+    Row { label: label.into(), value: value.into(), tip: Vec::new(), links: Vec::new() }
+}
+
+fn row_tip(label: &str, value: impl Into<String>, tip: &[&str]) -> Row {
+    Row { label: label.into(), value: value.into(), tip: tip.iter().map(|s| s.to_string()).collect(), links: Vec::new() }
+}
+
+/// A row naming people (as links), with optional words after them.
+fn row_people(label: &str, people: Vec<PersonId>, after: impl Into<String>) -> Row {
+    Row { label: label.into(), value: after.into(), tip: Vec::new(), links: people }
+}
+
+fn section(title: &str, rows: Vec<Row>) -> Section {
+    Section { title: title.into(), rows, people: Vec::new(), note: None }
+}
+
+/// "12 m north-east of the camp" (or "at the camp").
+fn from_camp(sim: &Sim, at: (f32, f32)) -> String {
+    let camp = sim.camp.stores_pos();
+    let d = ((at.0 - camp.0).powi(2) + (at.1 - camp.1).powi(2)).sqrt();
+    if d < 4.0 {
+        return "at the camp".into();
+    }
+    let dir = sim::actions::direction(camp, at).trim_start_matches("to the ");
+    format!("{d:.0} m {dir} of the camp")
+}
+
+fn plural(n: f32, one: &str) -> String {
+    let n = n.floor().max(0.0) as u32;
+    let lower = one.to_lowercase();
+    if n == 1 { format!("1 {}", lower.trim_end_matches('s')) } else { format!("{n} {lower}") }
+}
+
+fn thing_info(sim: &Sim, pick: Pick) -> Option<ThingInfo> {
+    let c = &sim.content;
+    let alive = sim.alive();
+    match pick {
+        Pick::Person(_) => None,
+        Pick::Fire => {
+            let camp = &sim.camp;
+            let pos = camp.fire_pos();
+            let (sticks, wood) = (c.item("sticks"), c.item("wood"));
+            let warm = sim.people.iter().filter(|(_, p)| p.alive && ((p.pos.0 - pos.0).powi(2) + (p.pos.1 - pos.1).powi(2)).sqrt() <= c.people.fire_reach).count();
+            let fire = c.skill("firemaking");
+            let knowers = sim.people.iter().filter(|(_, p)| p.alive && p.skill_level(fire, c) >= 1).count();
+            let fuel = camp.stores[wood] as f32 * c.items[wood].fuel + camp.stores[sticks] as f32 * c.items[sticks].fuel;
+            let state = if camp.fire_lit { format!("lit, about {:.0} h of fuel left", camp.fire_hours) } else { "out".to_string() };
+            let mut now = section("Now", vec![
+                row("Burning", state.clone()),
+                row_tip("Warms", format!("within {:.0} m ({warm} there now)", c.people.fire_reach), &["People close to a lit fire get warm.", "Without one, cold nights hurt, and in winter they can kill."]),
+            ]);
+            if let Some((who, when)) = camp.lit_by
+                && sim.people.get(who).is_some()
+            {
+                now.rows.push(row_people("Last lit by", vec![who], when_long(sim, when)));
+            }
+            now.rows.push(row_tip(
+                "Can light it",
+                if knowers == 0 { "nobody living".to_string() } else { format!("{knowers} people know how") },
+                &["Firemaking has to be taught. If the last person who knows it dies, nobody can light a fire."],
+            ));
+            let stock = section("Fuel in the stores", vec![
+                row("Wood", format!("{} ({:.0} h)", camp.stores[wood], camp.stores[wood] as f32 * c.items[wood].fuel)),
+                row("Sticks", format!("{} ({:.0} h, and kindling)", camp.stores[sticks], camp.stores[sticks] as f32 * c.items[sticks].fuel)),
+                row("In all", format!("about {fuel:.0} more hours")),
+            ]);
+            Some(ThingInfo {
+                title: "The fire".into(),
+                subtitle: format!("The camp's fire pit, {}", if camp.fire_lit { "burning" } else { "cold" }),
+                colour: if camp.fire_lit { hex_c("#FFB040") } else { hex_c("#6E6A68") },
+                summary: format!("Fire: {state}"),
+                sections: vec![now, stock],
+            })
+        }
+        Pick::Stores => {
+            let st = &sim.camp.stores;
+            let berries = c.item("berries");
+            let daily = {
+                let h = &c.needs[c.need("hunger")];
+                (h.awake_per_hour * 16.0 + h.asleep_per_hour * 8.0) / c.items[berries].food
+            };
+            let days = st[berries] as f32 / (alive.max(1) as f32 * daily);
+            let mut rows = Vec::new();
+            for (i, it) in c.items.iter().enumerate() {
+                let what = match it.id.as_str() {
+                    "berries" => format!("{} (food for {alive} for about {days:.1} days)", st[i]),
+                    "water" => format!("{} ({} drinks)", st[i], st[i]),
+                    "wood" | "sticks" => format!("{} ({:.0} h of fire)", st[i], st[i] as f32 * it.fuel),
+                    _ => format!("{}", st[i]),
+                };
+                rows.push(row(&it.name, what));
+            }
+            let knows = sim.people.iter().filter(|(_, p)| p.alive && sim.tick.saturating_sub(p.knowledge.stores.when) < 6 * 60).count();
+            let mut who = section("People", vec![row_tip(
+                "Up to date",
+                format!("{knows} of {alive} looked in the last 6 h"),
+                &["People decide from what they last saw here, which may be out of date."],
+            )]);
+            who.note = Some("Gatherers bring what they find here; anyone can eat or drink from it.".into());
+            Some(ThingInfo {
+                title: "The stores".into(),
+                subtitle: "The camp's food, water and firewood".into(),
+                colour: hex_c("#9C6B3F"),
+                summary: format!("{} berries, {} water, {} wood, {} sticks", st[berries], st[c.item("water")], st[c.item("wood")], st[c.item("sticks")]),
+                sections: vec![section("Holding", rows), who],
+            })
+        }
+        Pick::Node(id) => {
+            let n = sim.nodes.get(id)?;
+            let def = &c.nodes[n.kind as usize];
+            let at = (n.x as f32 + 0.5, n.y as f32 + 0.5);
+            let colour = hex_c(&def.colour);
+            if def.id == "grave" {
+                // Who lies here.
+                let dead = sim.people.iter().find(|(_, p)| p.grave == Some((n.x, n.y)));
+                let Some((pid, p)) = dead else {
+                    return Some(ThingInfo { title: "A grave".into(), subtitle: from_camp(sim, at), colour, summary: "A grave".into(), sections: Vec::new() });
+                };
+                let age = p.age_years(sim.tick, c) as u32;
+                let (when, cause) = p.died.clone().unwrap_or((sim.tick, "unknown".into()));
+                let mut here = section("Here lies", vec![
+                    row_people("Name", vec![pid], ""),
+                    row("Born", if p.family.generation == 0 { "before the camp".to_string() } else { when_long(sim, p.born.max(0) as u64) }),
+                    row("Died", format!("{}, aged {age}", when_long(sim, when))),
+                    row("Of", cause.clone()),
+                ]);
+                if let Some(by) = p.buried_by.filter(|b| sim.people.get(*b).is_some()) {
+                    here.rows.push(row_people("Buried by", vec![by], ""));
+                }
+                // The family: their partner (or the partner who outlived them), parents, children.
+                let partner = p.family.partner.or_else(|| sim.people.iter().find(|(_, q)| q.family.partner == Some(pid)).map(|(i, _)| i));
+                let mut family = section("Family", Vec::new());
+                for (label, ids) in [
+                    ("Partner", partner.into_iter().collect::<Vec<_>>()),
+                    ("Mother", p.family.mother.into_iter().collect()),
+                    ("Father", p.family.father.into_iter().collect()),
+                    ("Children", p.family.children.clone()),
+                ] {
+                    let ids: Vec<PersonId> = ids.into_iter().filter(|q| sim.people.get(*q).is_some()).collect();
+                    if !ids.is_empty() {
+                        family.rows.push(row_people(label, ids, ""));
+                    }
+                }
+                if family.rows.is_empty() {
+                    family.note = Some("No family in the camp.".into());
+                }
+                let mut remembered = section("Remembered by", Vec::new());
+                for (q, o) in sim.people.iter().filter(|(_, o)| o.alive && o.memories.iter().any(|m| m.about == Some(pid))) {
+                    remembered.people.push((o.name.clone(), q));
+                }
+                if remembered.people.is_empty() {
+                    remembered.note = Some("Nobody living still thinks of them.".into());
+                }
+                return Some(ThingInfo {
+                    title: format!("Grave of {}", p.name),
+                    subtitle: format!("{} · {}", from_camp(sim, at), if p.sex == Sex::Female { "a woman" } else { "a man" }),
+                    colour,
+                    summary: format!("{}, aged {age}, died of {cause}", p.name),
+                    sections: vec![here, family, remembered],
+                });
+            }
+            let uses: Vec<&sim::content::GatherDef> = c.actions.gather.iter().filter(|g| g.node == def.id).collect();
+            if uses.is_empty() {
+                // Scenery for now (flowers, reeds).
+                let mut s = section("What it's for", vec![row("Gathered", "not yet")]);
+                s.note = Some("Nobody uses these yet. Once beauty matters (a later milestone), flowers and the like will cheer people nearby.".into());
+                return Some(ThingInfo { title: def.name.clone(), subtitle: from_camp(sim, at), colour, summary: def.name.clone(), sections: vec![s] });
+            }
+            let item = &c.items[c.item(&uses[0].item)];
+            let left = plural(n.amount, &item.name);
+            let grows = if def.id == "berry_bush" {
+                let r = &c.actions.berry_regrow;
+                format!("{:.0}/{:.0}/{:.0} a day in spring/summer/autumn; none in winter ({:.0}% rots)", r[0], r[1], r[2], c.actions.winter_rot * 100.0)
+            } else if def.regrow > 0.0 {
+                format!("{} a day, up to {:.0}", def.regrow, def.amount)
+            } else {
+                "doesn't; gone once used up".to_string()
+            };
+            let here = section("What's here", vec![
+                row("Left", left.clone()),
+                row_tip("Grows back", grows, &["Regrowth happens each morning."]),
+            ]);
+            let mut used = section("Used for", Vec::new());
+            for g in &uses {
+                let k = c.skill(&g.skill);
+                let sk = &c.skills.skills[k];
+                used.rows.push(row_tip(&g.name, format!("{} · {} min for {}", sk.name.to_lowercase(), g.minutes, g.yield_per), &["Faster with skill: 0.6x at level 0 up to 1.2x at level 10."]));
+                if sk.taught && !sim.people.iter().any(|(_, p)| p.alive && p.skill_level(k, c) >= 1) {
+                    used.note = Some(format!("Nobody living knows {}, so nobody can do this.", sk.name.to_lowercase()));
+                }
+            }
+            let known = sim.people.iter().filter(|(_, p)| p.alive && p.knowledge.nodes.contains_key(&id)).count();
+            let mut people = section("People", vec![row_tip(
+                "Known to",
+                format!("{known} of {alive}"),
+                &["People only go to places they know: seen themselves, or told about."],
+            )]);
+            for (q, p) in sim.people.iter().filter(|(_, p)| p.alive) {
+                let here = matches!(p.action.as_ref().map(|a| &a.kind), Some(sim::actions::Kind::Gather { node, .. }) | Some(sim::actions::Kind::EatAt { node }) if *node == id);
+                if here {
+                    people.people.push((p.name.clone(), q));
+                }
+            }
+            if people.people.is_empty() {
+                people.note = Some("Nobody is working here right now.".into());
+            } else {
+                people.rows.push(row("Working here", format!("{}", people.people.len())));
+            }
+            Some(ThingInfo {
+                title: def.name.clone(),
+                subtitle: from_camp(sim, at),
+                colour,
+                summary: format!("{left} left"),
+                sections: vec![here, used, people],
+            })
+        }
     }
 }
 
@@ -1223,18 +2029,32 @@ mod tests {
     fn every_view_lays_out() {
         let assets = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"));
         let mut sim = Sim::new(2, 128);
-        sim.run_ticks(sim.content.calendar.ticks_per_day() + 300);
+        // Long enough (in release) for partners, babies and memories to show in the Life tab.
+        let days = if cfg!(debug_assertions) { 1 } else { 9 };
+        sim.run_ticks(sim.content.calendar.ticks_per_day() * days + 300);
         let mut hud = Hud::new(&assets).expect("fonts");
         hud.take_events(&mut sim);
         let who = sim.people.iter().find(|(_, p)| p.alive).map(|(id, _)| id).unwrap();
-        let st = Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: Some(who), hovered: None, pause_on: None };
+        // Inspect a grown person, and a baby or child if there is one.
+        let young = sim.people.iter().find(|(_, p)| p.alive && !p.grown(sim.tick, &sim.content)).map(|(id, _)| id);
+        let mut st = Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: Some(Pick::Person(who)), hovered: young.map(Pick::Person), pause_on: None };
+        if let Some(y) = young {
+            for tab in [Tab::Mind, Tab::Life, Tab::Body] {
+                hud.tab = tab;
+                st.selected = Some(Pick::Person(y));
+                hud.ui.begin((1280.0, 800.0), 1.0, ui::Input { cursor: (640.0, 400.0), clicked: false, scroll: 0.0 });
+                hud.frame(&sim, &st);
+                hud.ui.finish();
+            }
+            st.selected = Some(Pick::Person(who));
+        }
         for scale in [1.0, 2.0] {
             let size = (1280.0 * scale, 800.0 * scale);
             for tab in [Tab::Mind, Tab::Life, Tab::Body, Tab::Skills, Tab::Log] {
                 for lens in [Lens::Off, Lens::Traffic, Lens::Mood, Lens::Needs] {
                     for detail in [Detail::Minimal, Detail::Normal, Detail::Analyst] {
-                        for trace in [None, Some((who, 0)), Some((who, 3))] {
-                            (hud.tab, hud.lens, hud.detail, hud.trace) = (tab, lens, detail, trace);
+                        for (trace, history) in [(None, None), (Some((who, 0)), None), (Some((who, 3)), None), (None, Some(0)), (None, Some(5))] {
+                            (hud.tab, hud.lens, hud.detail, hud.trace, hud.history) = (tab, lens, detail, trace, history);
                             for k in 0..12 {
                                 let cursor = (size.0 * (k as f32 + 0.5) / 12.0, size.1 * ((k * 7) % 12) as f32 / 12.0);
                                 hud.ui.begin(size, scale, ui::Input { cursor, clicked: false, scroll: -1.0 });
@@ -1245,8 +2065,21 @@ mod tests {
                     }
                 }
             }
+            // Things: the fire, the stores, a resource, and a grave if there is one, inspected and hovered.
+            let node = sim.nodes.iter().next().map(|(id, _)| Pick::Node(id));
+            let grave = sim.nodes.iter().find(|(_, n)| sim.content.nodes[n.kind as usize].id == "grave").map(|(id, _)| Pick::Node(id));
+            for thing in [Some(Pick::Fire), Some(Pick::Stores), node, grave].into_iter().flatten() {
+                let st = Status { selected: Some(thing), hovered: Some(Pick::Stores), ..Status { paused: false, speed: 1.0, fps: 60.0, frame_ms: 16.0, selected: None, hovered: None, pause_on: None } };
+                for k in 0..6 {
+                    let cursor = (size.0 * (k as f32 + 0.5) / 6.0, size.1 * 0.5);
+                    hud.ui.begin(size, scale, ui::Input { cursor, clicked: false, scroll: 0.0 });
+                    hud.frame(&sim, &st);
+                    hud.ui.finish();
+                }
+            }
             // The inspector sits on the right: the middle of its panel is UI, the middle of the screen isn't.
             hud.trace = None;
+            hud.history = None;
             hud.ui.begin(size, scale, ui::Input { cursor: (size.0 - 200.0 * scale, size.1 * 0.6), clicked: false, scroll: 0.0 });
             hud.frame(&sim, &st);
             assert!(hud.ui.over_ui(), "inspector should block the world");

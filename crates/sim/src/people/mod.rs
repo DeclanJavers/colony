@@ -3,6 +3,7 @@
 
 pub mod genes;
 pub mod knowledge;
+pub mod social;
 
 use crate::actions::Action;
 use crate::brain::Trace;
@@ -12,7 +13,8 @@ use crate::rng::Rng;
 use genes::{Genome, Looks};
 use knowledge::Knowledge;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use social::{Family, Invite, Memory, Pregnancy, Rel, Stage};
+use std::collections::{BTreeMap, VecDeque};
 
 pub type PersonId = Id<Person>;
 
@@ -83,14 +85,98 @@ pub struct Person {
     /// The latest thought, in words.
     pub thought: String,
     pub tally: Tally,
-    #[serde(default)]
     pub last: Moments,
+    // Families and society (M5)
+    pub family: Family,
+    /// Which sex they're drawn to.
+    pub drawn_to: Sex,
+    /// How they feel about each person they've met.
+    pub rels: BTreeMap<PersonId, Rel>,
+    pub memories: Vec<Memory>,
+    /// What others have asked them (answered at their next decision, or it lapses).
+    pub invites: Vec<Invite>,
+    pub pregnant: Option<Pregnancy>,
+    /// Tick of their last child's birth (mothers).
+    pub last_birth: Option<u64>,
+    /// For the dead: buried yet? (Until then the body lies where they died.)
+    pub buried: bool,
+    /// Where they're buried, and who buried them.
+    pub grave: Option<(u16, u16)>,
+    pub buried_by: Option<PersonId>,
 }
 
 impl Person {
+    /// Age in years (people age `life.age_per_year` years per game year). For the dead, their
+    /// age when they died.
     pub fn age_years(&self, tick: u64, c: &Content) -> f32 {
-        let ticks_per_year = (c.calendar.ticks_per_day() * c.calendar.days_per_year()) as f64;
-        ((tick as i64 - self.born) as f64 / ticks_per_year) as f32
+        let at = self.died.as_ref().map_or(tick, |d| d.0.min(tick));
+        ((at as i64 - self.born) as f64 / c.ticks_per_age_year()) as f32
+    }
+
+    pub fn stage(&self, tick: u64, c: &Content) -> Stage {
+        let a = self.age_years(tick, c);
+        let l = &c.life;
+        if a < l.child_age {
+            Stage::Baby
+        } else if a < l.adult_age {
+            Stage::Child
+        } else if a < l.elder_age {
+            Stage::Adult
+        } else {
+            Stage::Elder
+        }
+    }
+
+    pub fn grown(&self, tick: u64, c: &Content) -> bool {
+        self.stage(tick, c) >= Stage::Adult
+    }
+
+    /// Do they know a skill? Taught skills need level 1; anyone can try the others.
+    pub fn knows(&self, skill: usize, c: &Content) -> bool {
+        !c.skills.skills[skill].taught || self.skill_level(skill, c) >= 1
+    }
+
+    /// Can they have a child now (age, sex, not already expecting, not too soon after the last)?
+    pub fn fertile(&self, tick: u64, c: &Content) -> bool {
+        let a = self.age_years(tick, c);
+        let l = &c.life;
+        match self.sex {
+            Sex::Female => {
+                let gap = self.last_birth.is_none_or(|b| (tick.saturating_sub(b)) as f64 >= l.birth_gap_years as f64 * c.ticks_per_age_year());
+                (l.fertile_female.0..l.fertile_female.1).contains(&a) && self.pregnant.is_none() && gap
+            }
+            Sex::Male => (l.fertile_male.0..l.fertile_male.1).contains(&a),
+        }
+    }
+
+    pub fn rel(&self, other: PersonId) -> Rel {
+        self.rels.get(&other).cloned().unwrap_or_default()
+    }
+
+    pub fn rel_mut(&mut self, other: PersonId) -> &mut Rel {
+        self.rels.entry(other).or_default()
+    }
+
+    /// Remember something. A memory of the same thing about the same person within a day is
+    /// refreshed instead of repeated.
+    pub fn remember(&mut self, m: Memory, c: &Content) {
+        let day = c.calendar.ticks_per_day();
+        if let Some(old) = self.memories.iter_mut().find(|o| o.text == m.text && o.about == m.about && m.tick.saturating_sub(o.tick) < day) {
+            old.strength = 1.0;
+            old.tick = m.tick;
+            return;
+        }
+        self.memories.push(m);
+        if self.memories.len() > c.life.keep_memories {
+            // Forget the weakest (least strong, least important).
+            let weakest = (0..self.memories.len())
+                .min_by(|&a, &b| {
+                    let s = |m: &Memory| m.strength * (0.3 + m.importance);
+                    s(&self.memories[a]).total_cmp(&s(&self.memories[b]))
+                })
+                .unwrap();
+            self.memories.remove(weakest);
+        }
     }
 
     pub fn skill_level(&self, skill: usize, c: &Content) -> u32 {
@@ -142,6 +228,26 @@ impl Person {
         if self.health < 0.7 {
             why.push((-((1.0 - self.health) * 8.0).round() as i32, "Weak and unwell".into()));
         }
+        // Fresh memories: grief, joy, quarrels.
+        for m in &self.memories {
+            let v = (m.feeling * m.strength * 6.0).round() as i32;
+            if v != 0 {
+                why.push((v, m.mood.clone()));
+            }
+        }
+        if self.pregnant.is_some() {
+            why.push((1, "Expecting a child".into()));
+        }
+        // The same reason twice (two quarrels) counts once, at its strongest.
+        let mut seen: Vec<(i32, String)> = Vec::new();
+        for (v, r) in why {
+            match seen.iter_mut().find(|(_, s)| *s == r) {
+                Some(e) if v.abs() > e.0.abs() => e.0 = v,
+                Some(_) => {}
+                None => seen.push((v, r)),
+            }
+        }
+        let mut why = seen;
         why.retain(|(v, _)| *v != 0);
         why.sort_by(|a, b| a.0.abs().cmp(&b.0.abs()).reverse());
         (why.iter().map(|(v, _)| v).sum(), why)
@@ -166,6 +272,10 @@ impl Person {
     }
 }
 
+pub fn other(s: Sex) -> Sex {
+    if s == Sex::Female { Sex::Male } else { Sex::Female }
+}
+
 fn capitalise(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
@@ -174,7 +284,7 @@ fn capitalise(s: &str) -> String {
 /// The founding group: adults of mixed ages and sexes, random DNA from the population.
 pub fn founders(c: &Content, n: u32, start: (u32, u32), map_size: u32, start_tick: u64, rng: &mut Rng) -> Vec<Person> {
     let p = &c.people;
-    let ticks_per_year = (c.calendar.ticks_per_day() * c.calendar.days_per_year()) as i64;
+    let ticks_per_year = c.ticks_per_age_year();
     let mut used = Vec::new();
     let mut out = Vec::new();
     for k in 0..n {
@@ -195,7 +305,7 @@ pub fn founders(c: &Content, n: u32, start: (u32, u32), map_size: u32, start_tic
         out.push(Person {
             name,
             sex,
-            born: start_tick as i64 - (age * ticks_per_year as f32) as i64,
+            born: start_tick as i64 - (age as f64 * ticks_per_year) as i64,
             genome,
             looks,
             personality,
@@ -204,7 +314,8 @@ pub fn founders(c: &Content, n: u32, start: (u32, u32), map_size: u32, start_tic
             health: 1.0,
             alive: true,
             died: None,
-            practice: c.skills.skills.iter().map(|_| rng.next_f32() * 400.0).collect(),
+            // Everyone can forage, cut wood and explore; only some know the taught skills (below).
+            practice: c.skills.skills.iter().map(|s| if s.taught { 0.0 } else { 40.0 + rng.next_f32() * 360.0 }).collect(),
             carry: vec![0; c.items.len()],
             knowledge: Knowledge::new(map_size, c.items.len()),
             pos,
@@ -218,7 +329,31 @@ pub fn founders(c: &Content, n: u32, start: (u32, u32), map_size: u32, start_tic
             thought: "We made it. This looks like a good place to stay.".into(),
             tally: Tally::default(),
             last: Moments { ate: start_tick, drank: start_tick, woke: start_tick, rested: start_tick },
+            family: Family::default(),
+            drawn_to: if rng.chance(c.life.drawn_to_other) { other(sex) } else { sex },
+            rels: BTreeMap::new(),
+            memories: Vec::new(),
+            invites: Vec::new(),
+            pregnant: None,
+            last_birth: None,
+            buried: false,
+            grave: None,
+            buried_by: None,
         });
+    }
+    // A taught skill is known by its share of the group (at least one person).
+    for (k, s) in c.skills.skills.iter().enumerate() {
+        if !s.taught {
+            continue;
+        }
+        let want = ((s.founders_know * n as f32).round() as usize).clamp(1, out.len());
+        let mut order: Vec<usize> = (0..out.len()).collect();
+        for i in (1..order.len()).rev() {
+            order.swap(i, rng.below(i as u32 + 1) as usize);
+        }
+        for &i in &order[..want] {
+            out[i].practice[k] = 40.0 + rng.next_f32() * 360.0;
+        }
     }
     out
 }

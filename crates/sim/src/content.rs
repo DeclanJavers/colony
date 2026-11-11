@@ -149,6 +149,9 @@ pub struct GeneParams {
 pub struct SkillDef {
     pub id: String,
     pub name: String,
+    /// Known only from level 1, learned only from someone who knows it, lost with the last.
+    pub taught: bool,
+    pub founders_know: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -215,6 +218,52 @@ pub struct ActionParams {
     pub food_target_days: Vec<f32>,
 }
 
+/// Families and society (data/base/life.ron).
+#[derive(Clone, Debug, Deserialize)]
+pub struct LifeParams {
+    pub age_per_year: f32,
+    pub child_age: f32,
+    pub adult_age: f32,
+    pub elder_age: f32,
+    pub help_age: f32,
+    pub old_age_hazard: f32,
+    pub old_age_scale: f32,
+    pub elder_weakening: f32,
+    pub fertile_female: (f32, f32),
+    pub fertile_male: (f32, f32),
+    pub pregnancy_years: f32,
+    pub conceive_chance: f32,
+    pub birth_gap_years: f32,
+    pub childbirth_death: f32,
+    pub nursing_age: f32,
+    pub birth_height: f32,
+    pub drawn_to_other: f32,
+    pub court_age_gap: f32,
+    pub propose_romance: f32,
+    pub familiarity_per_hour: f32,
+    pub affection_fade: f32,
+    pub romance_fade: f32,
+    pub familiarity_fade: f32,
+    pub talk_minutes: u32,
+    pub argue_chance: f32,
+    pub news_places: u32,
+    pub court_minutes: u32,
+    pub ask_minutes: u32,
+    pub lesson_minutes: u32,
+    pub watch_minutes: u32,
+    pub play_minutes: u32,
+    pub feed_minutes: u32,
+    pub bury_minutes: u32,
+    pub together_minutes: u32,
+    pub lesson_rate: f32,
+    pub watch_rate: f32,
+    pub learn_until: f32,
+    pub invite_hours: f32,
+    pub memory_fade: f32,
+    pub forget: f32,
+    pub keep_memories: usize,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Names {
     pub female: Vec<String>,
@@ -234,6 +283,7 @@ pub struct Content {
     pub items: Vec<ItemDef>,
     pub actions: ActionParams,
     pub names: Names,
+    pub life: LifeParams,
     pub hash: u64,
 }
 
@@ -248,6 +298,7 @@ const SKILLS: &str = include_str!("../../../data/base/skills.ron");
 const ITEMS: &str = include_str!("../../../data/base/items.ron");
 const ACTIONS: &str = include_str!("../../../data/base/actions.ron");
 const NAMES: &str = include_str!("../../../data/base/names.ron");
+const LIFE: &str = include_str!("../../../data/base/life.ron");
 
 fn parse<T: for<'de> Deserialize<'de>>(name: &str, text: &str) -> T {
     ron::from_str(text).unwrap_or_else(|e| panic!("data/base/{name}: {e}"))
@@ -257,7 +308,7 @@ impl Content {
     /// The base game's content.
     pub fn base() -> Self {
         let mut all = Vec::new();
-        for t in [CALENDAR, BIOMES, NODES, WORLDGEN, NEEDS, PEOPLE, GENES, SKILLS, ITEMS, ACTIONS, NAMES] {
+        for t in [CALENDAR, BIOMES, NODES, WORLDGEN, NEEDS, PEOPLE, GENES, SKILLS, ITEMS, ACTIONS, NAMES, LIFE] {
             all.extend_from_slice(t.as_bytes());
         }
         Content {
@@ -272,6 +323,7 @@ impl Content {
             items: parse("items.ron", ITEMS),
             actions: parse("actions.ron", ACTIONS),
             names: parse("names.ron", NAMES),
+            life: parse("life.ron", LIFE),
             hash: crate::hash::fnv64(&all),
         }
     }
@@ -290,6 +342,11 @@ impl Content {
 
     pub fn skill(&self, id: &str) -> usize {
         self.skills.skills.iter().position(|n| n.id == id).unwrap_or_else(|| panic!("no skill '{id}'"))
+    }
+
+    /// Ticks in one year of someone's age.
+    pub fn ticks_per_age_year(&self) -> f64 {
+        (self.calendar.ticks_per_day() * self.calendar.days_per_year()) as f64 / self.life.age_per_year as f64
     }
 
     pub fn node_kind(&self, id: &str) -> u16 {

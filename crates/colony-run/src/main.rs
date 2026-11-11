@@ -4,6 +4,9 @@
 //!   colony-run maps  --seeds 1..10 [--size 256] [--out ...]    contact sheet of many seeds
 //!   colony-run bench [--size 256] [--seeds 1..5]               world generation time
 //!   colony-run hash  --seed N [--days 2] [--size 256]          state hash after running N days
+//!   colony-run life  --seeds 1..3 [--years 10] [--size 256] [--chronicle]
+//!                                                             families over the years: people, births,
+//!                                                             deaths, partners, skills, generations
 
 mod render;
 
@@ -72,6 +75,7 @@ fn main() {
         "run" => cmd_run(&a),
         "water" => cmd_water(&a),
         "tiles" => cmd_tiles(&a),
+        "life" => cmd_life(&a),
         _ => {
             println!("{}", HELP);
         }
@@ -82,7 +86,7 @@ const HELP: &str = "colony-run map   --seed N [--size 256] [--out runs/maps]
 colony-run maps  --seeds 1..10 [--size 256] [--out runs/maps]
 colony-run bench [--size 256] [--seeds 1..5]
 colony-run hash  --seed N [--days 2] [--size 256]
-colony-run find  --seed N --kind wildflowers           nearest nodes of a kind to the start
+colony-run find  --seed N --kind wildflowers [--days N] nearest nodes of a kind to the start
 colony-run water --seed N                              river mouths, lake inlets, confluences (for QA shots)
 colony-run run   --seed N [--days 24] [--traces out.jsonl.zst] [--quiet]   live a colony headless";
 
@@ -195,8 +199,9 @@ fn cmd_run(a: &Args) {
             sim.step();
         }
         for e in sim.take_events() {
-            if let sim::Event::PersonDied { name, cause, .. } = e {
-                deaths.push(format!("day {}: {name} died of {cause}", d + 1));
+            if let sim::Event::PersonDied { name, cause, person } = e {
+                let age = sim.people.get(person).map_or(0.0, |p| p.age_years(sim.tick, &sim.content));
+                deaths.push(format!("day {}: {name} ({age:.0}) died of {cause}", d + 1));
             }
         }
         if !quiet {
@@ -325,7 +330,10 @@ fn cmd_tiles(a: &Args) {
 }
 
 fn cmd_find(a: &Args) {
-    let sim = Sim::new(a.num("seed", 1u64), a.num("size", 256u32));
+    let mut sim = Sim::new(a.num("seed", 1u64), a.num("size", 256u32));
+    // --days N: look after the colony has lived a while (graves appear with time).
+    let days: u64 = a.num("days", 0);
+    sim.run_ticks(days * sim.content.calendar.ticks_per_day());
     let kind = a.opts.get("kind").map(|s| s.as_str()).unwrap_or("wildflowers");
     let k = sim.content.node_kind(kind);
     let (sx, sy) = sim.map.start;
@@ -375,4 +383,70 @@ fn print_stats(sim: &Sim) {
         m.elevation[si],
         m.fertility[si]
     );
+}
+
+/// Run colonies for years and report on their families (M5).
+fn cmd_life(a: &Args) {
+    let years: u64 = a.num("years", 10);
+    let size = a.num("size", 256u32);
+    for seed in a.range("seeds", (1, 3)) {
+        let mut sim = Sim::new(seed, size);
+        let c = sim.content.clone();
+        let year = c.calendar.ticks_per_day() * c.calendar.days_per_year();
+        let t = Instant::now();
+        let mut causes: BTreeMap<String, u32> = BTreeMap::new();
+        let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
+        for y in 1..=years {
+            for _ in 0..year {
+                sim.step();
+            }
+            for e in sim.take_events() {
+                let k = match &e {
+                    sim::Event::Born { .. } => "births",
+                    sim::Event::PersonDied { cause, .. } => {
+                        *causes.entry(cause.clone()).or_default() += 1;
+                        "deaths"
+                    }
+                    sim::Event::Partnered { .. } => "partnerships",
+                    sim::Event::Argued { .. } => "arguments",
+                    sim::Event::Learned { .. } => "learned",
+                    sim::Event::SkillLost { .. } => "skills_lost",
+                    sim::Event::Buried { .. } => "burials",
+                    sim::Event::Shared { .. } => "shared",
+                    sim::Event::Expecting { .. } => "conceived",
+                    _ => continue,
+                };
+                *counts.entry(k).or_default() += 1;
+            }
+            let alive: Vec<&sim::Person> = sim.people.iter().map(|(_, p)| p).filter(|p| p.alive).collect();
+            let generation = alive.iter().map(|p| p.family.generation).max().unwrap_or(0);
+            let knowers: Vec<String> = c
+                .skills
+                .skills
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.taught)
+                .map(|(k, s)| format!("{} {}", s.id, alive.iter().filter(|p| p.skill_level(k, &c) >= 1).count()))
+                .collect();
+            let kids = alive.iter().filter(|p| !p.grown(sim.tick, &c)).count();
+            let pairs = alive.iter().filter(|p| p.family.partner.is_some()).count() / 2;
+            println!(
+                "seed {seed} year {y:>3}: {:>3} alive ({kids} young, {pairs} couples, gen {generation}), stores {} berries; {}",
+                alive.len(),
+                sim.camp.stores[c.item("berries")],
+                knowers.join(", ")
+            );
+            if alive.is_empty() {
+                break;
+            }
+        }
+        println!("seed {seed}: {:.1} s; {:?}; deaths by {:?}", t.elapsed().as_secs_f64(), counts, causes);
+        if a.opts.contains_key("chronicle") {
+            for e in &sim.chronicle.entries {
+                if e.importance >= 0.3 {
+                    println!("  {:<24} {}", c.calendar.describe(e.tick), e.text);
+                }
+            }
+        }
+    }
 }
