@@ -25,6 +25,9 @@ render = { path = "crates/render" }
 ui = { path = "crates/ui" }
 brains = { path = "crates/brains" }
 fontdue = "=0.9.5"
+# The text model (M9): ONNX Runtime (its library is downloaded on the first build) and the tokenizer.
+ort = "=2.0.0-rc.15"
+tokenizers = { version = "=0.23.2", default-features = false, features = ["fancy-regex"] }
 
 # Debug builds stay usable for headless runs: our code lightly optimised, libraries fully.
 [profile.dev]

@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Answer the bridge's batches with Laya, v1's decision model (ARCHITECTURE.md sections 6 and 9).
+
+The same files as tools/haiku_driver: it reads req-<n>.json and writes res-<n>.json, so anything
+that talks to the bridge (the game, `colony-run bridge`, the arena, `colony-run label`) can use
+Laya instead of Haiku. It runs in v1's Python environment, which has the laya package:
+
+  archive/godot-v1/brain_server/.venv/bin/python tools/laya_driver DIR [--model PATH] [--once]
+  --model: a Laya checkpoint (a folder, or a Hugging Face id); default the base model
+           convaiinnovations/laya. v1's fine-tune is archive/godot-v1/models/laya_colony_v5.
+  --device cpu|mps (default cpu: on the GPU it competes with the game's rendering)
+  --threads 3 (CPU threads, leaving cores for the game)
+
+Each item's text is split into the situation (everything before "What do you do next?") and the
+numbered options, and Laya is asked one choice question over them. Its probability for every
+option goes back with the answer.
+"""
+import json
+import os
+import re
+import sys
+import time
+
+OPTION = re.compile(r"^(\d+)\. (.*)$")
+
+
+def args():
+    a = sys.argv[1:]
+    if not a or a[0].startswith("-"):
+        print(__doc__)
+        sys.exit(2)
+    opts = {"dir": a[0], "once": "--once" in a, "model": "convaiinnovations/laya", "device": "cpu", "threads": 3, "poll": 0.2}
+    for k in ("model", "device", "threads", "poll"):
+        if f"--{k}" in a:
+            v = a[a.index(f"--{k}") + 1]
+            opts[k] = float(v) if k == "poll" else int(v) if k == "threads" else v
+    return opts
+
+
+def split(text):
+    """The situation, and the options as (number, line) in order."""
+    head, _, tail = text.partition("What do you do next?")
+    options = []
+    for line in tail.splitlines():
+        m = OPTION.match(line.strip())
+        if m:
+            options.append((int(m.group(1)), m.group(2).strip()))
+    return head.strip(), options
+
+
+def question(person, options):
+    """One choice question. Labels must be unique (two bushes can read the same): number them."""
+    seen = {}
+    labels = []
+    for k, line in options:
+        label = line
+        if label in seen:
+            label = f"{line} [{k}]"
+        seen[label] = k
+        labels.append(label)
+    q = {"type": "choice", "instructions": f"What should {person or 'this person'} do next?", "criteria": {lab: "" for lab in labels}}
+    return q, seen
+
+
+def waiting(d):
+    out = []
+    for name in os.listdir(d):
+        if name.startswith("req-") and name.endswith(".json"):
+            n = int(name[4:-5])
+            if not os.path.exists(os.path.join(d, f"res-{n}.json")):
+                out.append(n)
+    return sorted(out)
+
+
+def main():
+    o = args()
+    d = o["dir"]
+    import torch  # heavy: after the usage message
+    import laya
+
+    torch.set_num_threads(o["threads"])
+    t = time.time()
+    agent = laya.load(o["model"], device=o["device"])
+    print(f"laya_driver: {o['model']} on {o['device']} (loaded in {time.time() - t:.1f} s); answering {d}", flush=True)
+    while True:
+        if os.path.exists(os.path.join(d, "stop.json")):
+            return
+        todo = waiting(d)
+        if not todo:
+            if o["once"]:
+                return
+            time.sleep(o["poll"])
+            continue
+        for n in todo:
+            batch = json.load(open(os.path.join(d, f"req-{n}.json")))
+            t = time.time()
+            answers = []
+            for item in batch["items"]:
+                state, options = split(item["text"])
+                if not options:
+                    continue
+                q, by_label = question(item.get("person"), options)
+                res = agent.predict(state, {"action": q})
+                probs = res["answers"]["action"]["probabilities"]
+                best = max(probs, key=probs.get) if probs else None
+                if best is None or best not in by_label:
+                    continue
+                answers.append({"id": item["id"], "choice": by_label[best], "reason": None, "probs": {str(by_label[k]): float(v) for k, v in probs.items() if k in by_label}})
+            tmp = os.path.join(d, f"res-{n}.json.tmp")
+            json.dump({"answers": answers}, open(tmp, "w"))
+            os.replace(tmp, os.path.join(d, f"res-{n}.json"))
+            print(f"laya_driver: batch {n}: {len(answers)} of {len(batch['items'])} answered in {time.time() - t:.1f} s", flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -80,6 +80,9 @@ fn main() {
         "train" => cmd_train(&a),
         "arena" => cmd_arena(&a),
         "distill" => cmd_distill(&a),
+        "text" => cmd_text(&a),
+        "label" => cmd_label(&a),
+        "speed" => cmd_speed(&a),
         "fork" => cmd_fork(&a),
         "export" => cmd_export(&a),
         _ => {
@@ -98,10 +101,21 @@ colony-run run   --seed N [--days 24] [--traces out.jsonl.zst] [--quiet]   live 
 colony-run bridge --seed N [--days 3] [--dir runs/bridge-N] [--resume] [--window 15] [--batch 24]
                                                        a colony decided by Claude Haiku through the
                                                        subagent bridge (answer with tools/haiku_driver)
-colony-run train --traces a.jsonl[,b.jsonl.zst...] [--teacher rules|subagent] [--epochs 30] [--out brain/models/scorer@v1.json]
+colony-run train --traces a.jsonl[,b.jsonl.zst...] | --examples dataset/features.jsonl [--teacher rules|subagent] [--epochs 30] [--out brain/models/scorer@v1.json]
                                                        train the scorer on a teacher's decisions
 colony-run arena --seeds 1..5 [--days 48] --brains rules,scorer@v1 [--beauty-off] [--out runs/arena]
                                                        the same worlds with different brains, compared
+colony-run label [--seeds 1..12] [--days 48] [--per 420] [--brain rules] [--shards 3] [--dir runs/label-1]
+                 [--only act,act] [--some act --some-share 0.25] [--no-driver]
+                                                       Claude Haiku labels decisions sampled from
+                                                       colonies another brain runs (a dataset for
+                                                       the text model and Laya; uses your plan)
+colony-run speed --brain text-NAME [--seed 13] [--days 3] [--n 300]
+                                                       how long the text model takes per decision,
+                                                       on decisions from a rules colony
+colony-run text --seed N [--day 2] [--person K]
+                                                       the words a text brain sees for someone's
+                                                       latest decision (Haiku, the text model)
 colony-run distill [--seeds 1..12] [--days 12] [--rounds 3] [--keep 0.5] [--out brain/models/scorer@rules-v2.json]
                                                        distil the rules brain into a scorer, with rounds
                                                        of its own play relabelled by the rules brain
@@ -625,16 +639,29 @@ fn read_traces(paths: &str) -> Vec<sim::brain::Trace> {
 /// Train the scorer on a teacher's decisions (ARCHITECTURE.md section 9). Seeds divisible by 5 are
 /// held out, for the agreement figure.
 fn cmd_train(a: &Args) {
-    let paths = a.opts.get("traces").cloned().unwrap_or_else(|| die("--traces needs one or more trace files"));
+    use std::io::BufRead;
     let teacher = a.opts.get("teacher").cloned();
     let content = sim::content::Content::base();
-    let traces = read_traces(&paths);
     let act_of = |o: &sim::brain::Choice| o.kind.name(&content);
-    let data: Vec<brains::scorer::Example> = traces
-        .iter()
-        .filter(|t| teacher.as_ref().is_none_or(|w| &t.brain == w))
-        .filter_map(|t| brains::scorer::Example::from_trace(t, &act_of))
-        .collect();
+    // From traces, or from a dataset's features.jsonl (export or label: {"split", "example"}).
+    let data: Vec<brains::scorer::Example> = if let Some(paths) = a.opts.get("examples") {
+        let mut all = Vec::new();
+        for path in paths.split(',').filter(|p| !p.is_empty()) {
+            let f = std::fs::File::open(path).unwrap_or_else(|e| die(&format!("can't read {path}: {e}")));
+            all.extend(
+                std::io::BufReader::new(f)
+                    .lines()
+                    .map_while(Result::ok)
+                    .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
+                    .filter_map(|v| serde_json::from_value::<brains::scorer::Example>(v.get("example")?.clone()).ok()),
+            );
+        }
+        all
+    } else {
+        let paths = a.opts.get("traces").cloned().unwrap_or_else(|| die("--traces (trace files) or --examples (a features.jsonl) is needed"));
+        let traces = read_traces(&paths);
+        traces.iter().filter(|t| teacher.as_ref().is_none_or(|w| &t.brain == w)).filter_map(|t| brains::scorer::Example::from_trace(t, &act_of)).collect()
+    };
     if data.is_empty() {
         die("no decisions to learn from (check --teacher)");
     }
@@ -681,19 +708,70 @@ fn run_colony(seed: u64, days: u64, size: u32, name: &str, scorer: Option<brains
     if let Some(s) = scorer {
         sim.brains.map.insert(name.to_string(), Box::new(brains::ScorerBrain::new(s)));
     }
+    // The text model: "text-NAME" is brain/models/NAME.
+    if let Some(m) = name.strip_prefix("text-") {
+        let b = brains::TextBrain::load(name, &PathBuf::from(format!("brain/models/{m}"))).unwrap_or_else(|e| die(&format!("can't load the text model {m}: {e}")));
+        sim.brains.map.insert(name.to_string(), Box::new(b));
+    }
+    // Laya answers through the bridge's files (tools/laya_driver, in v1's Python environment).
+    let mut driver = None;
+    if let Some(model) = laya_model(name) {
+        let dir = PathBuf::from(format!("runs/arena-bridges/{name}-{seed}/bridge"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = brains::SubagentBrain::new(&dir).unwrap_or_else(|e| die(&format!("bridge for {name}: {e}")));
+        b.window = 1;
+        sim.brains.map.insert(name.to_string(), Box::new(b));
+        let log = std::fs::File::create(dir.with_file_name("driver.log")).expect("driver log");
+        driver = Some(
+            std::process::Command::new("archive/godot-v1/brain_server/.venv/bin/python")
+                .args(["tools/laya_driver", &dir.to_string_lossy(), "--model", &model])
+                .stdout(log.try_clone().expect("log"))
+                .stderr(log)
+                .spawn()
+                .unwrap_or_else(|e| die(&format!("can't start tools/laya_driver: {e}"))),
+        );
+    }
     sim.trace_sink = Some(sink);
     let per_day = sim.content.calendar.ticks_per_day();
+    let target = sim.tick + days * per_day;
     let t0 = Instant::now();
-    for _ in 0..days * per_day {
+    while sim.tick < target {
         if name != "rules" {
             let ids: Vec<sim::PersonId> = sim.people.iter().filter(|(_, p)| p.alive && p.brain != name).map(|(id, _)| id).collect();
             for id in ids {
                 sim.set_brain(id, name);
             }
         }
+        if driver.is_some() {
+            // Lockstep: the world waits for the answers.
+            if sim.brains_in_flight() > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                sim.poll_brains();
+                continue;
+            }
+            let deciders = sim.people.iter().filter(|(_, p)| p.alive && p.stage(sim.tick, &sim.content) != sim::people::social::Stage::Baby).count();
+            if sim.brains_queued() > 0 && sim.waiting() >= deciders.max(1) {
+                sim.flush_brains();
+                continue;
+            }
+        }
         sim.step();
     }
+    if let Some(mut d) = driver {
+        let _ = d.kill();
+        let _ = d.wait();
+    }
     (sim, t0.elapsed().as_secs_f64())
+}
+
+/// The Laya checkpoint for a brain name: "laya" is the base model, "laya-v5" v1's fine-tune,
+/// "laya-NAME" a checkpoint in brain/models/NAME.
+fn laya_model(name: &str) -> Option<String> {
+    match name {
+        "laya" => Some("convaiinnovations/laya".into()),
+        "laya-v5" => Some("archive/godot-v1/models/laya_colony_v5".into()),
+        n => n.strip_prefix("laya-").map(|m| format!("brain/models/{m}")),
+    }
 }
 
 /// How a colony ended up.
@@ -770,7 +848,7 @@ fn cmd_arena(a: &Args) {
         let mut total = Outcome::default();
         let mut differ: Differ = BTreeMap::new();
         for &seed in &seeds {
-            let scorer = if name == "rules" {
+            let scorer = if name == "rules" || laya_model(name).is_some() || name.starts_with("text-") {
                 None
             } else {
                 let path = PathBuf::from(format!("brain/models/{name}.json"));
@@ -825,6 +903,250 @@ fn cmd_arena(a: &Args) {
     std::fs::write(&path, &report).unwrap_or_else(|e| die(&format!("can't write {}: {e}", path.display())));
     println!("{report}");
     println!("wrote {}", path.display());
+}
+
+/// One decision to be labelled: where it came from, what the person saw, and what the brain
+/// running the colony (and the rules brain) chose.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ToLabel {
+    seed: u64,
+    request: sim::brain::DecisionRequest,
+    /// Index into the request's options.
+    chosen: usize,
+    rules_choice: usize,
+}
+
+/// Claude Haiku labels decisions (M9). Rather than running Haiku colonies live (a few decisions
+/// per call, and never past the first days), colonies run by another brain (rules, or a scorer)
+/// for whole years give the situations: an even sample of their decisions goes to Haiku in full
+/// batches through the bridge's files, answered by `tools/haiku_driver` (on your Claude plan).
+/// The answers become a dataset in the export's format (features.jsonl, text.jsonl), with
+/// teacher "haiku". It resumes: answered batches are kept, and a usage limit stops it cleanly.
+fn cmd_label(a: &Args) {
+    use std::io::{BufRead, Write};
+    let seeds = a.range("seeds", (1, 12));
+    let days = a.num("days", 48u64);
+    let per = a.num("per", 420usize);
+    let shards = a.num("shards", 3usize).max(1);
+    let brain = a.opts.get("brain").cloned().unwrap_or_else(|| "rules".into());
+    let dir = PathBuf::from(a.opts.get("dir").cloned().unwrap_or_else(|| "runs/label-1".into()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|e| die(&format!("can't make {}: {e}", dir.display())));
+    let content = sim::content::Content::base();
+    // Relabelling a part of a sample: `--only a,b` keeps the decisions that offer any of those
+    // actions, and `--some c --some-share 0.25` a share of those that offer c.
+    let list = |k: &str| a.opts.get(k).map(|v| v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect::<Vec<_>>()).unwrap_or_default();
+    let (only, some) = (list("only"), list("some"));
+    let some_share = a.num("some-share", 0.25f64);
+    let offers = |t: &ToLabel, acts: &[String]| t.request.options.iter().any(|o| o.possible && acts.contains(&o.kind.name(&content)));
+    // 1. The decisions: the same arguments always pick the same ones.
+    let reqs_path = dir.join("requests.jsonl");
+    let todo: Vec<ToLabel> = if reqs_path.exists() {
+        let f = std::fs::File::open(&reqs_path).expect("requests file");
+        std::io::BufReader::new(f).lines().map_while(Result::ok).filter_map(|l| serde_json::from_str(&l).ok()).collect()
+    } else {
+        let mut all = Vec::new();
+        for &seed in &seeds {
+            let got: std::sync::Arc<std::sync::Mutex<Vec<(u64, ToLabel)>>> = Default::default();
+            let g2 = got.clone();
+            let sink: sim::sim::TraceSink = Box::new(move |t: &sim::brain::Trace| {
+                if t.request.options.iter().filter(|o| o.possible).count() < 2 || t.fallback {
+                    return;
+                }
+                let key = sim::hash::hash2(t.seed ^ 0x1ABE1, t.person.index as i32, t.tick as i32);
+                g2.lock().unwrap().push((key, ToLabel { seed: t.seed, request: t.request.clone(), chosen: t.choice, rules_choice: t.rules_choice }));
+            });
+            // The text model and Laya load themselves in run_colony; a scorer loads here.
+            let scorer = (brain != "rules" && !brain.starts_with("text-") && laya_model(&brain).is_none())
+                .then(|| brains::Scorer::load(&PathBuf::from(format!("brain/models/{brain}.json"))).unwrap_or_else(|e| die(&format!("can't load brain '{brain}': {e}"))));
+            let (sim, _) = run_colony(seed, days, a.num("size", 256u32), &brain, scorer, false, sink);
+            let mut v = std::mem::take(&mut *got.lock().unwrap());
+            let total = v.len();
+            v.sort_by_key(|(k, _)| *k);
+            v.truncate(per);
+            if !only.is_empty() || !some.is_empty() {
+                v.retain(|(k, t)| offers(t, &only) || (offers(t, &some) && (k % 10_000) as f64 / 10_000.0 < some_share));
+            }
+            println!("  seed {seed}: {} of {total} decisions kept ({} alive at the end)", v.len(), sim.alive());
+            all.extend(v.into_iter().map(|(_, t)| t));
+        }
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&reqs_path).expect("requests file"));
+        for t in &all {
+            serde_json::to_writer(&mut f, t).expect("json");
+            f.write_all(b"\n").expect("write");
+        }
+        all
+    };
+    // 2. Batches of up to 24, dealt out to the shards (each answered by its own driver).
+    let batch = a.num("batch", 24usize).max(1);
+    let n_batches = todo.len().div_ceil(batch);
+    let shard_dir = |k: usize| dir.join(format!("bridge-{}", k % shards));
+    for k in 0..shards {
+        std::fs::create_dir_all(shard_dir(k)).expect("shard dir");
+        let _ = std::fs::remove_file(shard_dir(k).join("stop.json"));
+    }
+    let mut waiting = 0;
+    for (n, chunk) in todo.chunks(batch).enumerate() {
+        let d = shard_dir(n);
+        if d.join(format!("res-{n}.json")).exists() {
+            continue;
+        }
+        waiting += 1;
+        let items: Vec<brains::bridge::BatchItem> = chunk
+            .iter()
+            .enumerate()
+            .map(|(j, t)| {
+                let person = t.request.text.split_once(',').map_or(String::new(), |(x, _)| x.trim_start_matches("You are ").to_string());
+                brains::bridge::BatchItem { id: (n * batch + j) as u64, person, text: t.request.text.clone(), options: t.request.options.iter().filter(|o| o.possible).count() }
+            })
+            .collect();
+        let b = brains::bridge::Batch { batch: n as u64, tick: 0, instructions: brains::bridge::INSTRUCTIONS.into(), items };
+        let tmp = d.join(format!("req-{n}.json.tmp"));
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&b).expect("batch")).and_then(|_| std::fs::rename(&tmp, d.join(format!("req-{n}.json")))).expect("write batch");
+    }
+    println!("label: {} decisions in {n_batches} batches ({waiting} to answer) over {shards} drivers, in {}", todo.len(), dir.display());
+    // 3. The drivers, until every batch is answered (or the plan's usage limit stops them).
+    let root = std::env::current_dir().unwrap_or_default();
+    let mut kids = Vec::new();
+    if waiting > 0 && !a.opts.contains_key("no-driver") {
+        for k in 0..shards.min(waiting) {
+            let log = std::fs::File::create(dir.join(format!("driver-{k}.log"))).expect("driver log");
+            let child = std::process::Command::new(root.join("tools/haiku_driver")).arg(shard_dir(k)).stdout(log.try_clone().expect("log")).stderr(log).spawn().unwrap_or_else(|e| die(&format!("can't start tools/haiku_driver: {e}")));
+            kids.push(child);
+        }
+    }
+    let t0 = Instant::now();
+    let mut last = usize::MAX;
+    loop {
+        let done = (0..n_batches).filter(|n| shard_dir(*n).join(format!("res-{n}.json")).exists()).count();
+        if done != last {
+            println!("  {done} of {n_batches} batches answered ({:.0} s)", t0.elapsed().as_secs_f64());
+            last = done;
+        }
+        if done == n_batches {
+            break;
+        }
+        if let Some(k) = (0..shards).find(|k| shard_dir(*k).join("stop.json").exists()) {
+            let why = std::fs::read_to_string(shard_dir(k).join("stop.json")).unwrap_or_default();
+            for mut c in kids {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            println!("a driver stopped ({}): {done} of {n_batches} answered. Run the same command again later to carry on.", why.trim());
+            std::process::exit(3);
+        }
+        if kids.is_empty() {
+            println!("no drivers running (--no-driver): answer the batches in {}, then run this again", dir.display());
+            std::process::exit(2);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    for mut c in kids {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    // 4. The dataset.
+    let out = dir.join("dataset");
+    std::fs::create_dir_all(&out).expect("dataset dir");
+    let mut feats = std::io::BufWriter::new(std::fs::File::create(out.join("features.jsonl")).expect("features"));
+    let mut text = std::io::BufWriter::new(std::fs::File::create(out.join("text.jsonl")).expect("text"));
+    let (mut n, mut agree, mut bad, mut held) = (0usize, 0usize, 0usize, 0usize);
+    for (b, chunk) in todo.chunks(batch).enumerate() {
+        let bytes = std::fs::read(shard_dir(b).join(format!("res-{b}.json"))).unwrap_or_default();
+        let answers: BTreeMap<u64, brains::bridge::ItemAnswer> = brains::bridge::parse_answer(&bytes).map(|p| p.answers.into_iter().map(|x| (x.id, x)).collect()).unwrap_or_default();
+        for (j, t) in chunk.iter().enumerate() {
+            let possible: Vec<usize> = t.request.options.iter().enumerate().filter(|(_, o)| o.possible).map(|(i, _)| i).collect();
+            let Some(ans) = answers.get(&((b * batch + j) as u64)) else {
+                bad += 1;
+                continue;
+            };
+            let Some(k) = usize::try_from(ans.choice).ok().filter(|k| *k >= 1 && *k <= possible.len()) else {
+                bad += 1;
+                continue;
+            };
+            let rules_k = possible.iter().position(|&i| i == t.rules_choice);
+            agree += (rules_k == Some(k - 1)) as usize;
+            let e = brains::scorer::Example {
+                seed: t.seed,
+                teacher: "haiku".into(),
+                state: t.request.state.clone(),
+                options: possible.iter().map(|&i| (t.request.options[i].kind.name(&content), t.request.options[i].features.clone())).collect(),
+                choice: k - 1,
+            };
+            let split = if t.seed % 5 == 0 { "held_out" } else { "train" };
+            held += (split == "held_out") as usize;
+            serde_json::to_writer(&mut feats, &serde_json::json!({ "split": split, "person": t.request.person.index, "tick": t.request.tick, "example": e })).expect("json");
+            feats.write_all(b"\n").expect("write");
+            serde_json::to_writer(&mut text, &serde_json::json!({ "split": split, "seed": t.seed, "person": t.request.person.index, "tick": t.request.tick, "teacher": "haiku", "prompt": t.request.text, "choice": k, "reason": ans.reason, "rules_choice": rules_k.map(|r| r + 1) })).expect("json");
+            text.write_all(b"\n").expect("write");
+            n += 1;
+        }
+    }
+    println!(
+        "dataset: {n} decisions labelled by Haiku ({held} held out), {bad} unusable answers; Haiku chose what rules would {:.0}% of the time. Wrote {}",
+        100.0 * agree as f64 / n.max(1) as f64,
+        out.display()
+    );
+}
+
+/// Time the text model on real decisions (from a rules colony): the first time through (nothing
+/// cached) and again (option lines cached, as in play).
+fn cmd_speed(a: &Args) {
+    use sim::brain::Brain;
+    let brain = a.opts.get("brain").cloned().unwrap_or_else(|| "text-text_model_v1".into());
+    let m = brain.strip_prefix("text-").unwrap_or_else(|| die("--brain text-NAME"));
+    let n = a.num("n", 300usize);
+    // `--data text.jsonl`: agreement with the teacher on a dataset's held-out decisions (the
+    // check that the game reads the model exactly as training did).
+    if let Some(path) = a.opts.get("data") {
+        use std::io::BufRead;
+        let r = std::fs::File::open(path).unwrap_or_else(|e| die(&format!("{path}: {e} (unzip a .gz first)")));
+        let mut model = brains::text::TextModel::load(&PathBuf::from(format!("brain/models/{m}"))).unwrap_or_else(|e| die(&e));
+        let (mut hit, mut all) = (0, 0);
+        for line in std::io::BufReader::new(r).lines().map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            if v["split"] != "held_out" {
+                continue;
+            }
+            let (situation, options) = brains::text::split(v["prompt"].as_str().unwrap_or(""));
+            if options.len() < 2 {
+                continue;
+            }
+            let s = model.score(&situation, &options).unwrap_or_else(|e| die(&e));
+            let pick = (0..s.len()).max_by(|&x, &y| s[x].total_cmp(&s[y]).then(y.cmp(&x))).unwrap_or(0);
+            hit += (pick as i64 + 1 == v["choice"].as_i64().unwrap_or(0)) as usize;
+            all += 1;
+        }
+        println!("{brain}: picks Haiku's option on {hit} of {all} held-out decisions ({:.1}%)", 100.0 * hit as f64 / all.max(1) as f64);
+        return;
+    }
+    let got: std::sync::Arc<std::sync::Mutex<Vec<sim::brain::Trace>>> = Default::default();
+    let g2 = got.clone();
+    let sink: sim::sim::TraceSink = Box::new(move |t: &sim::brain::Trace| g2.lock().unwrap().push(t.clone()));
+    run_colony(a.num("seed", 13u64), a.num("days", 3u64), 256, "rules", None, false, sink);
+    let traces: Vec<sim::brain::Trace> = got.lock().unwrap().iter().filter(|t| t.request.options.iter().filter(|o| o.possible).count() >= 2).take(n).cloned().collect();
+    let mut b = brains::TextBrain::load(&brain, &PathBuf::from(format!("brain/models/{m}"))).unwrap_or_else(|e| die(&e));
+    for pass in ["first (nothing cached)", "again (option lines cached)"] {
+        let t0 = Instant::now();
+        let mut agree = 0;
+        for t in &traces {
+            b.submit(t.request.clone());
+            let (_, ans) = b.poll().pop().expect("an answer");
+            agree += (ans.choice == t.choice) as usize;
+        }
+        let ms = t0.elapsed().as_secs_f64() * 1000.0 / traces.len().max(1) as f64;
+        println!("{brain}, {pass}: {ms:.1} ms per decision over {} decisions; picks what rules did {:.0}% of the time; {} couldn't be scored", traces.len(), 100.0 * agree as f64 / traces.len().max(1) as f64, b.failed);
+    }
+}
+
+/// Print the latest decision of someone, as a text brain sees it.
+fn cmd_text(a: &Args) {
+    let mut sim = Sim::new(a.num("seed", 2u64), a.num("size", 256u32));
+    let per_day = sim.content.calendar.ticks_per_day();
+    sim.run_ticks(a.num("day", 2u64).max(1) * per_day - sim.tick % per_day);
+    let k = a.num("person", 0usize);
+    let Some((_, p)) = sim.people.iter().filter(|(_, p)| p.alive && !p.traces.is_empty()).nth(k) else { die("nobody has decided anything yet") };
+    let t = p.traces.back().expect("has traces");
+    println!("{}", t.request.text);
 }
 
 /// Distil the rules brain into a scorer, with rounds of relabelled play (ARCHITECTURE.md

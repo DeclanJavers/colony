@@ -325,9 +325,55 @@ inspector and traffic lens: 261 fps average.
   and where each brain parts from rules.
 - **The beauty question** (`--beauty-off`, seeds 43 to 52): with beauty not mattering, rules
   colonies still make 20 things each and v3 colonies 16. Both make them for the fun of it.
+- **Haiku as the teacher (after M10):**
+  - **Instructions fixed:** told what the rules brain sees as numbers (a roof or not, cold
+    nights, winter coming, materials ready), Haiku colonists made 26 building choices on the first
+    day of seed 3, against none before.
+  - **The dataset** (`brain/data/haiku-v2`): 6,840 decisions labelled by Haiku with
+    `colony-run label`, 285 calls in all. 5,040 come from rules colonies over two years, and
+    1,800 from a correction round (the situations a Haiku-trained scorer got itself into).
+    Haiku picks what rules would only 9 to 16% of the time.
+  - **A scorer trained on Haiku,** 20 unseen seeds, 48 days:
+
+    | Brain | Alive | Died of hunger, thirst or cold | Homes | Grain | Born |
+    |---|---|---|---|---|---|
+    | rules | 16.9 | 0.3 | 5.9 | 481 | 7.2 |
+    | scorer@haiku-v1 (rules situations only) | 0.0 | 10.0 | 0.5 | 0 | 0 |
+    | scorer@haiku-v2 (with the correction round) | 9.9 | 0.1 | 8.0 | 0 | 0 |
+
+    v1 copied Haiku's habit of eating whenever a little peckish and starved. With the
+    correction round, colonies survive and build but never farm or have children.
+- **Farming and families relabelled** (`brain/data/haiku-v3`): the text now tells Haiku
+  about partners, children, fields and seed grain, and every decision that offered farming or
+  family was relabelled (112 calls). A scorer trained on v3 keeps 19.7 alive after two years
+  with 10 born (v2: none born), but still farms nothing.
+- **The text model** (`brain/text_model/`, run in Rust through ONNX Runtime, `text-NAME` in the
+  arena). Trained on Colab's T4 in about 10 minutes.
+  - **Agreement with Haiku** on held-out decisions: 61% (the scorer on the same data: 52.5%).
+    The game reads it exactly as training did (60.8% through Rust).
+  - **Speed:** about 50 ms a decision on 4 CPU threads with option lines cached (15 ms with
+    situations cut short, which costs most of its accuracy). Fine for a few named people, with
+    decisions answered off the main thread; too slow for a whole colony at 10x.
+  - **v1** (trained on v3) starved its first arena colony within 24 days. **v2** adds a
+    correction round (`brain/data/haiku-v4`: 1,800 decisions from v1's own colonies, 75 calls).
+    Seeds 43 to 47, 24 days:
+
+    | Brain | Alive | Born | Died of hunger, thirst or cold | Homes | Grain | Things made |
+    |---|---|---|---|---|---|---|
+    | rules | 15.6 | 5.8 | 0.0 | 5.6 | 204 | 13.6 |
+    | text_model_v2 | 17.0 | 7.8 | 0.8 | 6.6 | 141 | 0 |
+
+    The first Haiku-taught brain that farms (three of five colonies harvested). It takes no free
+    time at all: nothing made, no hobbies.
+- **Haiku calls in all:** 513 (41 testing the instructions, 210 and 75 for the first dataset,
+  112 relabelling farming and family, 75 for the text model's correction round).
+- **Laya is back** (`tools/laya_driver` on the bridge's files; 0.27 s per decision). Seed 13,
+  6 days: base Laya starves everyone (it has never seen this game's words), and v1's fine-tune
+  (v5) keeps 9 of 10 alive with 8 homes, though it chooses sleep far too often.
 - **Still to do, after M10** (you chose on 2026-11-11 to finish the base first):
-  - the text model (Colab);
-  - the Laya adapter;
+  - ~~the text model~~ (done: text_model_v2);
+  - ~~the Laya adapter~~ (done: `tools/laya_driver`); its fine-tune on the new traces;
+  - the text model in the game (the AI budget's Medium setting), on a thread of its own;
   - a scorer trained on Haiku, compared in the arena with Haiku colonies (it needs more Haiku
     decisions, on your plan). Until then the "about as well as the subagent's" check is measured
     against rules instead.

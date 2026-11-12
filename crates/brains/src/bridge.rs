@@ -18,7 +18,11 @@ use std::path::{Path, PathBuf};
 
 /// What a driver is told, at the top of every batch.
 pub const INSTRUCTIONS: &str = "You decide what people in a colony simulation do next. Each item is one person: their situation, then numbered options. \
-Pick the option that person would most sensibly choose: look after urgent needs first (thirst, hunger, cold, exhaustion), then the group's needs (food and firewood for the stores), then what suits their personality. \
+Pick what that person would most sensibly do as someone who means to live here for years. A need that is pressing (very thirsty, very hungry, cold, exhausted) comes first. \
+Otherwise think ahead as well as about today: the camp needs food and firewood in the stores, but it also needs roofs before the nights turn cold and winter comes, a house for each family, a storehouse so food keeps, and fields so there is food next year. \
+A day's food in the stores is no reason to put off building. \
+These people mean to put down roots: grain sown in spring or summer feeds them through the winter, when wild food runs short, so clearing, sowing, tending and harvesting fields matters. \
+Couples with a home and food in the stores want children, and single grown-ups look for a partner. Leave time for friends, rest and the things that suit their personality. \
 Reply with JSON only, exactly: {\"answers\": [{\"id\": <item id>, \"choice\": <option number>, \"reason\": \"<one short sentence, in their voice>\"}]}, one answer per item.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

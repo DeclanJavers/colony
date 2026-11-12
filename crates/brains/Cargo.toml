@@ -1,6 +1,6 @@
 [package]
 name = "brains"
-description = "Brains outside the sim: the subagent bridge (Claude Haiku through files, no API)."
+description = "Brains outside the sim: the subagent bridge (Claude Haiku through files, no API), the scorer and the text model."
 version.workspace = true
 edition.workspace = true
 
@@ -8,3 +8,5 @@ edition.workspace = true
 sim.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+ort.workspace = true
+tokenizers.workspace = true

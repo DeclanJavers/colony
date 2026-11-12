@@ -447,6 +447,14 @@ the same format.
      mode with `--model haiku`, so long runs need no one in the loop.
 
    Both use the user's Claude plan, with no API key.
+   - or with `tools/laya_driver` (M9): Laya, v1's decision model, answers the same files
+     (in v1's Python environment, which has the laya package).
+4. **What the text says (changed at M9):** besides needs, stores and the clock, a text brain is
+   told what the rules brain sees as numbers: whether they have a roof and how many homes stand,
+   how cold the nights are, how far off winter is, and whether the stores hold a building's
+   materials. The instructions ask for the choice of someone who means to live here for years.
+   Before this, Haiku colonists built nothing in three days; after it, Haiku started 15
+   buildings in the first eight hours of the same seed.
 4. **Answers land** in `res-<n>.json`.
    - **Checking:** each answer is checked. A missing or invalid choice falls back to `rules`, and
      the trace says so.
@@ -521,6 +529,24 @@ the same format.
     natively, with no runtime dependency.
 - **Text model and Laya fine-tunes:** trained on Colab with the cheapest GPU (a T4), exported to
   ONNX (text model). No heavy training on the Mac.
+- **The teacher's data (`colony-run label`, M9):** Haiku colonies run live give only a few
+  decisions per call and never get past the first days. Instead, colonies run by the rules brain
+  (or a scorer) for whole years give the situations, an even sample of their decisions goes to
+  Haiku in full batches of 24, and the answers become a dataset in the export's format (teacher
+  "haiku"). About 5,000 decisions for about 210 calls. A later round can relabel the text
+  model's own play, the way the scorer was distilled.
+- **The text model (`brain/text_model/`):** a 33M-parameter encoder (bge-small) reads the
+  situation once and each option line once; a small head scores each pair; trained on Haiku's
+  choices by softmax over the options. Exported as `encoder.onnx` (and an int8 copy),
+  `head.onnx` and `tokenizer.json`. Option lines repeat, so the game caches their encodings.
+  - **In Rust** (`brains::text`): `ort` (ONNX Runtime, whose library the first build downloads)
+    and `tokenizers`. Lengths are set in code (256 tokens for the situation, 48 per option),
+    since the tokenizer file keeps whatever its last use set. One ONNX Runtime environment is
+    shared by every model. `colony-run speed --brain text-NAME [--data text.jsonl]` times it and
+    checks it scores as training did.
+  - **Results (M9):** 61% agreement with Haiku on held-out decisions; about 50 ms a decision on
+    4 threads. After one correction round (v2), its colonies keep as many alive as rules and
+    farm, but take no free time.
 - **Evaluation,** two ways:
   - **agreement:** match with the teacher on held-out seeds;
   - **colony outcomes:** survival, births, buildings, hobbies and beauty made, from arena runs.
@@ -528,6 +554,9 @@ the same format.
   worlds with different brains and writes a comparison report, with where each brain parts
   from rules most. The in-game Arena ledger shows it. Arena seeds are never training seeds.
 - **Laya:** kept only as an adapter and comparison, retrained now and then.
+  - **The adapter (M9)** is `tools/laya_driver` on the bridge's files: the arena runs it as
+    `laya` (the base model) or `laya-v5` (v1's fine-tune, in `archive/godot-v1/models`).
+    About 0.27 s per decision on the CPU.
   - **v1 measurements:** about 380 ms per decision on the CPU with 3 threads, 79% agreement for
     v5. Quantising it didn't work: int8 broke agreement and ran slower.
 

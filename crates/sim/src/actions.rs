@@ -616,7 +616,7 @@ pub fn request(p: &Person, id: PersonId, ctx: &Ctx) -> DecisionRequest {
         });
     }
     // What they heard you say (M8): the options it asks for say so, and so does the text.
-    let mut text = describe(p, ctx, &state, &opts);
+    let mut text = describe(p, id, ctx, &state, &opts);
     if let Some(h) = p.heard.as_ref().filter(|h| ctx.tick < h.until) {
         let mut any = false;
         for o in opts.iter_mut().filter(|o| o.possible) {
@@ -657,7 +657,7 @@ fn explore_target(p: &Person, ctx: &Ctx) -> Option<(u16, u16)> {
 }
 
 /// The request in words, as a text brain would see it.
-fn describe(p: &Person, ctx: &Ctx, state: &[(String, f32)], opts: &[Choice]) -> String {
+fn describe(p: &Person, id: PersonId, ctx: &Ctx, state: &[(String, f32)], opts: &[Choice]) -> String {
     let c = ctx.c;
     let cal = &c.calendar;
     let get = |name: &str| state.iter().find(|(k, _)| k == name).map_or(0.0, |(_, v)| *v);
@@ -686,19 +686,66 @@ fn describe(p: &Person, ctx: &Ctx, state: &[(String, f32)], opts: &[Choice]) -> 
         if parts.is_empty() { "nothing".to_string() } else { parts.join(", ") }
     };
     let fire = if b.fire_lit { format!("lit, about {:.0} hours of fuel left", b.fire_hours) } else { "out".to_string() };
-    let mut s = format!(
-        "You are {}, {age}, {who} in a group of {} foragers who have just settled by fresh water.{}\n",
-        p.name,
-        ctx.alive,
-        if traits.is_empty() { String::new() } else { format!(" You are {}.", traits.join(", ")) }
-    );
-    s += &format!("It is {}, day {}, {:02}:{:02}, {:.0} C.\n", cal.season(ctx.tick), cal.day_of_season(ctx.tick), m / 60, m % 60, temp);
+    // The camp as it is: how settled, and where they sleep (what the rules brain sees as numbers,
+    // "homeless" and "night_cold", a text brain reads in words).
+    let homes: Vec<&crate::buildings::Structure> = ctx.structures.iter().map(|(_, s)| s).filter(|s| s.done() && c.buildings[s.kind as usize].sleeps > 0).collect();
+    let fields = ctx.structures.iter().filter(|(_, s)| c.buildings[s.kind as usize].id == "field").count();
+    let camp = if homes.is_empty() && fields == 0 {
+        format!("in a group of {} foragers who have settled by fresh water", ctx.alive)
+    } else {
+        format!("in a camp of {} people", ctx.alive)
+    };
+    let mut s = format!("You are {}, {age}, {who} {camp}.{}\n", p.name, if traits.is_empty() { String::new() } else { format!(" You are {}.", traits.join(", ")) });
+    let mine = crate::settle::home_of(p, id, p.grown(ctx.tick, c), ctx.structures, c).and_then(|h| ctx.structures.get(h));
+    let roof = match mine {
+        Some(h) if h.done() => format!("You sleep in your household's {}.", c.buildings[h.kind as usize].name.to_lowercase()),
+        Some(h) => format!("Your household's {} is being built ({:.0}% done); until then you sleep by the fire.", c.buildings[h.kind as usize].name.to_lowercase(), h.progress * 100.0),
+        None if homes.is_empty() => "Nobody has a roof yet: everyone sleeps in the open, by the fire.".to_string(),
+        None => format!("You have no home of your own and sleep by the fire ({} {} stand in the camp).", homes.len(), if homes.len() == 1 { "home" } else { "homes" }),
+    };
+    s += &format!("{roof}\n");
+    // Family: a partner and children, or none (what courting and asking for a child are about).
+    if p.grown(ctx.tick, c) {
+        let partner = p.family.partner.and_then(|q| ctx.seen.iter().find(|x| x.id == q)).map(|x| x.name.clone());
+        let kids = p.family.children.len();
+        let line = match (partner, kids) {
+            (Some(q), 0) => format!("You and {q} are partners, with no children yet."),
+            (Some(q), k) => format!("You and {q} are partners, with {k} {}.", if k == 1 { "child" } else { "children" }),
+            (None, 0) => "You have no partner and no children.".to_string(),
+            (None, k) => format!("You have no partner now, and {k} {}.", if k == 1 { "child" } else { "children" }),
+        };
+        s += &format!("{line}\n");
+    }
+    // Farming: what the camp grows, and the seed it has (wild food runs short in winter).
+    let field_k = c.building("field");
+    let growing = ctx.structures.iter().filter(|(_, f)| f.kind == field_k && f.crop.as_ref().is_some_and(|k| !k.dead)).count();
+    let grain = p.knowledge.stores.items[c.item(&c.farming.crop)];
+    let seed = c.farming.seed.max(1);
+    let farm = if fields == 0 {
+        format!("The camp has no fields yet. Wild food runs short in winter; grain sown in spring or summer ripens by autumn and keeps. The stores hold {grain} grain (a field takes {seed} to sow).")
+    } else {
+        format!("The camp has {fields} {} ({growing} growing). The stores hold {grain} grain (a field takes {seed} to sow).", if fields == 1 { "field" } else { "fields" })
+    };
+    s += &format!("{farm}\n");
+    let season = cal.season_index(ctx.tick);
+    let to_winter = (3usize.saturating_sub(season) as u64 * cal.days_per_season as u64).saturating_sub(cal.day_of_season(ctx.tick) - 1);
+    let ahead = if season == 3 { "It's winter.".to_string() } else { format!("Winter is {to_winter} days away.") };
+    let night = c.people.comfort_temp - 10.0 * get("night_cold");
+    s += &format!("It is {}, day {}, {:02}:{:02}, {:.0} C. Nights are about {:.0} C. {ahead}\n", cal.season(ctx.tick), cal.day_of_season(ctx.tick), m / 60, m % 60, temp, night);
     s += &format!("You feel: {}.\n", if feel.is_empty() { "fine".to_string() } else { feel.join(", ") });
     s += &format!("You carry: {}.\n", list(&p.carry));
     s += &format!("The camp stores (as you last saw them): {}. The fire is {fire}.\n", list(&b.items));
     s += &format!("Food for about {:.1} days.\n\nWhat do you do next? Answer with a number and one sentence why.\n", get("food_days"));
     for (k, o) in (1..).zip(opts.iter().filter(|o| o.possible)) {
-        s += &format!("{k}. {} (about {:.0} min)\n", o.label, o.f("minutes"));
+        // Building: whether the stores hold what it takes.
+        let materials = o.features.iter().find(|(n, _)| n == "materials").map(|(_, v)| *v);
+        let note = match materials {
+            Some(v) if v >= 0.99 => "; the stores have the materials",
+            Some(v) if v > 0.0 => "; the stores have some of the materials",
+            Some(_) => "; the materials still need gathering",
+            None => "",
+        };
+        s += &format!("{k}. {} (about {:.0} min{note})\n", o.label, o.f("minutes"));
     }
     s
 }

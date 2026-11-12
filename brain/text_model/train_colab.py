@@ -32,6 +32,10 @@ import re
 import time
 import urllib.request
 
+# The base model is public: don't look for a Hugging Face token (on Colab that asks for access to
+# your saved secrets and waits until someone answers).
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

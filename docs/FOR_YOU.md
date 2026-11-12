@@ -103,3 +103,15 @@ M6, M7, M8 and M10 were signed off on 2026-11-11 and committed. M9 is partly don
     - asking someone to do something for someone else;
     - the start, where all ten stand in two heaps (behaviour, not a bug).
     Also: would you like a second blind playtest after your own? It takes about 30 minutes.
+14. **The text model works** (M9). v2 matches Haiku 61% of the time on held-out decisions, and in
+    the arena its colonies keep as many alive as rules and farm (ROADMAP.md, M9). Things you
+    might want to know:
+    - **Your Downloads folder** has two leftovers from Colab: `text_model_v1_game.zip` and a
+      hidden temporary file the app never finished renaming
+      (`.Q6L2SF6YDW.com.anthropic.claudefordesktop.Nogqqz`). Both are copied into
+      `brain/models/`, so they can go.
+    - **Colab asked for your Hugging Face token** on the second run (`HF_TOKEN`); I declined. The
+      training script now tells it not to look (from the next commit).
+    - **Haiku calls in all:** 513, more than the ~360 first planned, after the farming relabel and
+      the correction round you approved.
+
